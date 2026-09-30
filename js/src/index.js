@@ -38,7 +38,11 @@ function crsLabel(crs) {
   if (crs === undefined) return "no CRS";
   if (typeof crs === "string") return crs;
   if (crs.id && crs.id.authority) return `${crs.id.authority}:${crs.id.code}`;
-  return crs.name || "PROJJSON";
+  // A CRS read from a PROJ string is named "unknown"; its projection
+  // method says more.
+  const method = crs.conversion && crs.conversion.method && crs.conversion.method.name;
+  if (crs.name && crs.name !== "unknown") return crs.name;
+  return method || crs.name || "PROJJSON";
 }
 
 async function loadBytes(ref, id, blobs) {

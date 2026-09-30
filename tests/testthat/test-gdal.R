@@ -94,7 +94,7 @@ test_that("a layer of mixed single and multi lines is never WKB", {
 
 test_that("gdal_vector_stream() checks its arguments", {
   skip_if_no_gdal()
-  expect_error(gdal_vector_stream(coast_path(), "3031"), "authority:code")
+  expect_error(gdal_vector_stream(coast_path(), "not a crs"), "cannot read the CRS")
   expect_error(gdal_vector_stream(coast_path(), "EPSG:3031", clip = 1:3), "clip")
   expect_error(gdal_vector_stream(coast_path(), "EPSG:3031", densify = -1), "densify")
   expect_error(gdal_vector_stream(c("a", "b"), "EPSG:3031"), "dsn")

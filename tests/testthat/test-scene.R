@@ -13,9 +13,10 @@ test_that("scene() defaults to a polar projected view", {
 })
 
 test_that("scene() rejects a malformed crs", {
-  expect_error(scene("3031"), "authority:code")
-  expect_error(scene(c("EPSG:3031", "EPSG:3413")), "authority:code")
-  expect_error(scene(NA_character_), "authority:code")
+  expect_error(scene(c("EPSG:3031", "EPSG:3413")), "single CRS definition")
+  expect_error(scene(NA_character_), "single CRS definition")
+  expect_error(scene(""), "single CRS definition")
+  expect_error(scene(list()), "single CRS definition")
 })
 
 test_that("scene() prints a one-line summary", {

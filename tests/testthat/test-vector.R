@@ -74,7 +74,7 @@ test_that("vector_stream() refuses a different CRS and accepts a missing one", {
                "does not reproject")
   expect_silent(vector_stream(wk::wkt("POINT (1 2)"), "EPSG:3031"))
   expect_silent(vector_stream(wk::wkt("POINT (1 2)", crs = "epsg:3031"), "EPSG:3031"))
-  expect_error(vector_stream(wk::wkt("POINT (1 2)"), "3031"), "authority:code")
+  expect_error(vector_stream(wk::wkt("POINT (1 2)"), NA_character_), "single CRS definition")
 })
 
 test_that("vector_stream() recognises an equivalent CRS via gdalraster", {

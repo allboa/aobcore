@@ -10,8 +10,8 @@ vector_stream(x, crs, geometry = NULL)
 \item{x}{Geometry: a wk-handleable object, a data frame with a geometry
 column, or a 'nanoarrow' array stream.}
 
-\item{crs}{The view CRS as an \code{"authority:code"} string, such as
-\code{"EPSG:3031"}. It is written to the column's GeoArrow metadata.}
+\item{crs}{The view CRS, such as \code{"EPSG:3031"}, or any definition
+\code{\link[=scene_crs]{scene_crs()}} accepts. It is written to the column's GeoArrow metadata.}
 
 \item{geometry}{For a data frame or stream, the name of the geometry
 column. By default the \code{sf} geometry column, or the first column 'wk'

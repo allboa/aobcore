@@ -31,8 +31,8 @@
 #'
 #' @param x Geometry: a wk-handleable object, a data frame with a geometry
 #'   column, or a 'nanoarrow' array stream.
-#' @param crs The view CRS as an `"authority:code"` string, such as
-#'   `"EPSG:3031"`. It is written to the column's GeoArrow metadata.
+#' @param crs The view CRS, such as `"EPSG:3031"`, or any definition
+#'   [scene_crs()] accepts. It is written to the column's GeoArrow metadata.
 #' @param geometry For a data frame or stream, the name of the geometry
 #'   column. By default the `sf` geometry column, or the first column 'wk'
 #'   can handle.
@@ -50,7 +50,7 @@
 #' df$geometry <- x
 #' as.data.frame(vector_stream(df, "EPSG:3031"))
 vector_stream <- function(x, crs, geometry = NULL) {
-  check_crs_string(crs)
+  crs <- scene_crs(crs)
   native_stream(x, crs, geometry = geometry, check_crs = TRUE)
 }
 
@@ -99,15 +99,6 @@ native_encodings <- c(
 )
 
 crs_pattern <- "^[A-Za-z][A-Za-z0-9_]*:[A-Za-z0-9_.-]+$"
-
-check_crs_string <- function(crs, arg = "crs") {
-  if (!is.character(crs) || length(crs) != 1L || is.na(crs) ||
-      !grepl(crs_pattern, crs)) {
-    stop("`", arg, "` must be a single \"authority:code\" string, such as \"EPSG:3031\".",
-         call. = FALSE)
-  }
-  invisible(crs)
-}
 
 ipc_bytes <- function(stream) {
   con <- rawConnection(raw(), open = "wb")
@@ -213,6 +204,7 @@ geometry_column <- function(x) {
 }
 
 as_native_vctr <- function(geom, crs, type = NULL) {
+  crs <- as.character(crs)
   declared <- tryCatch(wk::wk_vector_meta(geom)$geometry_type, error = function(e) 0L)
   g <- wk::as_wkb(geom)
   g <- wk::wk_set_crs(g, NULL)
@@ -246,15 +238,15 @@ as_native_vctr <- function(geom, crs, type = NULL) {
 
 check_same_crs <- function(src, crs) {
   if (is.null(src) || identical(src, wk::wk_crs_inherit())) return(invisible(TRUE))
-  if (isTRUE(wk::wk_crs_equal(src, crs))) return(invisible(TRUE))
+  if (isTRUE(wk::wk_crs_equal(src, as.character(crs)))) return(invisible(TRUE))
   def <- tryCatch(wk::wk_crs_proj_definition(src), error = function(e) NULL)
   if (is.character(def) && length(def) == 1L && !is.na(def)) {
-    if (identical(toupper(def), toupper(crs))) return(invisible(TRUE))
+    if (identical(toupper(def), toupper(as.character(crs)))) return(invisible(TRUE))
     if (isTRUE(gdal_same_crs(def, crs))) return(invisible(TRUE))
   } else {
     def <- "(unrecognised)"
   }
-  stop("`x` has CRS ", def, " but the view CRS is ", crs, ". ",
+  stop("`x` has CRS ", crs_short(def), " but the view CRS is ", crs_label(crs), ". ",
        "The core does not reproject: transform `x` first ",
        "(for example sf::st_transform()), or use gdal_vector_stream().",
        call. = FALSE)
@@ -266,7 +258,7 @@ gdal_same_crs <- function(a, b) {
   if (!requireNamespace("gdalraster", quietly = TRUE)) return(NA)
   tryCatch(
     gdalraster::srs_is_same(
-      gdalraster::srs_to_wkt(a), gdalraster::srs_to_wkt(b),
+      gdalraster::srs_to_wkt(as.character(a)), gdalraster::srs_to_wkt(as.character(b)),
       criterion = "EQUIVALENT_EXCEPT_AXIS_ORDER_GEOGCRS"
     ),
     error = function(e) NA

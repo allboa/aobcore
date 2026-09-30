@@ -113,7 +113,7 @@ cog_info <- function(dsn, band = 1L) {
 print.aob_cog <- function(x, ...) {
   l0 <- x$levels[[1]]
   cat("<COG> ", x$dsn, "\n", sep = "")
-  cat("  crs ", if (nchar(x$crs) > 40) "PROJJSON" else x$crs, ", band ", x$band, " of ",
+  cat("  crs ", crs_label(x$crs), ", band ", x$band, " of ",
       x$samples_per_pixel, ", ", l0$encoding$dtype, " ", l0$encoding$codec,
       " (predictor ", l0$encoding$predictor, ")\n", sep = "")
   for (l in x$levels) {
@@ -147,7 +147,8 @@ print.aob_cog <- function(x, ...) {
 #' renderer chooses a level as the view changes, using the `selection` rule.
 #'
 #' @param cog A COG from [cog_info()], or a path or URL passed to it.
-#' @param crs The view CRS, an `"authority:code"` string.
+#' @param crs The view CRS: an `"authority:code"` string or any definition
+#'   [scene_crs()] accepts (WKT, a PROJ string, PROJJSON).
 #' @param extent Optional `c(xmin, xmax, ymin, ymax)` in view CRS units.
 #'   Tiles whose footprint misses it are left out. Required with
 #'   `units_per_pixel`.
@@ -192,12 +193,8 @@ cog_plan <- function(cog, crs = "EPSG:3031", extent = NULL, units_per_pixel = NU
   need_gdalraster("cog_plan()")
   selection <- match.arg(selection)
   if (!inherits(cog, "aob_cog")) cog <- cog_info(cog)
-  check_crs_string(crs)
-  view_wkt <- tryCatch(gdalraster::srs_to_wkt(crs), error = function(e) "")
-  if (!nzchar(view_wkt)) {
-    stop("GDAL cannot resolve the CRS \"", crs, "\" (is its PROJ database installed?).",
-         call. = FALSE)
-  }
+  crs <- scene_crs(crs)
+  view_wkt <- crs_wkt(crs)
   if (!is.null(extent)) check_extent(extent)
   if (!is.null(units_per_pixel)) {
     if (!is.numeric(units_per_pixel) || length(units_per_pixel) != 1L || !(units_per_pixel > 0)) {
@@ -226,7 +223,7 @@ cog_plan <- function(cog, crs = "EPSG:3031", extent = NULL, units_per_pixel = NU
 
   sizes <- vapply(cog$levels, level_pixel_size, 0, proj = proj)
   if (any(!is.finite(sizes))) {
-    stop("Could not measure the pixel size of every level in ", crs, "; ",
+    stop("Could not measure the pixel size of every level in ", crs_label(crs), "; ",
          "does the COG lie in the view CRS's domain?", call. = FALSE)
   }
   all_ids <- vapply(cog$levels, function(l) l$level, 0L)
@@ -317,10 +314,10 @@ cog_plan <- function(cog, crs = "EPSG:3031", extent = NULL, units_per_pixel = NU
   }
   if (stretched > 0L) {
     message(stretched, " tile(s) stretched past ", max_stretch, " times their level's pixel ",
-            "size in ", crs, " were left out (see `max_stretch`).")
+            "size in ", crs_label(crs), " were left out (see `max_stretch`).")
   }
   if (dropped > 0L) {
-    warning(dropped, " tile(s) could not be projected to ", crs, " and were left out.",
+    warning(dropped, " tile(s) could not be projected to ", crs_label(crs), " and were left out.",
             call. = FALSE)
   }
   if (!is.null(units_per_pixel) && length(out_levels[[1]]$tiles) == 0L) {
@@ -351,7 +348,7 @@ cog_plan <- function(cog, crs = "EPSG:3031", extent = NULL, units_per_pixel = NU
 #' @export
 print.aob_tile_plan <- function(x, ...) {
   p <- x$plan
-  cat("<tile plan> ", p$coverage, " in ", p$crs, ": ", sep = "")
+  cat("<tile plan> ", p$coverage, " in ", crs_label(p$crs), ": ", sep = "")
   n <- vapply(p$levels, function(l) length(l$tiles), 0L)
   cat(sum(n), " tiles, ", x$n_vertices, " vertices, ", x$n_indices / 3, " triangles\n", sep = "")
   for (i in seq_along(p$levels)) {
@@ -409,8 +406,9 @@ scene_add_tiled_raster <- function(scene, id, plan, palette = "viridis", range =
   check_scene(scene)
   check_id(id)
   if (!inherits(plan, "aob_tile_plan")) plan <- cog_plan(plan, scene$view$crs)
-  if (!identical(plan$plan$crs, scene$view$crs)) {
-    stop("The plan is in ", plan$plan$crs, " but the view is in ", scene$view$crs, ".",
+  if (!crs_same(plan$plan$crs, scene$view$crs)) {
+    stop("The plan is in ", crs_label(plan$plan$crs), " but the view is in ",
+         crs_label(scene$view$crs), ".",
          call. = FALSE)
   }
   cog <- plan$cog
@@ -449,6 +447,7 @@ scene_add_tiled_raster <- function(scene, id, plan, palette = "viridis", range =
   scene$data[[ids[2]]] <- list(format = "arrow-ipc-stream", blob = ids[2])
   scene$data[[ids[3]]] <- list(format = "arrow-ipc-stream", blob = ids[3])
   p <- plan$plan
+  p$crs <- scene$view$crs
   p$mesh <- list(vertices = ids[2], indices = ids[3])
   layer <- list(
     id = id, kind = "tiled_raster",
@@ -482,7 +481,8 @@ scene_add_tiled_raster <- function(scene, id, plan, palette = "viridis", range =
 #' HTTP range requests (the server must allow them, and CORS).
 #'
 #' @param dsn A COG: local path or `http(s)` URL (also as `"/vsicurl/<url>"`).
-#' @param crs The view CRS.
+#' @param crs The view CRS: an `"authority:code"` string or any definition
+#'   [scene_crs()] accepts (WKT, a PROJ string, PROJJSON).
 #' @param palette,range Passed to [scene_add_tiled_raster()].
 #' @param band The band to draw.
 #' @param coastline Add the bundled coastline south of 40S (densified and
@@ -522,6 +522,7 @@ view_cog <- function(dsn, crs = "EPSG:3031", palette = "viridis", range = NULL, 
 cog_scene <- function(dsn, crs = "EPSG:3031", palette = "viridis", range = NULL, band = 1L,
                       coastline = NULL, extent = NULL, url = NULL, ...) {
   need_gdalraster("cog_scene()")
+  crs <- scene_crs(crs)
   cog <- if (inherits(dsn, "aob_cog")) dsn else cog_info(dsn, band = band)
   cull <- NULL
   if (!is.null(extent)) {
@@ -554,7 +555,7 @@ cog_scene <- function(dsn, crs = "EPSG:3031", palette = "viridis", range = NULL,
 ## to a finite point and points at 80S on four meridians lie at one distance
 ## from it (polar stereographic, azimuthal equal area and equidistant).
 south_polar_view <- function(crs) {
-  wkt <- tryCatch(gdalraster::srs_to_wkt(crs), error = function(e) "")
+  wkt <- tryCatch(gdalraster::srs_to_wkt(as.character(crs)), error = function(e) "")
   if (!nzchar(wkt)) return(FALSE)
   ll <- cbind(c(0, 0, 90, 180, -90), c(-90, -80, -80, -80, -80))
   xy <- tryCatch(suppressWarnings(gdalraster::transform_xy(ll, gdalraster::srs_to_wkt("EPSG:4326"), wkt)),
@@ -685,7 +686,7 @@ tiff_byte_order <- function(dsn) {
 ## An authority:code string when GDAL finds one, otherwise PROJJSON text
 ## marked to be written verbatim.
 crs_ref <- function(wkt) {
-  code <- tryCatch(gdalraster::srs_find_epsg(wkt), error = function(e) NULL)
+  code <- tryCatch(suppressMessages(gdalraster::srs_find_epsg(wkt)), error = function(e) NULL)
   if (is.character(code) && length(code) == 1L && !is.na(code) &&
       grepl("^[A-Za-z][A-Za-z0-9_]*:[A-Za-z0-9_.-]+$", code) &&
       isTRUE(gdalraster::srs_is_same(wkt, gdalraster::srs_to_wkt(code)))) {

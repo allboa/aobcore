@@ -15,9 +15,12 @@
 #   polar-cog-*  scene spec 0.2 tiled rasters: the polar COG fixtures
 #                (inst/extdata, tools/make-polar-cogs.R) in EPSG:3031 as
 #                cog_scene() / view_cog() build them, whole, at the pole
-#                and (3031) far out.
+#                and (3031) far out; polar-cog-lonlat-laea147 is the lon/lat
+#                COG in a south polar LAEA with no EPSG code (PROJJSON view).
 library(aobcore)
 library(nanoarrow)
+
+`%||%` <- function(x, y) if (is.null(x)) y else x
 
 args <- commandArgs(trailingOnly = TRUE)
 out <- if (length(args)) args[[1]] else "scenes"
@@ -137,11 +140,13 @@ cogs <- list(
   "polar-cog-3031-pole" = list(file = "polar_3031.tif", extent = c(-9e5, 9e5, -6e5, 6e5)),
   "polar-cog-3031-far" = list(file = "polar_3031.tif", extent = c(-3e7, 3e7, -3e7, 3e7)),
   "polar-cog-lonlat" = list(file = "polar_lonlat.tif", extent = NULL),
-  "polar-cog-lonlat-pole" = list(file = "polar_lonlat.tif", extent = c(-9e5, 9e5, -6e5, 6e5))
+  "polar-cog-lonlat-pole" = list(file = "polar_lonlat.tif", extent = c(-9e5, 9e5, -6e5, 6e5)),
+  "polar-cog-lonlat-laea147" = list(file = "polar_lonlat.tif", extent = NULL,
+                                    crs = "+proj=laea +lat_0=-90 +lon_0=147 +datum=WGS84")
 )
 for (name in names(cogs)) {
   x <- cogs[[name]]
-  s <- cog_scene(system.file("extdata", x$file, package = "aobcore"), "EPSG:3031",
+  s <- cog_scene(system.file("extdata", x$file, package = "aobcore"), x$crs %||% "EPSG:3031",
                  palette = "ocean", extent = x$extent)
   write_scene_html(s, file = file.path(out, paste0(name, ".html")), title = x$file)
   writeLines(scene_json(s), file.path(out, paste0(name, ".json")))

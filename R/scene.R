@@ -27,19 +27,17 @@ scene_spec_versions <- c("0.1", "0.2")
 #' A scene starts as version 0.1 and becomes 0.2 when a tiled raster is
 #' added.
 #'
-#' @param crs The view CRS as an `"authority:code"` string. Defaults to
-#'   `"EPSG:3031"` (Antarctic Polar Stereographic).
+#' @param crs The view CRS. Defaults to `"EPSG:3031"` (Antarctic Polar
+#'   Stereographic). An `"authority:code"` string, or any definition GDAL
+#'   reads (WKT, a PROJ string, PROJJSON), which is carried as PROJJSON
+#'   when it has no code; see [scene_crs()].
 #' @return A list of class `"aob_scene"`.
 #' @export
 #' @examples
 #' s <- scene()
 #' s$view$crs
 scene <- function(crs = "EPSG:3031") {
-  if (!is.character(crs) || length(crs) != 1L || is.na(crs) ||
-      !grepl("^[A-Za-z][A-Za-z0-9_]*:[A-Za-z0-9_.-]+$", crs)) {
-    stop("`crs` must be a single \"authority:code\" string, such as \"EPSG:3031\".",
-         call. = FALSE)
-  }
+  crs <- scene_crs(crs)
   structure(
     list(
       version = scene_spec_version(),
@@ -53,7 +51,7 @@ scene <- function(crs = "EPSG:3031") {
 
 #' @export
 print.aob_scene <- function(x, ...) {
-  cat("<scene spec ", x$version, "> view ", x$view$type, " ", x$view$crs,
+  cat("<scene spec ", x$version, "> view ", x$view$type, " ", crs_label(x$view$crs),
       ", ", length(x$data), " data, ", length(x$layers), " layers\n", sep = "")
   invisible(x)
 }
