@@ -1,0 +1,196 @@
+#' Write a scene to a self-contained HTML page
+#'
+#' Writes one HTML file that draws `scene` with the bundled renderer. The
+#' scene is embedded as JSON, each Arrow IPC blob is embedded as base64 text,
+#' and the renderer JavaScript is inlined, so the page works offline and loads
+#' nothing from a CDN.
+#'
+#' The scene is checked cheaply before writing: the top-level fields, the
+#' version, the view type, that layer ids are unique, that every data id a
+#' layer uses is defined in `scene$data`, and that every `blob` key has a
+#' blob. Full validation against the scene spec JSON Schema happens outside
+#' R (see the allboa/scenespec validator).
+#'
+#' @param scene A scene: a list following scene spec 0.1, with `version`,
+#'   `view`, `data` and `layers`, such as one built from [scene()]. Named lists
+#'   are written as JSON objects and unnamed lists as arrays; atomic vectors of
+#'   length one are written as scalars (wrap one in `I()` to write an array).
+#' @param blobs A named list of raw vectors, each an Arrow IPC stream or file.
+#'   Names are the `blob` keys used by `scene$data`.
+#' @param file Path of the HTML file to write.
+#' @param title Page title. Defaults to the first layer label, or
+#'   `"allonboard scene"`.
+#' @param theme `"auto"` follows the browser's light or dark preference;
+#'   `"light"` or `"dark"` fixes it. The page also has a theme button.
+#' @return The path of the written file, invisibly.
+#' @export
+#' @examples
+#' p <- probe_scene()
+#' f <- write_scene_html(p$scene, p$blobs, tempfile(fileext = ".html"))
+#' file.size(f)
+#' \dontrun{
+#' utils::browseURL(f)
+#' }
+write_scene_html <- function(scene, blobs = list(), file = tempfile(fileext = ".html"),
+                             title = NULL, theme = c("auto", "light", "dark")) {
+  theme <- match.arg(theme)
+  check_blobs(blobs)
+  used <- check_scene_shape(scene, blobs)
+  blobs <- blobs[intersect(names(blobs), used)]
+  if (is.null(title)) {
+    title <- "allonboard scene"
+  }
+  if (!is.character(title) || length(title) != 1L || is.na(title)) {
+    stop("`title` must be a single string.", call. = FALSE)
+  }
+  if (!is.character(file) || length(file) != 1L || is.na(file)) {
+    stop("`file` must be a single path.", call. = FALSE)
+  }
+
+  sid <- "aob-scene"
+  blob_tags <- lapply(names(blobs), function(k) {
+    htmltools::tags$script(
+      type = "application/octet-stream", `data-aob-blob` = k, `data-aob-scene` = sid,
+      htmltools::HTML(b64_encode(blobs[[k]]))
+    )
+  })
+  page <- htmltools::tags$html(
+    lang = "en",
+    `data-theme` = if (theme != "auto") theme,
+    htmltools::tags$head(
+      htmltools::tags$meta(charset = "utf-8"),
+      htmltools::tags$meta(name = "viewport", content = "width=device-width, initial-scale=1"),
+      htmltools::tags$title(title),
+      htmltools::tags$style(htmltools::HTML(page_css))
+    ),
+    htmltools::tags$body(
+      htmltools::tags$div(class = "aob-page", `data-aob-scene` = sid),
+      htmltools::tags$script(type = "application/json", id = sid, htmltools::HTML(to_json(scene))),
+      blob_tags,
+      htmltools::tags$script(htmltools::HTML(renderer_js()))
+    )
+  )
+  html <- enc2utf8(as.character(htmltools::doRenderTags(page)))
+  con <- file(file, open = "wb")
+  on.exit(close(con), add = TRUE)
+  writeLines(c("<!DOCTYPE html>", html), con, useBytes = TRUE)
+  invisible(file)
+}
+
+page_css <- paste(
+  "html, body { height: 100%; margin: 0; }",
+  "body { background: var(--aob-bg, #eef2f4); }",
+  ".aob-page { height: 100%; }",
+  sep = "\n"
+)
+
+renderer_path <- function() {
+  f <- system.file("renderer", "aob-renderer.min.js", package = "aobcore")
+  if (!nzchar(f)) {
+    stop("The bundled renderer is missing from the installed package.", call. = FALSE)
+  }
+  f
+}
+
+renderer_js <- function() {
+  f <- renderer_path()
+  readChar(f, file.size(f), useBytes = TRUE)
+}
+
+check_blobs <- function(blobs) {
+  if (!is.list(blobs) || is.data.frame(blobs)) {
+    stop("`blobs` must be a named list of raw vectors.", call. = FALSE)
+  }
+  if (length(blobs) == 0L) {
+    return(invisible())
+  }
+  nms <- names(blobs)
+  if (is.null(nms) || anyNA(nms) || any(nms == "") || anyDuplicated(nms)) {
+    stop("`blobs` must have unique, non-empty names.", call. = FALSE)
+  }
+  bad <- !vapply(blobs, is.raw, logical(1))
+  if (any(bad)) {
+    stop("Every blob must be a raw vector of Arrow IPC bytes; not raw: ",
+         paste(nms[bad], collapse = ", "), ".", call. = FALSE)
+  }
+  invisible()
+}
+
+## A cheap shape check: enough to catch a scene that cannot draw, not a
+## replacement for the JSON Schema.
+check_scene_shape <- function(scene, blobs) {
+  fail <- function(...) stop(..., call. = FALSE)
+  if (!is.list(scene)) fail("`scene` must be a list.")
+  missing <- setdiff(c("version", "view", "data", "layers"), names(scene))
+  if (length(missing)) {
+    fail("`scene` is missing ", paste(missing, collapse = ", "), ".")
+  }
+  if (!identical(scene$version, scene_spec_version())) {
+    fail("`scene$version` must be \"", scene_spec_version(), "\".")
+  }
+  view <- scene$view
+  if (!is.list(view) || !is.character(view$type) || length(view$type) != 1L ||
+      !view$type %in% c("projected", "cartesian", "globe")) {
+    fail("`scene$view$type` must be one of \"projected\", \"cartesian\" or \"globe\".")
+  }
+  if (view$type != "cartesian" && is.null(view$crs)) {
+    fail("A ", view$type, " view needs `scene$view$crs`.")
+  }
+  data <- scene$data
+  if (!is.list(data) || (length(data) > 0L && is.null(names(data)))) {
+    fail("`scene$data` must be a named list of data references.")
+  }
+  ids <- names(data)
+  used_blobs <- character()
+  for (id in ids) {
+    ref <- data[[id]]
+    if (!is.list(ref)) fail("Data reference `", id, "` must be a list.")
+    has_blob <- !is.null(ref$blob)
+    if (has_blob == !is.null(ref$url)) {
+      fail("Data reference `", id, "` needs exactly one of `blob` or `url`.")
+    }
+    if (has_blob) {
+      if (!ref$blob %in% names(blobs)) {
+        fail("Data reference `", id, "` uses blob \"", ref$blob, "\", which is not in `blobs`.")
+      }
+      used_blobs <- c(used_blobs, ref$blob)
+    }
+  }
+  layers <- scene$layers
+  if (!is.list(layers) || !is.null(names(layers))) {
+    fail("`scene$layers` must be an unnamed list of layers.")
+  }
+  need <- function(layer_id, id) {
+    if (!is.character(id) || length(id) != 1L || !id %in% ids) {
+      fail("Layer `", layer_id, "` uses data id \"", format(id), "\", which is not in `scene$data`.")
+    }
+  }
+  seen <- character()
+  for (layer in layers) {
+    lid <- layer$id
+    if (!is.character(lid) || length(lid) != 1L) fail("Every layer needs a string `id`.")
+    if (lid %in% seen) fail("Layer id `", lid, "` is used twice.")
+    seen <- c(seen, lid)
+    kind <- layer$kind
+    if (identical(kind, "raster")) {
+      need(lid, layer$values)
+      if (!is.null(layer$mesh)) {
+        need(lid, layer$mesh$vertices)
+        need(lid, layer$mesh$indices)
+      }
+    } else if (is.character(kind) && length(kind) == 1L && kind %in% c("polygon", "path", "point")) {
+      need(lid, layer$data)
+      if (is.null(data[[layer$data]]$geometry)) {
+        fail("Layer `", lid, "` draws data `", layer$data, "`, which has no `geometry`.")
+      }
+    } else {
+      fail("Layer `", lid, "` has kind \"", format(kind), "\"; expected polygon, path, point or raster.")
+    }
+  }
+  unused <- setdiff(names(blobs), used_blobs)
+  if (length(unused)) {
+    warning("Blobs not used by the scene are left out of the page: ",
+            paste(unused, collapse = ", "), ".", call. = FALSE)
+  }
+  unique(used_blobs)
+}

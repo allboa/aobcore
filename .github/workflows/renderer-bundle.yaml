@@ -1,0 +1,30 @@
+# Rebuild the renderer bundle from js/ and fail if it differs from the
+# committed inst/renderer/aob-renderer.min.js or inst/COPYRIGHTS.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+name: renderer-bundle
+
+permissions: read-all
+
+jobs:
+  bundle:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: js/package-lock.json
+
+      - name: Install
+        working-directory: js
+        run: npm ci --no-audit --no-fund
+
+      - name: Check the committed bundle is a fresh build
+        working-directory: js
+        run: npm run check-bundle
