@@ -69,8 +69,14 @@ json_atomic <- function(x) {
     out <- as.character(x)
   } else if (is.double(x)) {
     if (any(is.infinite(x) | is.nan(x))) stop("JSON has no Inf or NaN.", call. = FALSE)
-    out <- formatC(x, digits = 15, format = "g")
-    out <- sub("^ +", "", out)
+    ## Shortest of 15, 16 or 17 significant digits that reads back exactly.
+    ## NA is written as null below, so only finite values are checked.
+    out <- sprintf("%.15g", x)
+    ok <- which(!is.na(x))
+    for (digits in c("%.16g", "%.17g")) {
+      lossy <- ok[as.numeric(out[ok]) != x[ok]]
+      out[lossy] <- sprintf(digits, x[lossy])
+    }
   } else {
     stop("Cannot write a ", typeof(x), " vector as JSON.", call. = FALSE)
   }

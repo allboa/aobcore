@@ -1,13 +1,26 @@
 Package: aobcore
 Title: Lean Core for 'allonboard' Map Scenes
 Version: 0.0.0.9000
-Authors@R:
-    person("Michael", "Sumner", , "mdsumner@gmail.com", role = c("aut", "cre"))
+Authors@R: c(
+    person("Michael", "Sumner", , "mdsumner@gmail.com", role = c("aut", "cre")),
+    person("vis.gl contributors", role = "cph",
+           comment = "Bundled deck.gl, luma.gl, loaders.gl and probe.gl JavaScript"),
+    person("Uber Technologies, Inc.", role = "cph",
+           comment = "Bundled math.gl and mjolnir.js JavaScript"),
+    person("The Apache Software Foundation", role = "cph",
+           comment = "Bundled Apache Arrow JavaScript"),
+    person("The FlatBuffers project", role = "cph",
+           comment = "Bundled flatbuffers JavaScript"),
+    person("Mapbox", role = "cph", comment = "Bundled earcut JavaScript"),
+    person("Microsoft Corporation", role = "cph", comment = "Bundled tslib JavaScript")
+    )
 Description: Builds renderer-neutral map scenes that are drawn in their own
     coordinate reference system, with polar views as the first-class case.
     Data are carried as native 'GeoArrow' and grid descriptors. This is an
-    early skeleton; the package name is a placeholder.
+    early skeleton; the package name is a placeholder. Scenes are written to
+    self-contained HTML pages drawn by a bundled 'deck.gl' renderer.
 License: MIT + file LICENSE
+Copyright: See inst/COPYRIGHTS for the bundled JavaScript.
 URL: https://github.com/allboa/aobcore
 BugReports: https://github.com/allboa/aobcore/issues
 Imports:

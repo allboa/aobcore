@@ -6,7 +6,7 @@
 \alias{aobcore-package}
 \title{aobcore: Lean Core for 'allonboard' Map Scenes}
 \description{
-Builds renderer-neutral map scenes that are drawn in their own coordinate reference system, with polar views as the first-class case. Data are carried as native 'GeoArrow' and grid descriptors. This is an early skeleton; the package name is a placeholder.
+Builds renderer-neutral map scenes that are drawn in their own coordinate reference system, with polar views as the first-class case. Data are carried as native 'GeoArrow' and grid descriptors. This is an early skeleton; the package name is a placeholder. Scenes are written to self-contained HTML pages drawn by a bundled 'deck.gl' renderer.
 }
 \seealso{
 Useful links:
@@ -22,6 +22,16 @@ Useful links:
 Authors:
 \itemize{
   \item Michael Sumner \email{mdsumner@gmail.com}
+}
+
+Other contributors:
+\itemize{
+  \item vis.gl contributors (Bundled deck.gl, luma.gl, loaders.gl and probe.gl JavaScript) [copyright holder]
+  \item Uber Technologies, Inc. (Bundled math.gl and mjolnir.js JavaScript) [copyright holder]
+  \item The Apache Software Foundation (Bundled Apache Arrow JavaScript) [copyright holder]
+  \item The FlatBuffers project (Bundled flatbuffers JavaScript) [copyright holder]
+  \item Mapbox (Bundled earcut JavaScript) [copyright holder]
+  \item Microsoft Corporation (Bundled tslib JavaScript) [copyright holder]
 }
 
 }
