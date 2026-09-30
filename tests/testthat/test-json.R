@@ -25,3 +25,10 @@ test_that("base64 round-trips every padding length", {
   expect_identical(b64_encode(charToRaw("Ma")), "TWE=")
   expect_identical(b64_encode(charToRaw("M")), "TQ==")
 })
+
+test_that("scene_json() writes NA as null without a coercion warning", {
+  s <- scene()
+  s$view$center <- c(1.5, NA)
+  expect_no_warning(json <- scene_json(s))
+  expect_match(json, "\"center\":[1.5,null]", fixed = TRUE)
+})

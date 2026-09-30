@@ -1,6 +1,7 @@
 // Named palettes for raster values. Scene spec 0.1 fixes no registry of
-// names; these are the names this renderer knows. An unknown name falls back
-// to viridis with a warning.
+// names; these are the names this renderer knows. Per the spec README, an
+// unknown name is an error for that layer: the layer is not drawn and the
+// error is reported, never silently replaced by another palette.
 const STOPS = {
   // The polar probe's ramp (YlGnBu, reversed).
   ocean: [[8, 29, 88], [37, 52, 148], [34, 94, 168], [29, 145, 192], [65, 182, 196], [127, 205, 187], [199, 233, 180], [237, 248, 177]],
@@ -10,10 +11,13 @@ const STOPS = {
   grey: [[0, 0, 0], [255, 255, 255]],
 };
 
-export function paletteStops(name, warn) {
-  if (STOPS[name]) return STOPS[name];
-  warn(`palette "${name}" is not known to this renderer; drawing with viridis`);
-  return STOPS.viridis;
+export const PALETTE_NAMES = Object.keys(STOPS);
+
+export class UnknownPaletteError extends Error {}
+
+export function paletteStops(name) {
+  if (Object.prototype.hasOwnProperty.call(STOPS, name)) return STOPS[name];
+  throw new UnknownPaletteError(`unknown palette "${name}" (known: ${PALETTE_NAMES.join(", ")})`);
 }
 
 export function ramp(stops, t) {
@@ -45,8 +49,9 @@ export function colorize(values, valid, grid, palette, stops) {
   const lo = palette.range[0];
   const hi = palette.range[1];
   const span = hi - lo || 1;
-  const nodata = grid.nodata;
-  const hasNodata = typeof nodata === "number";
+  const hasNodata = typeof grid.nodata === "number";
+  // float32 values hold nodata rounded to float32, so compare in that type.
+  const nodata = hasNodata && values instanceof Float32Array ? Math.fround(grid.nodata) : grid.nodata;
   // 256-entry lookup keeps the per-pixel work to one multiply.
   const lut = new Uint8Array(256 * 3);
   for (let k = 0; k < 256; k++) {

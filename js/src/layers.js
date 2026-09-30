@@ -5,7 +5,7 @@ import { SolidPolygonLayer, PathLayer, ScatterplotLayer, BitmapLayer } from "@de
 import { SimpleMeshLayer } from "@deck.gl/mesh-layers";
 import { earcut } from "@math.gl/polygon";
 import { geometryChunk, partsOf, numericColumn, listColumn, rgbaChunk } from "./arrow.js";
-import { paletteStops, colorize } from "./palettes.js";
+import { paletteStops, colorize, UnknownPaletteError } from "./palettes.js";
 
 const DEFAULT_FILL = [128, 128, 128, 255];
 const DEFAULT_STROKE = [60, 66, 72, 255];
@@ -193,8 +193,15 @@ export function buildLayer(L, ctx) {
 function buildRaster(L, ctx) {
   const { scene, tables } = ctx;
   const what = `layer ${L.id}`;
+  let stops;
+  try {
+    stops = paletteStops(L.palette.name);
+  } catch (err) {
+    if (!(err instanceof UnknownPaletteError)) throw err;
+    ctx.error(`layer ${L.id}: ${err.message}; not drawn`);
+    return { summary: "error: unknown palette", layers: [] };
+  }
   const vals = numericColumn(tables[L.values], L.values_column || "value", what);
-  const stops = paletteStops(L.palette.name, ctx.warn);
   const [nx, ny] = L.grid.dim;
   const pixels = colorize(vals.values, vals.valid, L.grid, L.palette, stops);
   const image = document.createElement("canvas");

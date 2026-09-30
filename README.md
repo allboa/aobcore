@@ -42,7 +42,7 @@ The page follows the browser's light or dark preference; `theme = "light"` or `"
 
 The renderer implements scene spec 0.1 on [deck.gl](https://deck.gl) and [apache-arrow](https://arrow.apache.org/docs/js/). Its source is in `js/src/` and is not part of the R package; the package ships one minified bundle, `inst/renderer/aob-renderer.min.js` (about 1.1 MiB, 310 KiB gzipped), and `inst/COPYRIGHTS` for the bundled code. Everything that maps spec concepts to deck.gl is in `js/src/layers.js`.
 
-What it draws: `polygon` (fill with holes, optional stroke), `path`, `point` (fill and stroke, `radius_px`), and their multi- encodings; colors as constant RGBA or an RGBA column; `raster` as values on a grid descriptor colored by a named palette (`ocean`, `viridis`, `ice`, `gray`), on a pre-projected mesh, or without a mesh when the grid is in the view CRS; `nodata`, NaN and Arrow nulls are transparent. `projected` and `cartesian` views are flat views of view CRS units; `globe` is drawn for vector layers only. Data marked `origin_subtracted` are placed back at `view.local_origin`, and raster meshes are drawn relative to it. Data references with a `url` are fetched.
+What it draws: `polygon` (fill with holes, optional stroke), `path`, `point` (fill and stroke, `radius_px`), and their multi- encodings; colors as constant RGBA or an RGBA column; `raster` as values on a grid descriptor colored by a named palette (`ocean`, `viridis`, `ice`, `gray`; any other name is an error for that layer, which is then not drawn and is reported in the page's status line), on a pre-projected mesh, or without a mesh when the grid is in the view CRS; `nodata`, NaN and Arrow nulls are transparent. `projected` and `cartesian` views are flat views of view CRS units; `globe` is drawn for vector layers only. Data marked `origin_subtracted` are placed back at `view.local_origin`, and raster meshes are drawn relative to it. Data references with a `url` are fetched. Those fetches are the page's only network requests: the renderer, the scene and blobs are inline, and loaders.gl (bundled as a deck.gl dependency) could only reach the network to load a worker or an image by URL, which this renderer never asks it to do.
 
 ### Rebuild the bundle
 
@@ -53,9 +53,10 @@ cd js
 npm ci
 npm run build          # writes inst/renderer/aob-renderer.min.js and inst/COPYRIGHTS
 npm run check-bundle   # fails if the committed files differ from a fresh build
+npm test               # renderer tests; the page test needs Chromium (CHROMIUM_PATH=...)
 ```
 
-The build fails if the bundle has non-ASCII characters or a closing script tag. CI runs `check-bundle` on every pull request (`.github/workflows/renderer-bundle.yaml`).
+The build fails if the bundle has non-ASCII characters or a closing script tag. CI runs `check-bundle` and `npm test` on every pull request (`.github/workflows/renderer-bundle.yaml`).
 
 ### Screenshots
 

@@ -28,3 +28,7 @@ jobs:
       - name: Check the committed bundle is a fresh build
         working-directory: js
         run: npm run check-bundle
+
+      - name: Renderer tests (headless Chrome)
+        working-directory: js
+        run: CHROMIUM_PATH="$(command -v google-chrome || command -v chromium)" npm test

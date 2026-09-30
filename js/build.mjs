@@ -72,6 +72,7 @@ function copyrightNotice(metafile) {
     if (m) names.add(m[1]);
   }
   const texts = new Map();
+  const notices = [];
   const rows = [...names].sort().map((name) => {
     const dir = join(here, "node_modules", name);
     const meta = JSON.parse(readFileSync(join(dir, "package.json"), "utf8"));
@@ -82,6 +83,9 @@ function copyrightNotice(metafile) {
       if (line && !holder) holder = line.trim();
     }
     if (!holder && meta.author) holder = `Copyright ${typeof meta.author === "string" ? meta.author : meta.author.name}`;
+    for (const f of files.filter((f) => /^notice/i.test(f))) {
+      notices.push([name, readFileSync(join(dir, f), "utf8").replace(/\r\n/g, "\n").trim()]);
+    }
     const lic = files.find((f) => /^licen/i.test(f));
     if (lic) {
       const text = readFileSync(join(dir, lic), "utf8").replace(/\r\n/g, "\n").trim();
@@ -99,6 +103,8 @@ function copyrightNotice(metafile) {
     "",
   ];
   for (const [lic, text] of texts) out.push(`---- ${lic} ----`, "", text, "");
+  // Apache-2.0 section 4(d): NOTICE files travel with the work, verbatim.
+  for (const [name, text] of notices) out.push(`---- NOTICE file of ${name} ----`, "", text, "");
   const s = out.join("\n");
   if (/[^\x00-\x7f]/.test(s)) throw new Error("COPYRIGHTS would contain non-ASCII characters");
   return s;

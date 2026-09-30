@@ -2,12 +2,14 @@
   "name": "aob-renderer",
   "version": "0.0.1",
   "private": true,
+  "type": "module",
   "description": "allonboard scene spec 0.1 renderer (deck.gl), bundled into aobcore's inst/",
   "license": "MIT",
   "scripts": {
     "build": "node build.mjs",
     "check-bundle": "node build.mjs --check",
-    "screenshots": "node screenshots.mjs"
+    "screenshots": "node screenshots.mjs",
+    "test": "node test/renderer.test.mjs"
   },
   "dependencies": {
     "@deck.gl/core": "9.4.0",

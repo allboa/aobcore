@@ -90,9 +90,15 @@ export async function render(container, scene, options = {}) {
   injectStyle();
   const blobs = options.blobs || {};
   const warnings = [];
+  const errors = [];
   const warn = (m) => {
     warnings.push(m);
     console.warn(`aob: ${m}`);
+  };
+  // A layer-level error: that layer is not drawn, the rest of the scene is.
+  const layerError = (m) => {
+    errors.push(m);
+    console.warn(`aob: error: ${m}`);
   };
   container.classList.add("aob-root");
   container.textContent = "";
@@ -132,6 +138,7 @@ export async function render(container, scene, options = {}) {
       scene,
       tables,
       warn,
+      error: layerError,
       coordinateSystem: globe ? COORDINATE_SYSTEM.LNGLAT : COORDINATE_SYSTEM.CARTESIAN,
       bounds: [Infinity, -Infinity, Infinity, -Infinity],
     };
@@ -224,8 +231,10 @@ export async function render(container, scene, options = {}) {
     }
     update();
     const kib = (total / 1024).toFixed(0);
-    setStatus(warnings.length ? warnings.join("; ") : "", false);
-    const handle = { deck, scene, tables, decodeMs, bytes: total, warnings };
+    const notes = errors.map((m) => `error: ${m}`).concat(warnings);
+    setStatus(notes.join("; "), errors.length > 0);
+    if (errors.length) container.dataset.aobErrors = String(errors.length);
+    const handle = { deck, scene, tables, decodeMs, bytes: total, warnings, errors };
     container.dataset.aobInfo = `${kib} KiB Arrow decoded in ${decodeMs.toFixed(1)} ms`;
     return handle;
   } catch (err) {
