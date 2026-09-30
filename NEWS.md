@@ -1,5 +1,15 @@
 # aobcore 0.0.0.9000
 
+* `crs_domain()` no longer crashes R when GDAL cannot find its PROJ
+  database (`proj.db`) and the view CRS is a PROJ string (#21): it checks
+  the database first and stops with an error, so `scene()` quietly writes
+  no bounds. `scene()` also no longer prints GDAL's "Cannot find proj.db"
+  error while it tries the domain (#17).
+* New `rgba_array()` builds a per-row colour column
+  (`FixedSizeList<uint8, 4>`) for a layer's `stroke` or `fill` (#21).
+* `plan_extent()` is exported: the extent of a tile plan's finest level,
+  for a default initial view (#17).
+
 * Scenes have a view domain by default (allboa/design decision 0005):
   `scene()`, `cog_scene()` and `view_cog()` take `domain`, by default the
   new `crs_domain()` of the view CRS, which walks out from the projection

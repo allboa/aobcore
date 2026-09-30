@@ -1124,8 +1124,23 @@ cog_value_range <- function(cog, bands = cog$band) {
   if (r[1] == r[2]) r + c(-0.5, 0.5) else r
 }
 
-## Union of the finest level's tile footprints.
+#' The extent of a tile plan
+#'
+#' The union of the footprints of the finest level's tiles, in view CRS
+#' units: a default initial view (`view$extent`) for a scene built from the
+#' plan. [cog_scene()] uses it, clipped to the view's domain.
+#'
+#' @param plan A tile plan from [cog_plan()].
+#' @return `c(xmin, xmax, ymin, ymax)`, or `NULL` when the plan has no tiles.
+#' @export
+#' @examplesIf requireNamespace("gdalraster", quietly = TRUE) && !inherits(try(gdalraster::srs_to_wkt("EPSG:3031"), silent = TRUE), "try-error")
+#' f <- system.file("extdata", "polar_lonlat.tif", package = "aobcore")
+#' plan_extent(cog_plan(f, "EPSG:3031", levels = 1L))
 plan_extent <- function(plan) {
+  if (inherits(plan, "aob_tile_plan")) plan <- plan$plan
+  if (!is.list(plan) || !is.list(plan$levels) || !length(plan$levels)) {
+    stop("`plan` must be a tile plan from cog_plan().", call. = FALSE)
+  }
   lv <- plan$levels[[length(plan$levels)]]
   fp <- do.call(rbind, lapply(lv$tiles, `[[`, "footprint"))
   if (is.null(fp)) return(NULL)

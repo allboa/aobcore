@@ -93,3 +93,21 @@ test_that("cog_scene() opens on its data clipped to the domain", {
   expect_identical(length(s$layers[[1]]$plan$levels[[1]]$tiles),
                    length(s0$layers[[1]]$plan$levels[[1]]$tiles))
 })
+
+test_that("crs_domain() fails cleanly, and scene() drops the domain, without proj.db", {
+  skip_if_no_gdal()
+  # Without the PROJ database a PROJ string still resolves but a transform
+  # can crash R (aobcore#21), so the lookup check must stop it first.
+  local_mocked_bindings(proj_db_ok = function() FALSE)
+  called <- FALSE
+  local_mocked_bindings(transform_xy = function(...) {
+    called <<- TRUE
+    stop("transform_xy() must not be called")
+  }, .package = "gdalraster")
+  expect_error(crs_domain("+proj=ortho +lat_0=-90 +datum=WGS84"), "proj.db")
+  s <- scene("+proj=ortho +lat_0=-90 +datum=WGS84", domain = TRUE)
+  expect_null(s$view$bounds)
+  expect_false(called)
+  # A geographic CRS needs no transform.
+  expect_identical(crs_domain("OGC:CRS84")$extent, c(-180, 180, -90, 90))
+})

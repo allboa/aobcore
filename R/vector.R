@@ -267,3 +267,38 @@ gdal_same_crs <- function(a, b) {
 }
 
 `%||%` <- function(x, y) if (is.null(x)) y else x
+
+#' A per-row colour column
+#'
+#' Builds the Arrow array a layer's colour column holds: one `c(r, g, b, a)`
+#' per row as a `FixedSizeList<uint8, 4>`. Add it to a stream beside the
+#' geometry column (for example as a column of a 'nanoarrow' struct array)
+#' and name that column in [scene_add_layer()]'s `stroke` or `fill`.
+#'
+#' @param m A matrix (or data frame) of whole numbers 0 to 255 with one row
+#'   per feature and 4 columns (red, green, blue, alpha) or 3 (alpha is then
+#'   255).
+#' @return A `nanoarrow_array` of type `fixed_size_list<uint8, 4>` with
+#'   `nrow(m)` elements and no nulls.
+#' @export
+#' @examples
+#' m <- rbind(c(255, 0, 0, 255), c(0, 0, 255, 128))
+#' a <- rgba_array(m)
+#' a$length
+#' nanoarrow::infer_nanoarrow_schema(a)$format
+rgba_array <- function(m) {
+  if (is.data.frame(m)) m <- as.matrix(m)
+  if (!is.matrix(m) || !is.numeric(m) || !ncol(m) %in% 3:4) {
+    stop("`m` must be a numeric matrix with 3 or 4 columns (r, g, b and optionally a).",
+         call. = FALSE)
+  }
+  if (anyNA(m) || any(m < 0 | m > 255 | m != round(m))) {
+    stop("`m` must hold whole numbers 0 to 255.", call. = FALSE)
+  }
+  if (ncol(m) == 3L) m <- cbind(m, 255L)
+  child <- prim_array(nanoarrow::na_uint8(), as.raw(t(m)), length(m))
+  nanoarrow::nanoarrow_array_modify(
+    nanoarrow::nanoarrow_array_init(nanoarrow::na_fixed_size_list(nanoarrow::na_uint8(), 4L)),
+    list(length = nrow(m), null_count = 0L, children = list(child))
+  )
+}

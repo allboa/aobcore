@@ -87,7 +87,7 @@ view_bounds <- function(crs, domain) {
   if (is.null(domain) || isFALSE(domain)) return(NULL)
   if (isTRUE(domain)) {
     if (!requireNamespace("gdalraster", quietly = TRUE)) return(NULL)
-    d <- tryCatch(crs_domain(crs), error = function(e) NULL)
+    d <- tryCatch(gdal_quiet(crs_domain(crs)), error = function(e) NULL)
     return(d$extent)
   }
   if (inherits(domain, "aob_domain")) {

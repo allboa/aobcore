@@ -397,3 +397,14 @@ test_that("the coastline is on by default for south polar views only", {
   expect_length(s$layers, 1L)
   expect_length(cog_scene(fixture("polar_lonlat.tif"), crs = "EPSG:4326", coastline = TRUE)$layers, 2L)
 })
+
+test_that("plan_extent() gives the finest level's footprint", {
+  skip_if_no_gdal()
+  f <- system.file("extdata", "polar_lonlat.tif", package = "aobcore")
+  plan <- cog_plan(f, "EPSG:3031", levels = 1L)
+  e <- plan_extent(plan)
+  expect_length(e, 4L)
+  expect_true(e[1] < e[2] && e[3] < e[4])
+  expect_identical(plan_extent(plan$plan), e)
+  expect_error(plan_extent(list()), "tile plan")
+})
