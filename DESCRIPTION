@@ -1,0 +1,24 @@
+Package: aobcore
+Title: Lean Core for 'allonboard' Map Scenes
+Version: 0.0.0.9000
+Authors@R:
+    person("Michael", "Sumner", , "mdsumner@gmail.com", role = c("aut", "cre"))
+Description: Builds renderer-neutral map scenes that are drawn in their own
+    coordinate reference system, with polar views as the first-class case.
+    Data are carried as native 'GeoArrow' and grid descriptors. This is an
+    early skeleton; the package name is a placeholder.
+License: MIT + file LICENSE
+URL: https://github.com/allboa/aobcore
+BugReports: https://github.com/allboa/aobcore/issues
+Imports:
+    geoarrow,
+    htmltools,
+    nanoarrow,
+    wk
+Suggests:
+    gdalraster,
+    testthat (>= 3.0.0)
+Config/testthat/edition: 3
+Encoding: UTF-8
+Roxygen: list(markdown = TRUE)
+Config/roxygen2/version: 8.1.0
