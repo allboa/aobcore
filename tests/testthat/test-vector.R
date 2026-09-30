@@ -126,3 +126,20 @@ test_that("no geometries give an empty stream of the declared type", {
   expect_error(vector_stream(wk::wkb(crs = "EPSG:3031"), "EPSG:3031"),
                "no geometries and declares no point, line or polygon type")
 })
+
+test_that("rgba_array() builds a FixedSizeList<uint8, 4> colour column", {
+  a <- rgba_array(rbind(c(255, 0, 0, 255), c(0, 10, 255, 128)))
+  expect_s3_class(a, "nanoarrow_array")
+  expect_identical(a$length, 2L)
+  sch <- nanoarrow::infer_nanoarrow_schema(a)
+  expect_identical(sch$format, "+w:4")
+  expect_identical(sch$children[[1]]$format, "C")
+  v <- nanoarrow::convert_array(a$children[[1]], integer())
+  expect_identical(v, c(255L, 0L, 0L, 255L, 0L, 10L, 255L, 128L))
+  a3 <- rgba_array(matrix(c(1L, 2L, 3L), 1))
+  expect_identical(nanoarrow::convert_array(a3$children[[1]], integer()), c(1L, 2L, 3L, 255L))
+  expect_identical(rgba_array(matrix(integer(), 0, 4))$length, 0L)
+  expect_error(rgba_array(matrix(1:2, 1)), "3 or 4 columns")
+  expect_error(rgba_array(rbind(c(256, 0, 0, 0))), "0 to 255")
+  expect_error(rgba_array(rbind(c(1.5, 0, 0, 0))), "0 to 255")
+})

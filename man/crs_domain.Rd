@@ -49,7 +49,8 @@ extent is still the whole map.
 The centre is the CRS's natural origin: its false easting and northing
 taken back to longitude and latitude (a pole for a polar CRS). A
 geographic CRS is measured in degrees, so its domain is the whole world,
-\code{c(-180, 180, -90, 90)}. Requires the 'gdalraster' package.
+\code{c(-180, 180, -90, 90)}. Requires the 'gdalraster' package and, for a
+projected CRS, its PROJ database (\code{proj.db}); without it this is an error.
 
 The domain limits the camera only. Data outside it are still planned and
 drawn when the camera reaches them.

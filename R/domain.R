@@ -24,7 +24,8 @@
 #' The centre is the CRS's natural origin: its false easting and northing
 #' taken back to longitude and latitude (a pole for a polar CRS). A
 #' geographic CRS is measured in degrees, so its domain is the whole world,
-#' `c(-180, 180, -90, 90)`. Requires the 'gdalraster' package.
+#' `c(-180, 180, -90, 90)`. Requires the 'gdalraster' package and, for a
+#' projected CRS, its PROJ database (`proj.db`); without it this is an error.
 #'
 #' The domain limits the camera only. Data outside it are still planned and
 #' drawn when the camera reaches them.
@@ -56,11 +57,18 @@ crs_domain <- function(crs, k = 2, bearings = 72L, step = 0.5) {
   if (!is.numeric(step) || length(step) != 1L || is.na(step) || !(step > 0 && step <= 10)) {
     stop("`step` must be a single number of degrees above 0 and at most 10.", call. = FALSE)
   }
-  wkt <- crs_wkt(crs)
+  wkt <- gdal_quiet(crs_wkt(crs))
   if (isTRUE(gdalraster::srs_is_geographic(wkt))) {
     return(new_domain(crs, k, c(0, 0), c(0, 0), c(-180, 180, -90, 90),
                       cbind(c(-180, 180, 180, -180), c(-90, -90, 90, 90)),
                       rep(180, 4L), TRUE))
+  }
+  ## Without the PROJ database a PROJ string still resolves, but
+  ## gdalraster::transform_xy() can then crash R (allboa/aobcore#21), where
+  ## no tryCatch() can help: check first and fail with a catchable error.
+  if (!proj_db_ok()) {
+    stop("Cannot find the domain of ", crs_label(crs),
+         ": GDAL cannot find its PROJ database (proj.db).", call. = FALSE)
   }
   ll <- gdalraster::srs_to_wkt("OGC:CRS84")
   fwd <- function(lonlat) {
@@ -126,6 +134,22 @@ print.aob_domain <- function(x, ...) {
 }
 
 ## ---- internals -------------------------------------------------------------
+
+## Can PROJ find its database? Transforms need it, and an EPSG lookup is
+## the cheap test that fails cleanly without it.
+proj_db_ok <- function() {
+  nzchar(gdal_quiet(tryCatch(gdalraster::srs_to_wkt("EPSG:4326"), error = function(e) "")))
+}
+
+## Evaluate `expr` with GDAL's error messages silenced (errors still reach
+## R as conditions), for lookups whose failure is handled here.
+gdal_quiet <- function(expr) {
+  if ("push_error_handler" %in% getNamespaceExports("gdalraster")) {
+    gdalraster::push_error_handler("quiet")
+    on.exit(gdalraster::pop_error_handler(), add = TRUE)
+  }
+  expr
+}
 
 new_domain <- function(crs, k, centre, centre_lonlat, extent, outline, reach, bounded) {
   structure(list(crs = crs, k = k, centre = as.numeric(centre),
