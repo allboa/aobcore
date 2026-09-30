@@ -21,3 +21,21 @@ Made with GDAL (via gdalraster::ogr2ogr) using:
     -explodecollections -nlt LINESTRING -select featurecla \
     -lco COORDINATE_PRECISION=4 -lco RFC7946=NO -lco WRITE_BBOX=NO \
     coastline_south_40s.geojson ne_50m_coastline.geojson
+
+polar_3031.tif, polar_lonlat.tif
+--------------------------------
+
+Synthetic SST-like field (degrees C) as Cloud Optimized GeoTIFFs, made by
+tools/make-polar-cogs.R with GDAL's COG driver: Int16 with scale 0.001 and
+nodata -32768, 128 x 128 tiles, 3 overviews. Cells north of 40S and on a
+lobed "land" ring (not real land) are nodata; data resume south of 85S.
+Six 60-degree sectors, a ring at 60S and a blob on the antimeridian at 55S
+make rotation, mirroring and seams visible.
+
+  polar_3031.tif    EPSG:3031, 400 x 400 cells of 32 km over +-6400 km,
+                    DEFLATE, horizontal predictor.
+  polar_lonlat.tif  EPSG:4326, 720 x 100 cells of 0.5 degrees, lon -180..180,
+                    lat -40..-90, LZW, horizontal predictor. Covers the pole;
+                    the antimeridian is at its edges.
+
+License: generated data, same license as the package.

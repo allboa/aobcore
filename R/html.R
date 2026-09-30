@@ -13,7 +13,7 @@
 #'
 #' @param scene A scene from [scene()] and [scene_add_data()] or
 #'   [scene_add_vector()], which carries its blobs; or a plain list following
-#'   scene spec 0.1, with `version`, `view`, `data` and `layers`. It is written
+#'   scene spec 0.1 or 0.2, with `version`, `view`, `data` and `layers`. It is written
 #'   with [scene_json()].
 #' @param blobs A named list of raw vectors, each an Arrow IPC stream or file,
 #'   named by the `blob` keys used in `scene$data`. Defaults to the blobs the
@@ -142,8 +142,9 @@ check_scene_shape <- function(scene, blobs) {
   if (length(missing)) {
     fail("`scene` is missing ", paste(missing, collapse = ", "), ".")
   }
-  if (!identical(scene$version, scene_spec_version())) {
-    fail("`scene$version` must be \"", scene_spec_version(), "\".")
+  if (!is.character(scene$version) || length(scene$version) != 1L ||
+      !scene$version %in% scene_spec_versions) {
+    fail("`scene$version` must be \"", paste(scene_spec_versions, collapse = "\" or \""), "\".")
   }
   view <- scene$view
   if (!is.list(view) || !is.character(view$type) || length(view$type) != 1L ||
@@ -162,6 +163,12 @@ check_scene_shape <- function(scene, blobs) {
   for (id in ids) {
     ref <- data[[id]]
     if (!is.list(ref)) fail("Data reference `", id, "` must be a list.")
+    if (identical(ref$format, "cog")) {
+      if (!is.null(ref$blob) || is.null(ref$url)) {
+        fail("The cog data reference `", id, "` needs a `url` and no `blob`.")
+      }
+      next
+    }
     has_blob <- !is.null(ref$blob)
     if (has_blob == !is.null(ref$url)) {
       fail("Data reference `", id, "` needs exactly one of `blob` or `url`.")
@@ -195,13 +202,28 @@ check_scene_shape <- function(scene, blobs) {
         need(lid, layer$mesh$vertices)
         need(lid, layer$mesh$indices)
       }
+    } else if (identical(kind, "tiled_raster")) {
+      if (!identical(scene$version, "0.2") && !inherits(scene, "aob_scene")) {
+        fail("Layer `", lid, "` is a tiled raster, which needs scene spec 0.2.")
+      }
+      need(lid, layer$source)
+      if (!identical(data[[layer$source]]$format, "cog")) {
+        fail("Layer `", lid, "` draws `", layer$source, "`, which is not a cog.")
+      }
+      need(lid, layer$plan$mesh$vertices)
+      need(lid, layer$plan$mesh$indices)
+      ## Embedded tile bytes (see scene_add_tiled_raster()).
+      for (lv in layer$plan$levels) for (t in lv$tiles) {
+        key <- tile_blob_key(layer$source, t$byte_offset, t$byte_length)
+        if (key %in% names(blobs)) used_blobs <- c(used_blobs, key)
+      }
     } else if (is.character(kind) && length(kind) == 1L && kind %in% c("polygon", "path", "point")) {
       need(lid, layer$data)
       if (is.null(data[[layer$data]]$geometry)) {
         fail("Layer `", lid, "` draws data `", layer$data, "`, which has no `geometry`.")
       }
     } else {
-      fail("Layer `", lid, "` has kind \"", format(kind), "\"; expected polygon, path, point or raster.")
+      fail("Layer `", lid, "` has kind \"", format(kind), "\"; expected polygon, path, point, raster or tiled_raster.")
     }
   }
   unused <- setdiff(names(blobs), used_blobs)

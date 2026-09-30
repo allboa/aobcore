@@ -15,7 +15,7 @@ write_scene_html(
 \arguments{
 \item{scene}{A scene from \code{\link[=scene]{scene()}} and \code{\link[=scene_add_data]{scene_add_data()}} or
 \code{\link[=scene_add_vector]{scene_add_vector()}}, which carries its blobs; or a plain list following
-scene spec 0.1, with \code{version}, \code{view}, \code{data} and \code{layers}. It is written
+scene spec 0.1 or 0.2, with \code{version}, \code{view}, \code{data} and \code{layers}. It is written
 with \code{\link[=scene_json]{scene_json()}}.}
 
 \item{blobs}{A named list of raw vectors, each an Arrow IPC stream or file,

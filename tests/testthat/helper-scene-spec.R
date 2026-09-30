@@ -137,3 +137,115 @@ skip_if_no_gdal <- function() {
   ok <- !inherits(try(gdalraster::srs_to_wkt("EPSG:3031"), silent = TRUE), "try-error")
   skip_if_not(ok, "gdalraster cannot resolve EPSG:3031 (PROJ database not found)")
 }
+
+# A structural check of a scene spec 0.2 scene with tiled raster layers:
+# keys and required fields of cog references, tiled_raster layers, plans,
+# levels, encodings and tiles, following scene-0.2.schema.json, plus the
+# validator's cross-checks (plan.crs is view.crs, windows fit their tile and
+# the level grid, mesh row runs do not overlap). Vector layers are checked by
+# scene_spec_problems() on the scene with its tiled layers removed.
+tiled_spec_problems <- function(x) {
+  p <- character()
+  add <- function(...) p <<- c(p, paste0(...))
+  only <- function(obj, keys, where) {
+    extra <- setdiff(names(obj), keys)
+    if (length(extra)) add(where, ": keys not allowed: ", paste(extra, collapse = ", "))
+  }
+  need <- function(obj, keys, where) {
+    miss <- setdiff(keys, names(obj))
+    if (length(miss)) add(where, ": missing ", paste(miss, collapse = ", "))
+  }
+  if (!identical(x$version, "0.2")) add("version must be \"0.2\"")
+  tiled <- vapply(x$layers, function(l) identical(l$kind, "tiled_raster"), TRUE)
+  rest <- x
+  rest$version <- "0.1"
+  rest$layers <- x$layers[!tiled]
+  rest$data <- x$data[!vapply(x$data, function(d) identical(d$format, "cog"), TRUE)]
+  p <- c(p, scene_spec_problems(rest))
+  codecs <- c("none", "deflate", "lzw", "zstd", "lerc", "lerc_deflate", "lerc_zstd", "webp", "packbits")
+  dtypes <- c("uint8", "int8", "uint16", "int16", "uint32", "int32", "float32", "float64")
+  for (l in x$layers[tiled]) {
+    w <- paste0("layer ", l$id)
+    only(l, c("id", "kind", "label", "visible", "source", "plan", "palette"), w)
+    need(l, c("id", "kind", "source", "plan", "palette"), w)
+    src <- x$data[[l$source]]
+    if (!identical(src$format, "cog")) add(w, ": source is not a cog")
+    only(src, c("format", "url"), paste(w, "source"))
+    if (!(is.character(src$url) && nzchar(src$url))) add(w, ": cog needs a url")
+    only(l$palette, c("name", "range"), paste(w, "palette"))
+    pl <- l$plan
+    only(pl, c("crs", "coverage", "planned_for", "selection", "mesh", "levels"), paste(w, "plan"))
+    need(pl, c("crs", "coverage", "mesh", "levels"), paste(w, "plan"))
+    if (!identical(pl$crs, x$view$crs)) add(w, ": plan crs is not view crs")
+    if (identical(pl$coverage, "all_levels") && is.null(pl$selection$rule)) add(w, ": needs selection")
+    if (identical(pl$coverage, "view") && (is.null(pl$planned_for) || length(pl$levels) != 1L)) {
+      add(w, ": a view plan needs planned_for and one level")
+    }
+    only(pl$mesh, c("vertices", "indices", "position_column", "uv_column", "index_column"), paste(w, "mesh"))
+    for (id in c(pl$mesh$vertices, pl$mesh$indices)) {
+      d <- x$data[[id]]
+      if (is.null(d) || !is.null(d$geometry) || !identical(d$format, "arrow-ipc-stream")) {
+        add(w, ": mesh table ", id, " is not a plain Arrow table")
+      }
+    }
+    runs <- NULL
+    for (lv in pl$levels) {
+      lw <- paste0(w, " level ", lv$level)
+      only(lv, c("level", "grid", "pixel_size", "encoding", "tiles"), lw)
+      need(lv, c("level", "grid", "pixel_size", "encoding", "tiles"), lw)
+      only(lv$grid, c("crs", "extent", "dim", "nodata"), paste(lw, "grid"))
+      enc <- lv$encoding
+      only(enc, c("codec", "predictor", "dtype", "byte_order", "samples_per_pixel", "planar",
+                  "band", "scale", "offset"), paste(lw, "encoding"))
+      if (!isTRUE(enc$codec %in% codecs)) add(lw, ": bad codec")
+      if (!isTRUE(enc$dtype %in% dtypes)) add(lw, ": bad dtype")
+      if ((enc$band %||% 1) > (enc$samples_per_pixel %||% 1)) add(lw, ": band out of range")
+      if (!(is.numeric(lv$pixel_size) && lv$pixel_size > 0)) add(lw, ": bad pixel_size")
+      for (t in lv$tiles) {
+        tw <- paste0(lw, " tile ", t$col, "/", t$row)
+        only(t, c("col", "row", "byte_offset", "byte_length", "size", "window", "footprint", "mesh"), tw)
+        need(t, c("col", "row", "byte_offset", "byte_length", "size", "footprint", "mesh"), tw)
+        if (!(t$byte_length >= 1)) add(tw, ": empty")
+        win <- t$window %||% list(x = 0, y = 0, width = t$size[1], height = t$size[2])
+        if (win$x + win$width > t$size[1] || win$y + win$height > t$size[2]) add(tw, ": window outside tile")
+        if (t$col * t$size[1] + win$x + win$width > lv$grid$dim[1] ||
+            t$row * t$size[2] + win$y + win$height > lv$grid$dim[2]) add(tw, ": runs past the grid")
+        fp <- t$footprint
+        if (!(length(fp) == 4L && fp[1] < fp[2] && fp[3] < fp[4])) add(tw, ": bad footprint")
+        if (t$mesh$index_count %% 3 != 0) add(tw, ": index_count not a multiple of 3")
+        runs <- rbind(runs, c(t$mesh$first_vertex, t$mesh$vertex_count, t$mesh$first_index,
+                              t$mesh$index_count))
+      }
+    }
+    for (k in c(1L, 3L)) {
+      if (is.null(runs) || nrow(runs) < 2L) next
+      o <- order(runs[, k])
+      if (any(utils::head(runs[o, k] + runs[o, k + 1L], -1) > runs[o, k][-1])) add(w, ": mesh runs overlap")
+    }
+  }
+  p
+}
+
+# Check a 0.2 scene structurally (as an R list and as parsed JSON) and, when
+# AOB_SCENESPEC names an allboa/scenespec checkout with its node modules
+# installed, with its validator (scripts/validate.js).
+expect_valid_tiled_scene <- function(s) {
+  expect_identical(tiled_spec_problems(unclass(s)), character())
+  json <- scene_json(s)
+  if (requireNamespace("jsonlite", quietly = TRUE)) {
+    parsed <- jsonlite::fromJSON(json, simplifyVector = TRUE,
+                                 simplifyDataFrame = FALSE, simplifyMatrix = FALSE)
+    expect_identical(tiled_spec_problems(parsed), character())
+  }
+  dir <- Sys.getenv("AOB_SCENESPEC")
+  node <- Sys.which("node")
+  if (nzchar(dir) && nzchar(node) && file.exists(file.path(dir, "scripts", "validate.js"))) {
+    f <- tempfile(fileext = ".json")
+    on.exit(unlink(f))
+    writeLines(json, f)
+    out <- suppressWarnings(system2(node, c(file.path(dir, "scripts", "validate.js"), f),
+                                    stdout = TRUE, stderr = TRUE))
+    expect_null(attr(out, "status"), label = paste(out, collapse = "\n"))
+    expect_match(out[1], "^valid")
+  }
+}

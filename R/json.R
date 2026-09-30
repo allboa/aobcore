@@ -1,6 +1,8 @@
 #' Scene as scene spec JSON
 #'
-#' Writes a scene as a scene spec 0.1 JSON document. The blobs are not
+#' Writes a scene as a scene spec JSON document: version 0.1, or 0.2 when
+#' the scene has a tiled raster layer (see [scene_spec_version()]). The
+#' blobs are not
 #' included; a transport delivers them beside the document (see
 #' [scene_blobs()]). The output is ASCII: other characters are written as
 #' `\uXXXX` escapes.
@@ -17,6 +19,7 @@ scene_json <- function(scene, pretty = FALSE) {
   check_scene(scene)
   x <- unclass(scene)
   attr(x, "blobs") <- NULL
+  x$version <- scene_spec_version(scene)
   json_value(x, if (isTRUE(pretty)) "" else NULL)
 }
 
@@ -26,6 +29,7 @@ scene_json <- function(scene, pretty = FALSE) {
 ## is an array. `indent` is NULL for compact output.
 json_value <- function(x, indent = NULL) {
   if (is.null(x)) return("null")
+  if (inherits(x, "aob_json")) return(json_verbatim(x))
   if (is.list(x)) {
     is_object <- !is.null(names(x))
     parts <- if (length(x) == 0L) {
@@ -46,6 +50,20 @@ json_value <- function(x, indent = NULL) {
   vals <- json_atomic(x)
   if (length(x) == 1L && !inherits(x, "AsIs")) return(vals)
   json_wrap(vals, c("[", "]"), NULL)
+}
+
+## JSON text written as-is (PROJJSON from GDAL), on one line, with any
+## non-ASCII character escaped so the output stays ASCII.
+json_verbatim <- function(x) {
+  s <- gsub("[\r\n]+[ \t]*", "", enc2utf8(as.character(x)))
+  cp <- utf8ToInt(s)
+  if (all(cp < 128L)) return(s)
+  out <- vapply(cp, function(ch) {
+    if (ch < 128L) return(intToUtf8(ch))
+    e <- json_string(intToUtf8(ch))
+    substr(e, 2L, nchar(e) - 1L)
+  }, "")
+  paste(out, collapse = "")
 }
 
 next_indent <- function(indent) if (is.null(indent)) NULL else paste0(indent, "  ")
