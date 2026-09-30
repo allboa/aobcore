@@ -6,20 +6,21 @@
 \usage{
 write_scene_html(
   scene,
-  blobs = list(),
+  blobs = attr(scene, "blobs"),
   file = tempfile(fileext = ".html"),
   title = NULL,
   theme = c("auto", "light", "dark")
 )
 }
 \arguments{
-\item{scene}{A scene: a list following scene spec 0.1, with \code{version},
-\code{view}, \code{data} and \code{layers}, such as one built from \code{\link[=scene]{scene()}}. Named lists
-are written as JSON objects and unnamed lists as arrays; atomic vectors of
-length one are written as scalars (wrap one in \code{I()} to write an array).}
+\item{scene}{A scene from \code{\link[=scene]{scene()}} and \code{\link[=scene_add_data]{scene_add_data()}} or
+\code{\link[=scene_add_vector]{scene_add_vector()}}, which carries its blobs; or a plain list following
+scene spec 0.1, with \code{version}, \code{view}, \code{data} and \code{layers}. It is written
+with \code{\link[=scene_json]{scene_json()}}.}
 
-\item{blobs}{A named list of raw vectors, each an Arrow IPC stream or file.
-Names are the \code{blob} keys used by \code{scene$data}.}
+\item{blobs}{A named list of raw vectors, each an Arrow IPC stream or file,
+named by the \code{blob} keys used in \code{scene$data}. Defaults to the blobs the
+scene carries (\code{\link[=scene_blobs]{scene_blobs()}}).}
 
 \item{file}{Path of the HTML file to write.}
 
@@ -46,9 +47,12 @@ blob. Full validation against the scene spec JSON Schema happens outside
 R (see the allboa/scenespec validator).
 }
 \examples{
-p <- probe_scene()
-f <- write_scene_html(p$scene, p$blobs, tempfile(fileext = ".html"))
+f <- write_scene_html(probe_scene(), file = tempfile(fileext = ".html"))
 file.size(f)
+
+x <- wk::wkt("LINESTRING (0 0, 1000000 1000000)", crs = "EPSG:3031")
+s <- scene_add_vector(scene(), "line", x, stroke = c(60, 66, 72, 255))
+f2 <- write_scene_html(s, file = tempfile(fileext = ".html"))
 \dontrun{
 utils::browseURL(f)
 }

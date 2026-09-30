@@ -9,21 +9,22 @@ script_text <- function(page, open_tag) {
 
 test_that("probe_scene() returns the conformance scene and its blobs", {
   p <- probe_scene()
-  expect_s3_class(p$scene, "aob_scene")
-  expect_named(p$scene, c("version", "view", "data", "layers"))
-  expect_identical(p$scene$version, scene_spec_version())
-  expect_named(p$blobs, c("land", "coast", "graticule", "sst_mesh", "sst_index", "sst_values"))
-  for (b in p$blobs) {
+  expect_s3_class(p, "aob_scene")
+  expect_named(p, c("version", "view", "data", "layers"))
+  expect_identical(p$version, scene_spec_version())
+  blobs <- scene_blobs(p)
+  expect_named(blobs, c("land", "coast", "graticule", "sst_mesh", "sst_index", "sst_values"))
+  for (b in blobs) {
     expect_type(b, "raw")
     # Arrow IPC stream: continuation marker then a schema message
     expect_identical(b[1:4], as.raw(c(0xff, 0xff, 0xff, 0xff)))
   }
-  expect_setequal(vapply(p$scene$data, function(d) d$blob, ""), names(p$blobs))
+  expect_setequal(vapply(p$data, function(d) d$blob, ""), names(blobs))
 })
 
 test_that("the probe blobs read as Arrow with native GeoArrow geometry", {
   p <- probe_scene()
-  s <- nanoarrow::read_nanoarrow(p$blobs$coast)
+  s <- nanoarrow::read_nanoarrow(scene_blobs(p)$coast)
   schema <- nanoarrow::infer_nanoarrow_schema(s)
   expect_identical(schema$children$geometry$metadata[["ARROW:extension:name"]], "geoarrow.linestring")
   s$release()
@@ -33,21 +34,22 @@ test_that("write_scene_html() writes a self-contained page with scene and blobs"
   p <- probe_scene()
   f <- tempfile(fileext = ".html")
   on.exit(unlink(f))
-  expect_invisible(out <- write_scene_html(p$scene, p$blobs, f))
+  blobs <- scene_blobs(p)
+  expect_invisible(out <- write_scene_html(p, file = f))
   expect_identical(out, f)
   page <- read_page(f)
   expect_true(startsWith(page, "<!DOCTYPE html>"))
 
-  # The scene is embedded as JSON, exactly as written by to_json().
+  # The scene is embedded as JSON, exactly as written by scene_json().
   json <- script_text(page, "<script type=\"application/json\" id=\"aob-scene\">")
-  expect_identical(json, to_json(p$scene))
+  expect_identical(json, scene_json(p))
   expect_match(json, "\"layers\":[{\"id\":\"sst\",\"kind\":\"raster\"", fixed = TRUE)
 
   # Every blob round-trips through base64.
-  for (k in names(p$blobs)) {
+  for (k in names(blobs)) {
     b64 <- script_text(page, sprintf(
       "<script type=\"application/octet-stream\" data-aob-blob=\"%s\" data-aob-scene=\"aob-scene\">", k))
-    expect_identical(b64_decode(b64), p$blobs[[k]])
+    expect_identical(b64_decode(b64), blobs[[k]])
   }
 
   # The renderer is inlined and nothing is loaded from elsewhere.
@@ -59,16 +61,16 @@ test_that("write_scene_html() writes a self-contained page with scene and blobs"
 
 test_that("write_scene_html() sets a fixed theme and a title", {
   p <- probe_scene()
-  f <- write_scene_html(p$scene, p$blobs, tempfile(fileext = ".html"),
+  f <- write_scene_html(p, file = tempfile(fileext = ".html"),
                         title = "Polar <probe>", theme = "dark")
   on.exit(unlink(f))
   page <- read_page(f)
   expect_match(page, "<html lang=\"en\" data-theme=\"dark\">", fixed = TRUE)
   expect_match(page, "<title>Polar &lt;probe&gt;</title>", fixed = TRUE)
-  f2 <- write_scene_html(p$scene, p$blobs, tempfile(fileext = ".html"))
+  f2 <- write_scene_html(p, file = tempfile(fileext = ".html"))
   on.exit(unlink(f2), add = TRUE)
   expect_match(read_page(f2), "<html lang=\"en\">", fixed = TRUE)
-  expect_error(write_scene_html(p$scene, p$blobs, tempfile(), theme = "blue"))
+  expect_error(write_scene_html(p, file = tempfile(), theme = "blue"))
 })
 
 test_that("an empty scene writes", {
@@ -78,11 +80,10 @@ test_that("an empty scene writes", {
 })
 
 test_that("write_scene_html() checks the scene shape", {
-  p <- probe_scene()
-  s <- p$scene
-  b <- p$blobs
+  s <- probe_scene()
+  b <- scene_blobs(s)
   tf <- tempfile(fileext = ".html")
-  expect_error(write_scene_html(s[c("version", "view")], b, tf), "missing data, layers")
+  expect_error(write_scene_html(unclass(s)[c("version", "view")], b, tf), "missing data, layers")
   s1 <- s
   s1$version <- "0.2"
   expect_error(write_scene_html(s1, b, tf), "must be \"0.1\"")
@@ -132,4 +133,36 @@ test_that("url data references need no blob", {
   f <- write_scene_html(s, list(), tempfile(fileext = ".html"))
   on.exit(unlink(f))
   expect_match(read_page(f), "\"url\":\"coast.arrows\"", fixed = TRUE)
+})
+
+test_that("a scene built with scene_add_vector() writes with its own blobs", {
+  x <- wk::wkt("LINESTRING (0 0, 1000000 1000000)", crs = "EPSG:3031")
+  s <- scene_add_vector(scene(), "line", x, stroke = c(60, 66, 72, 255))
+  f <- write_scene_html(s, file = tempfile(fileext = ".html"))
+  on.exit(unlink(f))
+  page <- read_page(f)
+  b64 <- script_text(page,
+    "<script type=\"application/octet-stream\" data-aob-blob=\"line\" data-aob-scene=\"aob-scene\">")
+  expect_identical(b64_decode(b64), scene_blobs(s)$line)
+  expect_identical(script_text(page, "<script type=\"application/json\" id=\"aob-scene\">"), scene_json(s))
+})
+
+test_that("a plain list scene with separate blobs writes", {
+  p <- probe_scene()
+  f <- write_scene_html(unclass(p)[c("version", "view", "data", "layers")], scene_blobs(p),
+                        tempfile(fileext = ".html"))
+  on.exit(unlink(f))
+  json <- script_text(read_page(f), "<script type=\"application/json\" id=\"aob-scene\">")
+  expect_identical(json, scene_json(p))
+})
+
+test_that("strings cannot close the script element", {
+  s <- structure(list(version = "0.1", view = list(type = "cartesian"),
+                      data = structure(list(), names = character()),
+                      layers = list(list(id = "a", kind = "path", data = "a",
+                                         label = "</script><b>"))),
+                 class = "aob_scene")
+  json <- page_json(s)
+  expect_false(grepl("<", json, fixed = TRUE))
+  expect_match(json, "\\u003c/script>\\u003cb>", fixed = TRUE)
 })

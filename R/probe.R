@@ -10,13 +10,13 @@
 #' The data are in `system.file("extdata", "probe", package = "aobcore")`,
 #' one Arrow IPC stream file (`.arrows`) per blob.
 #'
-#' @return A list with `scene`, a scene list of class `"aob_scene"`, and
-#'   `blobs`, a named list of raw vectors, ready for [write_scene_html()].
+#' @return A scene of class `"aob_scene"` carrying its six blobs (see
+#'   [scene_blobs()]), ready for [write_scene_html()].
 #' @export
 #' @examples
 #' p <- probe_scene()
-#' p$scene
-#' lengths(p$blobs)
+#' p
+#' lengths(scene_blobs(p))
 probe_scene <- function() {
   dir <- system.file("extdata", "probe", package = "aobcore")
   keys <- c("land", "coast", "graticule", "sst_mesh", "sst_index", "sst_values")
@@ -66,5 +66,5 @@ probe_scene <- function() {
            stroke = c(60L, 66L, 72L, 255L), stroke_width_px = 1)
     )
   )
-  list(scene = structure(scene, class = "aob_scene"), blobs = blobs)
+  structure(scene, class = "aob_scene", blobs = blobs)
 }

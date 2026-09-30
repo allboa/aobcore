@@ -11,12 +11,13 @@
 #' blob. Full validation against the scene spec JSON Schema happens outside
 #' R (see the allboa/scenespec validator).
 #'
-#' @param scene A scene: a list following scene spec 0.1, with `version`,
-#'   `view`, `data` and `layers`, such as one built from [scene()]. Named lists
-#'   are written as JSON objects and unnamed lists as arrays; atomic vectors of
-#'   length one are written as scalars (wrap one in `I()` to write an array).
-#' @param blobs A named list of raw vectors, each an Arrow IPC stream or file.
-#'   Names are the `blob` keys used by `scene$data`.
+#' @param scene A scene from [scene()] and [scene_add_data()] or
+#'   [scene_add_vector()], which carries its blobs; or a plain list following
+#'   scene spec 0.1, with `version`, `view`, `data` and `layers`. It is written
+#'   with [scene_json()].
+#' @param blobs A named list of raw vectors, each an Arrow IPC stream or file,
+#'   named by the `blob` keys used in `scene$data`. Defaults to the blobs the
+#'   scene carries ([scene_blobs()]).
 #' @param file Path of the HTML file to write.
 #' @param title Page title. Defaults to the first layer label, or
 #'   `"allonboard scene"`.
@@ -25,15 +26,21 @@
 #' @return The path of the written file, invisibly.
 #' @export
 #' @examples
-#' p <- probe_scene()
-#' f <- write_scene_html(p$scene, p$blobs, tempfile(fileext = ".html"))
+#' f <- write_scene_html(probe_scene(), file = tempfile(fileext = ".html"))
 #' file.size(f)
+#'
+#' x <- wk::wkt("LINESTRING (0 0, 1000000 1000000)", crs = "EPSG:3031")
+#' s <- scene_add_vector(scene(), "line", x, stroke = c(60, 66, 72, 255))
+#' f2 <- write_scene_html(s, file = tempfile(fileext = ".html"))
 #' \dontrun{
 #' utils::browseURL(f)
 #' }
-write_scene_html <- function(scene, blobs = list(), file = tempfile(fileext = ".html"),
+write_scene_html <- function(scene, blobs = attr(scene, "blobs"), file = tempfile(fileext = ".html"),
                              title = NULL, theme = c("auto", "light", "dark")) {
   theme <- match.arg(theme)
+  if (is.null(blobs)) {
+    blobs <- list()
+  }
   check_blobs(blobs)
   used <- check_scene_shape(scene, blobs)
   blobs <- blobs[intersect(names(blobs), used)]
@@ -65,7 +72,7 @@ write_scene_html <- function(scene, blobs = list(), file = tempfile(fileext = ".
     ),
     htmltools::tags$body(
       htmltools::tags$div(class = "aob-page", `data-aob-scene` = sid),
-      htmltools::tags$script(type = "application/json", id = sid, htmltools::HTML(to_json(scene))),
+      htmltools::tags$script(type = "application/json", id = sid, htmltools::HTML(page_json(scene))),
       blob_tags,
       htmltools::tags$script(htmltools::HTML(renderer_js()))
     )
@@ -75,6 +82,16 @@ write_scene_html <- function(scene, blobs = list(), file = tempfile(fileext = ".
   on.exit(close(con), add = TRUE)
   writeLines(c("<!DOCTYPE html>", html), con, useBytes = TRUE)
   invisible(file)
+}
+
+## The scene document for a <script> element: scene_json() output with
+## every "<" (only ever inside a JSON string) escaped, so no "</script>" can
+## end the element early.
+page_json <- function(scene) {
+  if (!inherits(scene, "aob_scene")) {
+    scene <- structure(scene, class = "aob_scene")
+  }
+  gsub("<", "\\u003c", scene_json(scene), fixed = TRUE)
 }
 
 page_css <- paste(

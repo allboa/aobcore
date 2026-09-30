@@ -49,8 +49,8 @@ interleaved <- function(f) f(coord_type = "INTERLEAVED")
 
 # ---- polar probe --------------------------------------------------------
 p <- probe_scene()
-write_scene_html(p$scene, p$blobs, file.path(out, "polar-probe.html"), title = "Polar probe")
-writeLines(aobcore:::to_json(p$scene), file.path(out, "polar-probe.json"))
+write_scene_html(p, file = file.path(out, "polar-probe.html"), title = "Polar probe")
+writeLines(scene_json(p), file.path(out, "polar-probe.json"))
 
 # ---- kinds --------------------------------------------------------------
 # All coordinates in EPSG:3031 metres around the Amery Ice Shelf region.
@@ -123,5 +123,5 @@ s <- list(
 )
 blobs <- list(field = vals, land = ipc(land), tracks = ipc(lines), stations = ipc(pts), cluster = ipc(multi))
 write_scene_html(s, blobs, file.path(out, "kinds.html"), title = "Scene spec 0.1 layer kinds")
-writeLines(aobcore:::to_json(s), file.path(out, "kinds.json"))
+writeLines(scene_json(structure(s, class = "aob_scene")), file.path(out, "kinds.json"))
 cat("wrote", out, "\n")

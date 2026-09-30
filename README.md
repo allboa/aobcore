@@ -6,16 +6,31 @@ Read the org agent brief first: [allboa/design AGENTS.md](https://github.com/all
 
 ## Status
 
-Early (phase 1). The package exports `scene_spec_version()`, a stub `scene()` that returns an empty scene in a projected view CRS (EPSG:3031 by default) following [scene spec 0.1](https://github.com/allboa/scenespec), `write_scene_html()` (the embed transport) and `probe_scene()` (the polar probe conformance scene and its data). Producers are not written yet. Nothing here is on CRAN.
+Early (phase 1), following [scene spec 0.1](https://github.com/allboa/scenespec). Nothing here is on CRAN.
 
-## A self-contained page
-
-`write_scene_html(scene, blobs, file)` writes one HTML file: the scene as JSON, each Arrow IPC blob as base64, and the bundled renderer inlined, so the page works offline and loads nothing from a CDN. `scene` is a list following scene spec 0.1; `blobs` is a named list of raw vectors whose names are the scene's `blob` keys.
+- `scene()` starts a scene in a projected view CRS (EPSG:3031 by default).
+- `vector_stream(x, crs)` turns any wk-handleable input (sf, sfc, wk vectors, data frames with a geometry column, or a WKB Arrow stream) into a nanoarrow stream with a native, interleaved GeoArrow geometry column. The core does not reproject: coordinates must already be in the view CRS.
+- `gdal_vector_stream(dsn, crs, ...)` reads, clips, densifies and reprojects any GDAL vector source to native GeoArrow (gdalraster, in Suggests; decision 0002). It uses GDAL's Arrow driver when present (`gdal_has_arrow()`), otherwise converts in R.
+- `vector_ipc()` writes Arrow IPC bytes; `scene_add_data()`, `scene_add_layer()` and `scene_add_vector()` add data references and layers; `scene_blobs()` returns the bytes; `scene_json()` writes the scene document.
+- `write_scene_html(scene)` writes a self-contained page that draws the scene (the embed transport); `probe_scene()` is the polar probe conformance scene with its data.
 
 ```r
 library(aobcore)
-p <- probe_scene()
-f <- write_scene_html(p$scene, p$blobs, "polar-probe.html")
+coast <- system.file("extdata", "coastline_south_40s.geojson", package = "aobcore")
+s <- scene("EPSG:3031")
+s <- scene_add_vector(s, "coast", gdal_vector_stream(coast, s$view$crs, densify = 0.25),
+                      stroke = c(60, 66, 72, 255), stroke_width_px = 1)
+cat(scene_json(s, pretty = TRUE))
+write_scene_html(s, file = "coast.html")
+```
+
+## A self-contained page
+
+`write_scene_html(scene, blobs = scene_blobs(scene), file)` writes one HTML file: the scene as JSON (`scene_json()`), each Arrow IPC blob as base64, and the bundled renderer inlined, so the page works offline and loads nothing from a CDN. A scene built with `scene_add_*()` carries its blobs; a plain list following scene spec 0.1 can be given with a named list of raw blobs instead.
+
+```r
+library(aobcore)
+f <- write_scene_html(probe_scene(), file = "polar-probe.html")
 browseURL(f)
 ```
 
@@ -60,4 +75,4 @@ cd js && node screenshots.mjs /tmp/scenes               # CHROMIUM_PATH=... to p
 remotes::install_github("allboa/aobcore")
 ```
 
-Imports: nanoarrow, geoarrow, wk, htmltools. gdalraster is suggested for the GDAL vector producer.
+Imports: nanoarrow, geoarrow, wk, htmltools. gdalraster is suggested for the GDAL vector producer. For GDAL to encode GeoArrow itself it needs the Arrow driver; on conda-forge that is the `libgdal-arrow-parquet` package.

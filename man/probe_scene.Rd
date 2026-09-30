@@ -7,8 +7,8 @@
 probe_scene()
 }
 \value{
-A list with \code{scene}, a scene list of class \code{"aob_scene"}, and
-\code{blobs}, a named list of raw vectors, ready for \code{\link[=write_scene_html]{write_scene_html()}}.
+A scene of class \code{"aob_scene"} carrying its six blobs (see
+\code{\link[=scene_blobs]{scene_blobs()}}), ready for \code{\link[=write_scene_html]{write_scene_html()}}.
 }
 \description{
 The polar view probe from the design origin record (2026-09-30), as the
@@ -24,6 +24,6 @@ one Arrow IPC stream file (\code{.arrows}) per blob.
 }
 \examples{
 p <- probe_scene()
-p$scene
-lengths(p$blobs)
+p
+lengths(scene_blobs(p))
 }
