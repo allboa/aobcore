@@ -237,6 +237,7 @@ as_native_vctr <- function(geom, crs, type = NULL) {
 }
 
 check_same_crs <- function(src, crs) {
+  if (inherits(src, "aob_json")) src <- as.character(src)
   if (is.null(src) || identical(src, wk::wk_crs_inherit())) return(invisible(TRUE))
   if (isTRUE(wk::wk_crs_equal(src, as.character(crs)))) return(invisible(TRUE))
   def <- tryCatch(wk::wk_crs_proj_definition(src), error = function(e) NULL)

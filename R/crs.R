@@ -2,7 +2,8 @@
 #'
 #' Turns a CRS definition into the form a scene carries. An
 #' `"authority:code"` string (such as `"EPSG:3031"` or `"OGC:CRS84"`) is kept
-#' as it is. Anything else GDAL can read (WKT 1 or 2, a PROJ string such as
+#' as it is, unchecked (and needs no 'gdalraster'); an unknown code fails
+#' later, where GDAL first needs it. Anything else GDAL can read (WKT 1 or 2, a PROJ string such as
 #' `"+proj=laea +lat_0=-90"`, PROJJSON text, a file name, or an `sf` `crs`
 #' object) is resolved with 'gdalraster': when it is exactly an
 #' authority's CRS the code is used, otherwise the definition is carried as
@@ -40,7 +41,9 @@ scene_crs <- function(crs) {
   }
   wkt <- tryCatch(gdalraster::srs_to_wkt(crs), error = function(e) "")
   if (!nzchar(wkt)) {
-    stop("GDAL cannot read the CRS \"", crs_short(crs), "\".", call. = FALSE)
+    stop("GDAL cannot read the CRS \"", crs_short(crs), "\".",
+         if (grepl("^[0-9]+$", crs)) paste0(" For an EPSG code write \"EPSG:", crs, "\" or a number."),
+         call. = FALSE)
   }
   crs_ref(wkt)
 }

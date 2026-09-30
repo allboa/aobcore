@@ -17,7 +17,8 @@ An \code{"authority:code"} string, or PROJJSON text of class
 \description{
 Turns a CRS definition into the form a scene carries. An
 \code{"authority:code"} string (such as \code{"EPSG:3031"} or \code{"OGC:CRS84"}) is kept
-as it is. Anything else GDAL can read (WKT 1 or 2, a PROJ string such as
+as it is, unchecked (and needs no 'gdalraster'); an unknown code fails
+later, where GDAL first needs it. Anything else GDAL can read (WKT 1 or 2, a PROJ string such as
 \code{"+proj=laea +lat_0=-90"}, PROJJSON text, a file name, or an \code{sf} \code{crs}
 object) is resolved with 'gdalraster': when it is exactly an
 authority's CRS the code is used, otherwise the definition is carried as

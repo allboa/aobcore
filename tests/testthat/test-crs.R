@@ -32,6 +32,7 @@ test_that("scene_crs() carries a CRS with no code as PROJJSON", {
   expect_identical(scene_crs(crs), crs)
   expect_match(crs_label(crs), "Lambert Azimuthal Equal Area")
   expect_error(scene_crs("not a crs"), "cannot read the CRS")
+  expect_error(scene_crs("3031"), "EPSG:3031")
 })
 
 test_that("a scene in a CRS with no code writes view.crs as a PROJJSON object", {
@@ -54,6 +55,8 @@ test_that("vector producers take a CRS with no code", {
   meta <- st$get_schema()$children$geometry$metadata[["ARROW:extension:metadata"]]
   expect_match(meta, "Lambert Azimuthal Equal Area", fixed = TRUE)
   s <- scene_add_vector(s, "line", x)
+  # Geometry tagged with the scene's own (classed) PROJJSON CRS.
+  s <- scene_add_vector(s, "pt", wk::wkt("POINT (1 2)", crs = s$view$crs))
   expect_valid_scene(s)
   expect_error(vector_stream(wk::wkt("POINT (1 2)", crs = "EPSG:3031"), laea_south),
                "does not reproject")

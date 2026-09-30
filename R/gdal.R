@@ -29,7 +29,7 @@
 #' @param dsn A data source GDAL can open: a file path, URL or `/vsi` path.
 #' @param crs The view CRS, such as `"EPSG:3031"`, or any definition
 #'   [scene_crs()] accepts (WKT, a PROJ string, PROJJSON). Passed to
-#'   `ogr2ogr -t_srs` as WKT.
+#'   `ogr2ogr -t_srs` (a code, or PROJJSON).
 #' @param layer Optional name of the source layer. By default the first.
 #' @param clip Optional clip box `c(xmin, ymin, xmax, ymax)` in source CRS
 #'   units, passed to `-clipsrc`.
@@ -61,7 +61,7 @@ gdal_vector_stream <- function(dsn, crs, layer = NULL, clip = NULL,
   if (!is.character(dsn) || length(dsn) != 1L || is.na(dsn)) {
     stop("`dsn` must be a single data source name.", call. = FALSE)
   }
-  crs_wkt(crs)
+  crs_wkt(crs)  # fails early when GDAL cannot resolve it
   has_arrow <- gdal_has_arrow()
   if (route == "auto") route <- if (has_arrow) "gdal" else "r"
   if (route == "gdal" && !has_arrow) {
@@ -69,7 +69,7 @@ gdal_vector_stream <- function(dsn, crs, layer = NULL, clip = NULL,
          "(conda-forge users can install libgdal-arrow-parquet).", call. = FALSE)
   }
 
-  args <- c("-t_srs", crs_wkt(crs), "-nln", "data", "-lco", "GEOMETRY_NAME=geometry")
+  args <- c("-t_srs", as.character(crs), "-nln", "data", "-lco", "GEOMETRY_NAME=geometry")
   if (!is.null(clip)) {
     if (!is.numeric(clip) || length(clip) != 4L || anyNA(clip)) {
       stop("`clip` must be c(xmin, ymin, xmax, ymax).", call. = FALSE)
