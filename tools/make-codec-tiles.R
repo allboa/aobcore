@@ -112,3 +112,15 @@ blobs <- lapply(scene_blobs(s), b64)
 out <- file.path("js", "test", "tiled-scene.json")
 writeLines(paste0('{"scene":', scene_json(s), ',"blobs":', aobcore:::json_value(blobs), "}"), out)
 cat("wrote", out, file.size(out), "bytes\n")
+
+# js/test/tiled-scene-fine.json: the same COG planned at full resolution
+# only (level 0, 16 tiles, all in view), for the renderer test of a server
+# that ignores Range: many tiles, one whole-file download.
+s <- scene_add_tiled_raster(scene("EPSG:3031"), "sst", cog_plan(f3031, "EPSG:3031", levels = 0),
+                            palette = "ocean", range = c(-2, 15), embed = FALSE,
+                            url = "polar_3031.tif")
+s$view$extent <- c(-6.4e6, 6.4e6, -6.4e6, 6.4e6)
+blobs <- lapply(scene_blobs(s), b64)
+out <- file.path("js", "test", "tiled-scene-fine.json")
+writeLines(paste0('{"scene":', scene_json(s), ',"blobs":', aobcore:::json_value(blobs), "}"), out)
+cat("wrote", out, file.size(out), "bytes\n")

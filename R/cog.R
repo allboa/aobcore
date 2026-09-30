@@ -143,8 +143,8 @@ print.aob_cog <- function(x, ...) {
 #' With `units_per_pixel`, the plan covers one view (`coverage = "view"`):
 #' one level, chosen by `selection` from the levels' pixel sizes, and the
 #' tiles whose footprint meets `extent`. Without it, the plan holds every
-#' level (`coverage = "all_levels"`) and the renderer chooses a level as the
-#' view changes, using the `selection` rule.
+#' level (`coverage = "all_levels"`), up to `max_tiles` tiles in all, and the
+#' renderer chooses a level as the view changes, using the `selection` rule.
 #'
 #' @param cog A COG from [cog_info()], or a path or URL passed to it.
 #' @param crs The view CRS, an `"authority:code"` string.
@@ -165,6 +165,13 @@ print.aob_cog <- function(x, ...) {
 #'   global data (north of about 74N in EPSG:3031 at the default), where
 #'   pixels grow without bound. `Inf` keeps every tile
 #'   that projects.
+#' @param max_tiles Tile budget for an `all_levels` plan. Levels are added
+#'   coarse to fine, and a level that would take the plan past this many
+#'   tiles is left out with its finer levels, with a warning; the coarsest
+#'   level is always kept. The page carries a mesh for every planned tile
+#'   (and, for a local COG, its bytes), so this bounds its size. Pass
+#'   `extent` to plan part of a large COG at full resolution, or `Inf` for
+#'   no budget.
 #' @return A list of class `"aob_tile_plan"`: `plan` (the scene spec
 #'   `tilePlan` object, with `mesh` data ids still to be named), `vertices`
 #'   and `indices` (Arrow IPC stream bytes), `cog`, and `levels` (the
@@ -180,7 +187,8 @@ print.aob_cog <- function(x, ...) {
 #' pv$plan$levels[[1]]$level
 cog_plan <- function(cog, crs = "EPSG:3031", extent = NULL, units_per_pixel = NULL,
                      levels = NULL, selection = c("coarsest_sufficient", "nearest_pixel_size"),
-                     max_segments = 32L, tolerance = 0.25, max_stretch = 8) {
+                     max_segments = 32L, tolerance = 0.25, max_stretch = 8,
+                     max_tiles = 1024) {
   need_gdalraster("cog_plan()")
   selection <- match.arg(selection)
   if (!inherits(cog, "aob_cog")) cog <- cog_info(cog)
@@ -200,6 +208,10 @@ cog_plan <- function(cog, crs = "EPSG:3031", extent = NULL, units_per_pixel = NU
   if (!is.numeric(max_stretch) || length(max_stretch) != 1L || is.na(max_stretch) ||
       !(max_stretch > 1)) {
     stop("`max_stretch` must be a single number above 1 (or Inf).", call. = FALSE)
+  }
+  if (!is.numeric(max_tiles) || length(max_tiles) != 1L || is.na(max_tiles) ||
+      !(max_tiles >= 1)) {
+    stop("`max_tiles` must be a single number, 1 or more (or Inf).", call. = FALSE)
   }
   max_segments <- as.integer(max_segments)
   if (length(max_segments) != 1L || is.na(max_segments) || max_segments < 1L ||
@@ -237,13 +249,25 @@ cog_plan <- function(cog, crs = "EPSG:3031", extent = NULL, units_per_pixel = NU
   dropped <- 0L
   stretched <- 0L
   out_levels <- list()
+  budget <- if (is.null(units_per_pixel)) max_tiles else Inf
+  capped <- integer()
   for (k in rev(keep)) {     # coarse to fine, as a renderer loads them
     lv <- cog$levels[[k]]
+    n_before <- sum(vapply(out_levels, function(l) length(l$tiles), 0L))
+    ## Culling only removes tiles, so without an extent a level with too
+    ## many tiles is left out before it is meshed.
+    if (length(capped) || (length(out_levels) && is.null(extent) &&
+                           n_before + nrow(lv$tiles) > budget)) {
+      capped <- c(capped, lv$level)
+      next
+    }
     meshes <- level_meshes(lv, proj, same, max_segments, tolerance * sizes[k],
                            max_pixel = max_stretch * sizes[k])
-    stretched <- stretched + attr(meshes, "stretched")
-    dropped <- dropped + sum(vapply(meshes, is.null, TRUE)) - attr(meshes, "stretched")
     tiles <- list()
+    lverts <- list()
+    lidx <- list()
+    lnv <- nv
+    lni <- ni
     for (i in seq_along(meshes)) {
       m <- meshes[[i]]
       if (is.null(m)) next
@@ -252,21 +276,31 @@ cog_plan <- function(cog, crs = "EPSG:3031", extent = NULL, units_per_pixel = NU
                                fp[4] < extent[3] || fp[3] > extent[4])) next
       t <- lv$tiles[i, ]
       nvert <- nrow(m$position)
-      verts[[length(verts) + 1L]] <- m
-      idx[[length(idx) + 1L]] <- m$index
+      lverts[[length(lverts) + 1L]] <- m
+      lidx[[length(lidx) + 1L]] <- m$index
       tile <- list(
         col = as.integer(t$col), row = as.integer(t$row),
         byte_offset = t$byte_offset, byte_length = t$byte_length,
         size = as.integer(lv$tile_size),
         window = m$window,
         footprint = fp,
-        mesh = list(first_vertex = nv, vertex_count = nvert,
-                    first_index = ni, index_count = length(m$index))
+        mesh = list(first_vertex = lnv, vertex_count = nvert,
+                    first_index = lni, index_count = length(m$index))
       )
       tiles[[length(tiles) + 1L]] <- tile[!vapply(tile, is.null, TRUE)]
-      nv <- nv + nvert
-      ni <- ni + length(m$index)
+      lnv <- lnv + nvert
+      lni <- lni + length(m$index)
     }
+    if (length(out_levels) && n_before + length(tiles) > budget) {
+      capped <- c(capped, lv$level)
+      next
+    }
+    stretched <- stretched + attr(meshes, "stretched")
+    dropped <- dropped + sum(vapply(meshes, is.null, TRUE)) - attr(meshes, "stretched")
+    verts <- c(verts, lverts)
+    idx <- c(idx, lidx)
+    nv <- lnv
+    ni <- lni
     out_levels[[length(out_levels) + 1L]] <- list(
       level = lv$level,
       grid = drop_null(list(crs = cog$crs, extent = lv$extent,
@@ -275,6 +309,11 @@ cog_plan <- function(cog, crs = "EPSG:3031", extent = NULL, units_per_pixel = NU
       encoding = lv$encoding,
       tiles = tiles
     )
+  }
+  if (length(capped)) {
+    warning("Level", if (length(capped) > 1L) "s", " ", paste(sort(capped), collapse = ", "),
+            " left out: the plan would pass `max_tiles` (", max_tiles, ") tiles. ",
+            "Pass `extent` to plan part of the COG, or raise `max_tiles`.", call. = FALSE)
   }
   if (stretched > 0L) {
     message(stretched, " tile(s) stretched past ", max_stretch, " times their level's pixel ",
@@ -334,10 +373,12 @@ print.aob_tile_plan <- function(x, ...) {
 #' a URL) the bytes of every planned tile are also carried as blobs beside
 #' the scene, one per tile, keyed `"<source id>@<byte_offset>+<byte_length>"`.
 #' The renderer uses such a blob when it has one and fetches the range
-#' otherwise. The `cog` reference still names the source file (as a
-#' `file://` URL). Embedding copies the planned tiles' compressed bytes, so a
-#' page for a large local COG is large; plan fewer levels or serve the COG
-#' over HTTP instead.
+#' otherwise. With `embed = TRUE` the `cog` reference is the file's base
+#' name, a URL relative to the page, so a shared page does not reveal the
+#' local directory (and works when the COG is served beside it). Give `url`
+#' to write another reference. Embedding copies the planned tiles'
+#' compressed bytes, so a page for a large local COG is large; plan fewer
+#' levels or serve the COG over HTTP instead.
 #'
 #' @param scene A scene from [scene()].
 #' @param id The layer id; the data ids are `id`, `<id>_vertices` and
@@ -350,6 +391,10 @@ print.aob_tile_plan <- function(x, ...) {
 #'   default the range of the coarsest level's values.
 #' @param embed Carry the planned tiles' bytes as blobs. Defaults to `TRUE`
 #'   for a local COG and `FALSE` for a URL.
+#' @param url Optional URL (absolute, or relative to the page) the scene gives
+#'   the renderer for the COG. By default the COG's http(s) URL, its
+#'   `file://` URL when neither embedded nor a URL, or its base name when
+#'   embedded.
 #' @param label Optional human-readable name.
 #' @param visible Optional initial visibility.
 #' @return The scene, now version 0.2, with the layer appended.
@@ -360,7 +405,7 @@ print.aob_tile_plan <- function(x, ...) {
 #' s
 #' names(scene_blobs(s))[1:4]
 scene_add_tiled_raster <- function(scene, id, plan, palette = "viridis", range = NULL,
-                                   embed = NULL, label = NULL, visible = NULL) {
+                                   embed = NULL, url = NULL, label = NULL, visible = NULL) {
   check_scene(scene)
   check_id(id)
   if (!inherits(plan, "aob_tile_plan")) plan <- cog_plan(plan, scene$view$crs)
@@ -382,7 +427,15 @@ scene_add_tiled_raster <- function(scene, id, plan, palette = "viridis", range =
   if (isTRUE(embed) && !cog$local) {
     stop("Only a local COG can be embedded; this one is a URL.", call. = FALSE)
   }
-  if (!isTRUE(embed) && !grepl("^(https?|file)://", cog$url)) {
+  if (!is.null(url)) {
+    if (!is.character(url) || length(url) != 1L || is.na(url) || !nzchar(url)) {
+      stop("`url` must be a single URL.", call. = FALSE)
+    }
+  } else if (isTRUE(embed)) {
+    url <- utils::URLencode(basename(cog$dsn), reserved = TRUE)
+  } else if (grepl("^(https?|file)://", cog$url)) {
+    url <- cog$url
+  } else {
     stop("The renderer cannot fetch \"", cog$url, "\"; give the COG as an http(s) URL",
          if (cog$local) " or embed it", ".", call. = FALSE)
   }
@@ -392,7 +445,7 @@ scene_add_tiled_raster <- function(scene, id, plan, palette = "viridis", range =
   }
 
   scene$version <- "0.2"
-  scene$data[[ids[1]]] <- list(format = "cog", url = cog$url)
+  scene$data[[ids[1]]] <- list(format = "cog", url = url)
   scene$data[[ids[2]]] <- list(format = "arrow-ipc-stream", blob = ids[2])
   scene$data[[ids[3]]] <- list(format = "arrow-ipc-stream", blob = ids[3])
   p <- plan$plan
@@ -433,14 +486,17 @@ scene_add_tiled_raster <- function(scene, id, plan, palette = "viridis", range =
 #' @param palette,range Passed to [scene_add_tiled_raster()].
 #' @param band The band to draw.
 #' @param coastline Add the bundled coastline south of 40S (densified and
-#'   projected with [gdal_vector_stream()]).
+#'   projected with [gdal_vector_stream()]). By default only when `crs` is a
+#'   south polar view (one centred on the South Pole, such as EPSG:3031 or
+#'   EPSG:3976), since the coastline is of the far south.
 #' @param extent Optional view `c(xmin, xmax, ymin, ymax)` in view CRS
 #'   units: the initial view. Tiles whose footprint misses this extent,
 #'   widened by half its size on each side, are left out of the plan, so
 #'   the page shows nothing far beyond it. By default every tile is planned
 #'   and the view is the full-resolution tiles' footprint.
+#' @param url Passed to [scene_add_tiled_raster()].
 #' @param ... Passed to [cog_plan()] (`levels`, `selection`,
-#'   `max_segments`, `tolerance`, `max_stretch`).
+#'   `max_segments`, `tolerance`, `max_stretch`, `max_tiles`).
 #' @return `cog_scene()`: a scene (spec 0.2) carrying its blobs.
 #'   `view_cog()`: the path of the written page, invisibly.
 #' @export
@@ -452,10 +508,10 @@ scene_add_tiled_raster <- function(scene, id, plan, palette = "viridis", range =
 #' utils::browseURL(f)
 #' }
 view_cog <- function(dsn, crs = "EPSG:3031", palette = "viridis", range = NULL, band = 1L,
-                     coastline = TRUE, extent = NULL, file = tempfile(fileext = ".html"),
-                     title = NULL, theme = c("auto", "light", "dark"), ...) {
+                     coastline = NULL, extent = NULL, file = tempfile(fileext = ".html"),
+                     title = NULL, theme = c("auto", "light", "dark"), url = NULL, ...) {
   s <- cog_scene(dsn, crs = crs, palette = palette, range = range, band = band,
-                 coastline = coastline, extent = extent, ...)
+                 coastline = coastline, extent = extent, url = url, ...)
   write_scene_html(s, file = file, title = title %||% s$layers[[1]]$label, theme = theme)
 }
 
@@ -464,7 +520,7 @@ view_cog <- function(dsn, crs = "EPSG:3031", palette = "viridis", range = NULL, 
 #' @param title,theme Passed to [write_scene_html()].
 #' @export
 cog_scene <- function(dsn, crs = "EPSG:3031", palette = "viridis", range = NULL, band = 1L,
-                      coastline = TRUE, extent = NULL, ...) {
+                      coastline = NULL, extent = NULL, url = NULL, ...) {
   need_gdalraster("cog_scene()")
   cog <- if (inherits(dsn, "aob_cog")) dsn else cog_info(dsn, band = band)
   cull <- NULL
@@ -476,8 +532,8 @@ cog_scene <- function(dsn, crs = "EPSG:3031", palette = "viridis", range = NULL,
   plan <- cog_plan(cog, crs, extent = cull, ...)
   s <- scene(crs)
   s <- scene_add_tiled_raster(s, "cog", plan, palette = palette, range = range,
-                              label = basename(cog$dsn))
-  if (isTRUE(coastline)) {
+                              url = url, label = basename(cog$dsn))
+  if (isTRUE(coastline %||% south_polar_view(crs))) {
     coast <- system.file("extdata", "coastline_south_40s.geojson", package = "aobcore")
     s <- scene_add_vector(s, "coast", gdal_vector_stream(coast, crs, densify = 0.25),
                           stroke = c(60, 66, 72, 255), stroke_width_px = 1,
@@ -493,6 +549,20 @@ cog_scene <- function(dsn, crs = "EPSG:3031", palette = "viridis", range = NULL,
 }
 
 ## ---- internals -------------------------------------------------------------
+
+## Is the view CRS centred on the South Pole? True when the pole projects
+## to a finite point and points at 80S on four meridians lie at one distance
+## from it (polar stereographic, azimuthal equal area and equidistant).
+south_polar_view <- function(crs) {
+  wkt <- tryCatch(gdalraster::srs_to_wkt(crs), error = function(e) "")
+  if (!nzchar(wkt)) return(FALSE)
+  ll <- cbind(c(0, 0, 90, 180, -90), c(-90, -80, -80, -80, -80))
+  xy <- tryCatch(suppressWarnings(gdalraster::transform_xy(ll, gdalraster::srs_to_wkt("EPSG:4326"), wkt)),
+                 error = function(e) NULL)
+  if (is.null(xy) || !all(is.finite(xy)) || max(abs(xy)) > 1e9) return(FALSE)
+  d <- sqrt((xy[-1, 1] - xy[1, 1])^2 + (xy[-1, 2] - xy[1, 2])^2)
+  max(d) > 0 && (max(d) - min(d)) < 1e-6 * max(d)
+}
 
 need_gdalraster <- function(what) {
   if (!requireNamespace("gdalraster", quietly = TRUE)) {

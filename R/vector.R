@@ -23,6 +23,12 @@
 #' and geometry collections cannot be encoded as native GeoArrow and are an
 #' error.
 #'
+#' Input with no geometries (for example, a clip that removed everything)
+#' gives an empty stream of the type the input declares: an `sfc` class
+#' such as `sfc_MULTIPOLYGON`, or a 'geoarrow' vector's type. Empty input
+#' that declares no point, line or polygon type (an empty [wk::wkb()], say)
+#' is an error, since no native type can be chosen.
+#'
 #' @param x Geometry: a wk-handleable object, a data frame with a geometry
 #'   column, or a 'nanoarrow' array stream.
 #' @param crs The view CRS as an `"authority:code"` string, such as
@@ -142,7 +148,9 @@ is_interleaved <- function(schema) {
   FALSE
 }
 
-native_stream <- function(x, crs, geometry = NULL, check_crs = TRUE) {
+## `type` is the geometry type the source declares (such as
+## "MULTILINESTRING"), used only when there are no geometries to infer it.
+native_stream <- function(x, crs, geometry = NULL, check_crs = TRUE, type = NULL) {
   if (inherits(x, "nanoarrow_array_stream")) {
     x <- stream_data_frame(x)
   }
@@ -166,7 +174,7 @@ native_stream <- function(x, crs, geometry = NULL, check_crs = TRUE) {
   }
   if (check_crs) check_same_crs(wk::wk_crs(geom), crs)
 
-  native <- as_native_vctr(geom, crs)
+  native <- as_native_vctr(geom, crs, type)
   if (is.null(attrs)) {
     out <- data.frame(row.names = seq_along(native))
   } else {
@@ -204,13 +212,22 @@ geometry_column <- function(x) {
   stop("`x` has no geometry column that wk can read.", call. = FALSE)
 }
 
-as_native_vctr <- function(geom, crs) {
+as_native_vctr <- function(geom, crs, type = NULL) {
+  declared <- tryCatch(wk::wk_vector_meta(geom)$geometry_type, error = function(e) 0L)
   g <- wk::as_wkb(geom)
   g <- wk::wk_set_crs(g, NULL)
   g <- wk::wk_drop_m(wk::wk_drop_z(g))
   if (length(g) == 0L) {
-    stop("`x` has no geometries; a native GeoArrow type cannot be inferred.",
-         call. = FALSE)
+    ## Nothing to infer from: an empty column of the declared type.
+    names <- c("POINT", "LINESTRING", "POLYGON", "MULTIPOINT",
+               "MULTILINESTRING", "MULTIPOLYGON")
+    if (isTRUE(declared %in% 1:6)) type <- names[declared]
+    if (is.null(type) || !type %in% names) {
+      stop("`x` has no geometries and declares no point, line or polygon type, ",
+           "so a native GeoArrow type cannot be chosen.", call. = FALSE)
+    }
+    schema <- geoarrow::na_extension_geoarrow(type, crs = crs, coord_type = "INTERLEAVED")
+    return(geoarrow::as_geoarrow_vctr(wk::wk_set_crs(g, crs), schema = schema))
   }
   g <- wk::wk_set_crs(g, crs)
   schema <- geoarrow::infer_geoarrow_schema(g, coord_type = "INTERLEAVED")

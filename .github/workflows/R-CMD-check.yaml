@@ -48,3 +48,21 @@ jobs:
           build_args: 'c("--no-manual","--compact-vignettes=gs+qpdf")'
           args: 'c("--no-manual", "--as-cran")'
           error-on: '"warning"'
+
+      # Scene spec 0.2 output from cog_scene() (and the 0.1 scenes) checked
+      # by the scenespec validator, not only by the R tests' structural
+      # checks. Linux only: it has R, the package's dependencies and Node.
+      - name: Validate written scenes with the scenespec validator
+        if: runner.os == 'Linux'
+        env:
+          # A pinned scenespec commit (main after scene spec 0.3), so a spec
+          # change cannot turn this check red unseen; bump it deliberately.
+          SCENESPEC_SHA: ef3820057784d08633ba9e47d79ed41b13e56828
+        run: |
+          R CMD INSTALL .
+          Rscript tools/write-scenes.R "$RUNNER_TEMP/scenes"
+          git clone https://github.com/allboa/scenespec "$RUNNER_TEMP/scenespec"
+          cd "$RUNNER_TEMP/scenespec"
+          git checkout --detach "$SCENESPEC_SHA"
+          npm ci --no-audit --no-fund
+          node scripts/validate.js "$RUNNER_TEMP"/scenes/*.json

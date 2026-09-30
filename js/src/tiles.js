@@ -8,12 +8,19 @@
 // "<source>@<offset>+<length>" when the page carries one, else an HTTP range
 // request to the cog URL), decodes them and draws each tile's mesh slice
 // with the tile as its texture.
+//
+// Tiles no longer in view stay cached, up to MAX_CACHED decoded tiles; past
+// that the least recently drawn are dropped (and fetched again if needed).
+// A tile still loading when the view moves off it has its fetch aborted.
 import { SimpleMeshLayer } from "@deck.gl/mesh-layers";
 import { numericColumn, listColumn, decodeBase64 } from "./arrow.js";
 import { paletteStops, ramp, UnknownPaletteError, UNLIT } from "./palettes.js";
 import { decodeTile, colorizeTile, encodingProblem } from "./decode.js";
 
 const textureParameters = { minFilter: "nearest", magFilter: "nearest", mipmapFilter: "none" };
+
+// Decoded tiles kept beyond those the current view draws.
+export const MAX_CACHED = 256;
 
 export function tileBlobKey(source, t) {
   return `${source}@${t.byte_offset}+${t.byte_length}`;
@@ -49,15 +56,70 @@ export function selectLevel(levels, upp, rule) {
 
 const meets = (fp, v) => !(fp[1] < v[0] || fp[0] > v[1] || fp[3] < v[2] || fp[2] > v[3]);
 
-async function fetchRange(url, offset, length) {
-  const res = await fetch(url, { headers: { Range: `bytes=${offset}-${offset + length - 1}` } });
-  if (res.status === 206) return new Uint8Array(await res.arrayBuffer());
-  if (res.ok) {
-    // The server ignored the range and sent the whole file.
-    const all = new Uint8Array(await res.arrayBuffer());
-    return all.subarray(offset, offset + length);
-  }
-  throw new Error(`${url} returned ${res.status} for bytes ${offset}-${offset + length - 1}`);
+// A range reader: fetchRange(url, offset, length, signal) resolves to the
+// bytes. A server that ignores Range answers 200 with the whole file; that
+// body is kept (per URL) and later tiles are cut from it, rather than
+// downloading the whole file again for every tile. Until the first response
+// for a URL shows whether the server honours Range, other requests to it
+// wait, so tiles asked for together do not each get the whole file.
+// fetchFn is for tests.
+export function rangeReader(fetchFn = (u, o) => fetch(u, o)) {
+  const whole = new Map();
+  const probes = new Map();
+  return async function fetchRange(url, offset, length, signal) {
+    const cut = (all) => {
+      if (offset + length > all.length) throw new Error(`${url} has ${all.length} bytes; tile needs ${offset + length}`);
+      return all.subarray(offset, offset + length);
+    };
+    // Wait for a whole-file body another tile's request is reading. That
+    // read runs under the other tile's signal; if it fails or is aborted
+    // while this caller still wants its tile, start again.
+    const shared = async (p) => {
+      try {
+        return cut(await p);
+      } catch (err) {
+        if (signal && signal.aborted) throw err;
+        if (whole.get(url) === p) {
+          whole.delete(url);
+          probes.delete(url);
+        }
+        return fetchRange(url, offset, length, signal);
+      }
+    };
+    if (!whole.has(url) && probes.has(url)) await probes.get(url);
+    if (whole.has(url)) return shared(whole.get(url));
+    let answered = null;
+    if (!probes.has(url)) probes.set(url, new Promise((r) => { answered = r; }));
+    let res;
+    try {
+      res = await fetchFn(url, { headers: { Range: `bytes=${offset}-${offset + length - 1}` }, signal });
+    } finally {
+      if (answered) answered(); // waiters resume after whole is set below
+    }
+    if (res.status === 206) return new Uint8Array(await res.arrayBuffer());
+    if (res.ok) {
+      if (whole.has(url)) {
+        // Another tile's request is already reading the whole file.
+        if (res.body && res.body.cancel) res.body.cancel().catch(() => {});
+        return shared(whole.get(url));
+      }
+      const body = res.arrayBuffer().then((b) => new Uint8Array(b));
+      whole.set(url, body);
+      body.catch(() => whole.delete(url));
+      return cut(await body);
+    }
+    throw new Error(`${url} returned ${res.status} for bytes ${offset}-${offset + length - 1}`);
+  };
+}
+
+const fetchRange = rangeReader();
+
+// The cached tiles to drop: all but the max most recently used of those
+// not used by the current view (tile.used < now).
+export function tilesToEvict(cached, now, max) {
+  const idle = cached.filter((x) => x.used < now);
+  if (idle.length <= max) return [];
+  return idle.sort((a, b) => a.used - b.used).slice(0, idle.length - max);
 }
 
 export function buildTiledRaster(L, ctx) {
@@ -103,11 +165,14 @@ export function buildTiledRaster(L, ctx) {
       acc[1] = Math.max(acc[1], fp[1]);
       acc[2] = Math.min(acc[2], fp[2]);
       acc[3] = Math.max(acc[3], fp[3]);
-      return { t, lv, key: `${lv.level}/${t.col}/${t.row}`, state: "new", layer: null };
+      return { t, lv, key: `${lv.level}/${t.col}/${t.row}`, state: "new", layer: null, used: 0, ctrl: null };
     }),
   }));
   const rule = plan.coverage === "view" ? null : (plan.selection && plan.selection.rule) || "coarsest_sufficient";
   let failedOnce = false;
+  // Tiles loading or ready, and a counter of dynamic() calls for LRU order.
+  const live = new Set();
+  let clock = 0;
 
   function meshOf(t) {
     const r = t.mesh;
@@ -128,7 +193,7 @@ export function buildTiledRaster(L, ctx) {
     };
   }
 
-  async function load(tile) {
+  async function load(tile, signal) {
     const { t, lv } = tile;
     const key = tileBlobKey(L.source, t);
     let bytes;
@@ -136,8 +201,9 @@ export function buildTiledRaster(L, ctx) {
       const b = blobs[key];
       bytes = typeof b === "string" ? decodeBase64(b.trim()) : b instanceof Uint8Array ? b : new Uint8Array(b);
     } else {
-      bytes = await fetchRange(url, t.byte_offset, t.byte_length);
+      bytes = await fetchRange(url, t.byte_offset, t.byte_length, signal);
     }
+    if (signal.aborted) throw signal.reason;
     if (bytes.length !== t.byte_length) throw new Error(`tile ${tile.key}: got ${bytes.length} bytes, expected ${t.byte_length}`);
     const [w, h] = t.size;
     const values = decodeTile(bytes, lv.encoding, w, h);
@@ -163,14 +229,20 @@ export function buildTiledRaster(L, ctx) {
   function request(tile) {
     if (tile.state !== "new") return;
     tile.state = "loading";
+    const ctrl = new AbortController();
+    tile.ctrl = ctrl;
+    live.add(tile);
     ctx.pending(+1);
-    load(tile)
+    load(tile, ctrl.signal)
       .then((layer) => {
+        if (tile.ctrl !== ctrl) return;
         tile.layer = layer;
         tile.state = "ready";
       })
       .catch((err) => {
+        if (tile.ctrl !== ctrl) return; // aborted: the view moved on
         tile.state = "failed";
+        live.delete(tile);
         if (!failedOnce) {
           failedOnce = true;
           ctx.error(`${what}: tile ${tile.key}: ${err && err.message ? err.message : err}`);
@@ -179,9 +251,19 @@ export function buildTiledRaster(L, ctx) {
         }
       })
       .finally(() => {
+        if (tile.ctrl === ctrl) tile.ctrl = null;
         ctx.pending(-1);
         ctx.redraw();
       });
+  }
+
+  // Back to "new": abort a load in flight, or drop a decoded tile.
+  function forget(tile) {
+    if (tile.state === "loading" && tile.ctrl) tile.ctrl.abort();
+    tile.ctrl = null;
+    tile.layer = null;
+    tile.state = "new";
+    live.delete(tile);
   }
 
   // The deck.gl layers for a view: {bounds: [xmin, xmax, ymin, ymax],
@@ -190,7 +272,11 @@ export function buildTiledRaster(L, ctx) {
     const li = rule === null ? 0 : selectLevel(levels, view.unitsPerPixel, rule);
     const chosen = levels[li];
     const want = chosen.tiles.filter((x) => meets(x.t.footprint, view.bounds));
-    want.forEach(request);
+    const now = ++clock;
+    want.forEach((x) => {
+      x.used = now;
+      request(x);
+    });
     const out = [];
     // While the chosen level loads, draw loaded tiles of coarser levels
     // beneath it (coarsest first), so the view never goes blank.
@@ -199,10 +285,18 @@ export function buildTiledRaster(L, ctx) {
         .filter((l) => l.pixel_size > chosen.pixel_size)
         .sort((a, b) => b.pixel_size - a.pixel_size)
         .forEach((l) => l.tiles.forEach((x) => {
-          if (x.state === "ready" && meets(x.t.footprint, view.bounds)) out.push(x.layer);
+          if (x.state === "ready" && meets(x.t.footprint, view.bounds)) {
+            x.used = now;
+            out.push(x.layer);
+          }
         }));
     }
     want.forEach((x) => x.state === "ready" && out.push(x.layer));
+    // Loads the view no longer needs are aborted; idle decoded tiles past
+    // the cache size are dropped, least recently drawn first.
+    for (const x of live) if (x.state === "loading" && x.used < now) forget(x);
+    const ready = [...live].filter((x) => x.state === "ready");
+    tilesToEvict(ready, now, MAX_CACHED).forEach(forget);
     ctx.status(L.id, `level ${chosen.lv.level}, ${want.length} tile${want.length === 1 ? "" : "s"}`);
     return out;
   }

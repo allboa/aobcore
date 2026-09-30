@@ -19,6 +19,10 @@
 #' the Arrow driver writes WKB and it is converted in R, so the output is
 #' never WKB. Pass `-nlt` in `options` to declare the type yourself.
 #'
+#' A source with no features left (for example after `clip`) gives an
+#' empty stream of the layer's declared geometry type. When the type is
+#' mixed or unknown, no native type can be chosen and that is an error.
+#'
 #' The stream is read fully into memory (as Arrow IPC bytes) and the
 #' temporary `/vsimem` files are removed before this returns.
 #'
@@ -95,6 +99,12 @@ gdal_vector_stream <- function(dsn, crs, layer = NULL, clip = NULL,
               "-lco", paste0("GEOMETRY_ENCODING=",
                              if (gdal_native_type(dsn, layer, options)) "GEOARROW_INTERLEAVED" else "WKB"),
               "-lco", "FID=")
+    ## The Arrow driver writes 2D only (Z and M are dropped on either
+    ## route), so a type given to -nlt loses its Z, M or 25D suffix.
+    if (!"-dim" %in% options) args <- c(args, "-dim", "XY")
+    i <- which(options == "-nlt")
+    i <- i[i < length(options)] + 1L
+    options[i] <- nlt_2d(options[i])
   } else {
     dst <- file.path(dir, "data.gpkg")
     args <- c("-f", "GPKG", args)
@@ -112,15 +122,18 @@ gdal_vector_stream <- function(dsn, crs, layer = NULL, clip = NULL,
     lyr$releaseArrowStream()
     out <- nanoarrow::read_nanoarrow(bytes)
     geom <- geometry_field(out$get_schema())
-    if (!is.null(geom) && geom$interleaved) return(out)
+    if (!is.null(geom) && geom$interleaved) return(with_field_crs(out, geom$column, crs))
     ## The layer's geometry type is mixed or unknown, so GDAL wrote WKB.
     df <- stream_data_frame(out)
+    type <- NULL
   } else {
     df <- stream_data_frame(stream)
     lyr$releaseArrowStream()
+    type <- layer_type(lyr)
   }
-  ## Coordinates are already in `crs` (GDAL reprojected them).
-  native_stream(df, crs, geometry = "geometry", check_crs = FALSE)
+  ## Coordinates are already in `crs` (GDAL reprojected them). With no
+  ## features, the layer's declared type gives an empty layer of that type.
+  native_stream(df, crs, geometry = "geometry", check_crs = FALSE, type = type)
 }
 
 #' Does GDAL have the Arrow driver?
@@ -140,11 +153,35 @@ gdal_has_arrow <- function() {
   !is.null(fmts) && "Arrow" %in% fmts$short_name[fmts$vector]
 }
 
-## Can the Arrow driver encode this layer as GeoArrow? Only when the layer
-## declares one point, line or polygon type (single or multi). A `-nlt` in
-## `options` declares it; `-sql` makes it unknowable here.
+## GDAL's Arrow driver puts the CRS in the schema's "geo" metadata only.
+## Write it to the geometry field's `ARROW:extension:metadata` too, as
+## 'geoarrow' does on the R route, so both routes give the same field.
+with_field_crs <- function(stream, column, crs) {
+  schema <- stream$get_schema()
+  batches <- nanoarrow::collect_array_stream(stream, validate = FALSE)
+  field <- schema$children[[column]]
+  ext <- sub("^geoarrow[.]", "", field$metadata[["ARROW:extension:name"]])
+  meta <- geoarrow::na_extension_geoarrow(toupper(ext), crs = crs)$metadata
+  field_meta <- field$metadata
+  field_meta[["ARROW:extension:metadata"]] <- meta[["ARROW:extension:metadata"]]
+  children <- schema$children
+  children[[column]] <- nanoarrow::nanoarrow_schema_modify(field, list(metadata = field_meta))
+  schema <- nanoarrow::nanoarrow_schema_modify(schema, list(children = children))
+  batches <- lapply(batches, nanoarrow::nanoarrow_array_set_schema, schema, validate = FALSE)
+  nanoarrow::basic_array_stream(batches, schema = schema, validate = FALSE)
+}
+
+## Can the Arrow driver encode this layer as GeoArrow? Only when the output
+## declares one point, line or polygon type (single or multi). A `-nlt` of
+## one of those six types (with any Z, M or 25D suffix) declares it; any
+## other type given to `-nlt` (GEOMETRY, GEOMETRYCOLLECTION, a curve type,
+## NONE) or CONVERT_TO_CURVE does not. PROMOTE_TO_MULTI and
+## CONVERT_TO_LINEAR keep the layer's own kind, so the layer's type decides,
+## as it does with no `-nlt`. `-sql` makes it unknowable here.
 gdal_native_type <- function(dsn, layer, options) {
-  if ("-nlt" %in% options) return(TRUE)
+  nlt <- nlt_values(options)
+  if (any(nlt %in% native_nlt)) return(TRUE)
+  if (any(!nlt %in% c("PROMOTE_TO_MULTI", "CONVERT_TO_LINEAR"))) return(FALSE)
   if ("-sql" %in% options) return(FALSE)
   lyr <- if (is.null(layer)) {
     gdalraster::GDALVector$new(dsn)
@@ -152,8 +189,25 @@ gdal_native_type <- function(dsn, layer, options) {
     gdalraster::GDALVector$new(dsn, layer)
   }
   on.exit(lyr$close())
+  !is.null(layer_type(lyr))
+}
+
+## A layer's declared geometry type when it is one of the six native types
+## (dimension suffix removed), otherwise NULL.
+layer_type <- function(lyr) {
   type <- toupper(gsub("[^A-Za-z]", "", lyr$getGeomType()))
   type <- sub("(ZM|Z|M|D)$", "", type)
-  type %in% c("POINT", "LINESTRING", "POLYGON", "MULTIPOINT",
-              "MULTILINESTRING", "MULTIPOLYGON")
+  if (type %in% native_nlt) type else NULL
 }
+
+native_nlt <- c("POINT", "LINESTRING", "POLYGON", "MULTIPOINT",
+                "MULTILINESTRING", "MULTIPOLYGON")
+
+## The values given to `-nlt` in `options`, upper case, with a Z, M, ZM or
+## 25D dimension suffix removed.
+nlt_values <- function(options) {
+  i <- which(options == "-nlt")
+  nlt_2d(toupper(options[i[i < length(options)] + 1L]))
+}
+
+nlt_2d <- function(x) sub("(25D|ZM|Z|M)$", "", x, ignore.case = TRUE)
