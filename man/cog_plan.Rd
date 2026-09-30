@@ -12,7 +12,8 @@ cog_plan(
   levels = NULL,
   selection = c("coarsest_sufficient", "nearest_pixel_size"),
   max_segments = 32L,
-  tolerance = 0.25
+  tolerance = 0.25,
+  max_stretch = 8
 )
 }
 \arguments{
@@ -36,6 +37,13 @@ is no larger than a screen pixel) or \code{"nearest_pixel_size"}.}
 \item{max_segments}{Densest mesh lattice per tile edge.}
 
 \item{tolerance}{Allowed mesh error, in source pixels of the level.}
+
+\item{max_stretch}{Tiles whose least stretched pixel is larger than this
+many times the level's typical (median) pixel in the view are left out,
+with a message. This drops the far polar cap from a polar view of
+global data (north of about 74N in EPSG:3031 at the default), where
+pixels grow without bound. \code{Inf} keeps every tile
+that projects.}
 }
 \value{
 A list of class \code{"aob_tile_plan"}: \code{plan} (the scene spec

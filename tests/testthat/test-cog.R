@@ -293,6 +293,43 @@ test_that("a COG the browser cannot fetch is refused unless embedded", {
   expect_true(any(startsWith(names(scene_blobs(s)), "sst@")))
 })
 
+test_that("a global lon/lat COG plans sensibly in a polar view", {
+  skip_if_no_gdal()
+  f <- tempfile(fileext = ".tif")
+  on.exit(unlink(f))
+  ## 0.25 degree cells in 8 degree tiles.
+  mem <- gdalraster::create("MEM", "", 1440L, 720L, 1L, "Int16", return_obj = TRUE)
+  mem$setGeoTransform(c(-180, 0.25, 0, 90, 0, -0.25))
+  mem$setProjection(gdalraster::srs_to_wkt("EPSG:4326"))
+  mem$write(1L, 0L, 0L, 1440L, 720L, rep(1L, 1440 * 720))
+  ## BLOCKSIZE below the COG driver's advised minimum warns; mute GDAL.
+  gdalraster::push_error_handler("quiet")
+  gdalraster::createCopy("COG", f, mem, quiet = TRUE, options = c("BLOCKSIZE=32"))
+  gdalraster::pop_error_handler()
+  mem$close()
+  cog <- cog_info(f)
+  p <- suppressWarnings(suppressMessages(cog_plan(cog, "EPSG:3031", levels = 0)))
+  lv <- p$plan$levels[[1]]
+  ## The median cell keeps the far pole from swamping the pixel size: a
+  ## quarter degree is about 28 km at the equator, less toward the pole.
+  expect_lt(lv$pixel_size, 60000)
+  expect_gt(lv$pixel_size, 10000)
+  ## The far polar cap's tiles are left out, the southern ones kept.
+  expect_message(suppressWarnings(cog_plan(cog, "EPSG:3031", levels = 0)), "stretched")
+  n_all <- nrow(cog$levels[[1]]$tiles)
+  expect_lt(length(lv$tiles), n_all)
+  fp <- do.call(rbind, lapply(lv$tiles, `[[`, "footprint"))
+  expect_true(any(fp[, 1] <= 0 & fp[, 2] >= 0 & fp[, 3] <= 0 & fp[, 4] >= 0))
+  p_inf <- suppressWarnings(cog_plan(cog, "EPSG:3031", levels = 0, max_stretch = Inf))
+  expect_gt(length(p_inf$plan$levels[[1]]$tiles), length(lv$tiles))
+  expect_error(cog_plan(cog, "EPSG:3031", max_stretch = 1), "max_stretch")
+  ## view_cog()'s extent also culls the plan.
+  s <- suppressWarnings(suppressMessages(
+    cog_scene(cog, extent = c(-2e6, 2e6, -2e6, 2e6), coastline = FALSE, levels = 0)))
+  expect_lt(length(s$layers[[1]]$plan$levels[[1]]$tiles), length(lv$tiles))
+  expect_equal(s$view$extent, c(-2e6, 2e6, -2e6, 2e6))
+})
+
 test_that("view_cog() writes the polar COG page in one call", {
   skip_if_no_gdal()
   f <- tempfile(fileext = ".html")
