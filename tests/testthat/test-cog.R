@@ -245,6 +245,8 @@ test_that("a /vsicurl/ path gives the renderer its plain URL", {
   expect_identical(dsn_ref(paste0("/vsicurl/", u)), list(gdal = paste0("/vsicurl/", u), http = u))
   q <- "/vsicurl?max_retry=3&url=https%3A%2F%2Fexample.org%2Fdata%2Fchart.tif"
   expect_identical(dsn_ref(q), list(gdal = q, http = u))
+  q2 <- "/vsicurl?url=https://x.org/a.tif?sig=abc&use_head=no"
+  expect_identical(dsn_ref(q2)$http, "https://x.org/a.tif?sig=abc")
   expect_null(dsn_ref("/vsimem/chart.tif")$http)
   expect_null(dsn_ref("chart.tif")$http)
 })
@@ -263,6 +265,8 @@ test_that("cloud /vsi paths map to their public https URLs", {
                      list(gdal = "/vsis3/bkt/a/b.tif", http = "https://bkt.s3.amazonaws.com/a/b.tif"))
     expect_identical(dsn_ref("/vsigs/bkt/a/b.tif")$http, "https://storage.googleapis.com/bkt/a/b.tif")
     expect_null(dsn_ref("/vsiaz/ctr/b.tif")$http)
+    expect_identical(dsn_ref("/vsis3/my.bkt/a b#1.tif")$http,
+                     "https://s3.amazonaws.com/my.bkt/a%20b%231.tif")
   })
   withr_env(c(AWS_S3_ENDPOINT = "data.source.coop", AWS_HTTPS = "",
               AZURE_STORAGE_ACCOUNT = "acct"), {

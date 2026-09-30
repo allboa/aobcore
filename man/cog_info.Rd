@@ -11,7 +11,7 @@ cog_info(dsn, band = 1L)
 \verb{/vsicurl/}; a \code{"/vsicurl/https://..."} path is the same URL), or any
 GDAL \verb{/vsi} path. The renderer fetches tiles itself, so \verb{/vsis3/},
 \verb{/vsigs/} and \verb{/vsiaz/} paths are given to it as their public https
-URLs (honouring \code{AWS_S3_ENDPOINT}, \code{AWS_HTTPS} and
+URLs (honouring \code{AWS_S3_ENDPOINT}, always path style, \code{AWS_HTTPS} and
 \code{AZURE_STORAGE_ACCOUNT}); that works for public objects only.}
 
 \item{band}{The band to draw, 1-based.}

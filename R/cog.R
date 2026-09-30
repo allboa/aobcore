@@ -19,7 +19,7 @@
 #'   `/vsicurl/`; a `"/vsicurl/https://..."` path is the same URL), or any
 #'   GDAL `/vsi` path. The renderer fetches tiles itself, so `/vsis3/`,
 #'   `/vsigs/` and `/vsiaz/` paths are given to it as their public https
-#'   URLs (honouring `AWS_S3_ENDPOINT`, `AWS_HTTPS` and
+#'   URLs (honouring `AWS_S3_ENDPOINT`, always path style, `AWS_HTTPS` and
 #'   `AZURE_STORAGE_ACCOUNT`); that works for public objects only.
 #' @param band The band to draw, 1-based.
 #' @return A list of class `"aob_cog"`: `dsn`, `url` (the reference a scene
@@ -610,13 +610,12 @@ dsn_ref <- function(dsn) {
   if (grepl("^/vsicurl/https?://", dsn)) {
     http <- sub("^/vsicurl/", "", dsn)
   } else if (startsWith(dsn, "/vsicurl?")) {
-    kv <- strsplit(strsplit(sub("^/vsicurl\\?", "", dsn), "&", fixed = TRUE)[[1]], "=")
-    for (p in kv) {
-      if (length(p) == 2L && p[1] == "url") http <- utils::URLdecode(p[2])
+    for (p in strsplit(sub("^/vsicurl\\?", "", dsn), "&", fixed = TRUE)[[1]]) {
+      if (startsWith(p, "url=")) http <- utils::URLdecode(sub("^url=", "", p))
     }
     if (!is.null(http) && !grepl("^https?://", http)) http <- NULL
   } else if (grepl("^/vsis3/[^/]+/.", dsn)) {
-    key <- sub("^/vsis3/", "", dsn)
+    key <- url_path(sub("^/vsis3/", "", dsn))
     endpoint <- vsi_config("AWS_S3_ENDPOINT")
     if (nzchar(endpoint)) {
       scheme <- if (toupper(vsi_config("AWS_HTTPS")) %in% c("NO", "FALSE", "OFF")) "http" else "https"
@@ -624,24 +623,32 @@ dsn_ref <- function(dsn) {
       http <- paste0(scheme, "://", endpoint, "/", key)
     } else {
       bucket <- sub("/.*$", "", key)
-      http <- paste0("https://", bucket, ".s3.amazonaws.com/", sub("^[^/]+/", "", key))
+      ## Path style for dotted bucket names: the *.s3.amazonaws.com
+      ## certificate covers one subdomain level only.
+      http <- if (grepl(".", bucket, fixed = TRUE)) paste0("https://s3.amazonaws.com/", key) else
+        paste0("https://", bucket, ".s3.amazonaws.com/", sub("^[^/]+/", "", key))
     }
   } else if (grepl("^/vsigs/[^/]+/.", dsn)) {
-    http <- paste0("https://storage.googleapis.com/", sub("^/vsigs/", "", dsn))
+    http <- paste0("https://storage.googleapis.com/", url_path(sub("^/vsigs/", "", dsn)))
   } else if (grepl("^/vsiaz/[^/]+/.", dsn)) {
     account <- vsi_config("AZURE_STORAGE_ACCOUNT")
     if (nzchar(account)) {
-      http <- paste0("https://", account, ".blob.core.windows.net/", sub("^/vsiaz/", "", dsn))
+      http <- paste0("https://", account, ".blob.core.windows.net/", url_path(sub("^/vsiaz/", "", dsn)))
     }
   }
   list(gdal = dsn, http = http)
 }
 
-## A GDAL configuration option, falling back to the environment.
+## A GDAL configuration option (GDAL also reads it from the environment).
 vsi_config <- function(key) {
   v <- tryCatch(gdalraster::get_config_option(key), error = function(e) "")
-  if (!is.character(v) || length(v) != 1L || is.na(v) || !nzchar(v)) v <- Sys.getenv(key)
-  v
+  if (!is.character(v) || length(v) != 1L || is.na(v)) "" else v
+}
+
+## A bucket/key path with each segment percent-encoded for a URL.
+url_path <- function(path) {
+  seg <- strsplit(path, "/", fixed = TRUE)[[1]]
+  paste(vapply(seg, utils::URLencode, "", reserved = TRUE), collapse = "/")
 }
 
 file_url <- function(path) {
