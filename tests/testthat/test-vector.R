@@ -78,7 +78,7 @@ test_that("vector_stream() refuses a different CRS and accepts a missing one", {
 })
 
 test_that("vector_stream() recognises an equivalent CRS via gdalraster", {
-  skip_if_not_installed("gdalraster")
+  skip_if_no_gdal()
   wkt <- gdalraster::srs_to_wkt("EPSG:3031")
   expect_silent(vector_stream(wk::wkt("POINT (1 2)", crs = wkt), "EPSG:3031"))
 })

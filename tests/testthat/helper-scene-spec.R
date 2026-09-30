@@ -128,3 +128,12 @@ geometry_info <- function(schema) {
   }
   NULL
 }
+
+# gdalraster is installed and its GDAL can resolve EPSG codes. Some binary
+# builds cannot find their PROJ database (proj.db); skip there rather than
+# fail, since that is an installation problem, not a producer one.
+skip_if_no_gdal <- function() {
+  skip_if_not_installed("gdalraster")
+  ok <- !inherits(try(gdalraster::srs_to_wkt("EPSG:3031"), silent = TRUE), "try-error")
+  skip_if_not(ok, "gdalraster cannot resolve EPSG:3031 (PROJ database not found)")
+}

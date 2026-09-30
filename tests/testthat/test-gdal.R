@@ -29,7 +29,7 @@ test_that("gdal_has_arrow() returns a flag", {
 })
 
 test_that("the coastline round-trips to EPSG:3031 through the Arrow driver", {
-  skip_if_not_installed("gdalraster")
+  skip_if_no_gdal()
   skip_if_not(gdal_has_arrow(), "GDAL has no Arrow driver")
   before <- vsimem_files()
   s <- gdal_vector_stream(coast_path(), "EPSG:3031", densify = 0.25, route = "gdal")
@@ -38,7 +38,7 @@ test_that("the coastline round-trips to EPSG:3031 through the Arrow driver", {
 })
 
 test_that("the coastline round-trips to EPSG:3031 through the R conversion", {
-  skip_if_not_installed("gdalraster")
+  skip_if_no_gdal()
   before <- vsimem_files()
   s <- gdal_vector_stream(coast_path(), "EPSG:3031", densify = 0.25, route = "r")
   expect_identical(vsimem_files(), before)
@@ -46,7 +46,7 @@ test_that("the coastline round-trips to EPSG:3031 through the R conversion", {
 })
 
 test_that("the coastline scene is valid scene spec 0.1", {
-  skip_if_not_installed("gdalraster")
+  skip_if_no_gdal()
   s <- scene("EPSG:3031")
   coast <- gdal_vector_stream(coast_path(), s$view$crs, densify = 0.25)
   s <- scene_add_vector(s, "coast", coast, stroke = c(60, 66, 72, 255),
@@ -60,7 +60,7 @@ test_that("the coastline scene is valid scene spec 0.1", {
 })
 
 test_that("clip and explode pass through to ogr2ogr", {
-  skip_if_not_installed("gdalraster")
+  skip_if_no_gdal()
   s <- gdal_vector_stream(coast_path(), "EPSG:3031", clip = c(-180, -90, 180, -60),
                           explode = TRUE, options = c("-where", "featurecla = 'Coastline'"))
   df <- as.data.frame(s)
@@ -71,7 +71,7 @@ test_that("clip and explode pass through to ogr2ogr", {
 })
 
 test_that("a layer of mixed single and multi lines is never WKB", {
-  skip_if_not_installed("gdalraster")
+  skip_if_no_gdal()
   src <- tempfile(fileext = ".geojson")
   on.exit(unlink(src))
   writeLines(c(
@@ -93,7 +93,7 @@ test_that("a layer of mixed single and multi lines is never WKB", {
 })
 
 test_that("gdal_vector_stream() checks its arguments", {
-  skip_if_not_installed("gdalraster")
+  skip_if_no_gdal()
   expect_error(gdal_vector_stream(coast_path(), "3031"), "authority:code")
   expect_error(gdal_vector_stream(coast_path(), "EPSG:3031", clip = 1:3), "clip")
   expect_error(gdal_vector_stream(coast_path(), "EPSG:3031", densify = -1), "densify")

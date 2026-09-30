@@ -66,13 +66,6 @@ never WKB. Pass \code{-nlt} in \code{options} to declare the type yourself.
 The stream is read fully into memory (as Arrow IPC bytes) and the
 temporary \verb{/vsimem} files are removed before this returns.
 }
-\examples{
-\dontshow{if (requireNamespace("gdalraster", quietly = TRUE)) withAutoprint(\{ # examplesIf}
-coast <- system.file("extdata", "coastline_south_40s.geojson", package = "aobcore")
-s <- gdal_vector_stream(coast, "EPSG:3031", densify = 0.25)
-s$get_schema()$children$geometry$metadata[["ARROW:extension:name"]]
-\dontshow{\}) # examplesIf}
-}
 \seealso{
 \code{\link[=vector_ipc]{vector_ipc()}} to write the stream as Arrow IPC bytes.
 }
