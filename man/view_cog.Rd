@@ -43,9 +43,10 @@ cog_scene(
 projected with \code{\link[=gdal_vector_stream]{gdal_vector_stream()}}).}
 
 \item{extent}{Optional view \code{c(xmin, xmax, ymin, ymax)} in view CRS
-units: the initial view, and tiles whose footprint misses it are left
-out of the plan. By default every tile is planned and the view is the
-full-resolution tiles' footprint.}
+units: the initial view. Tiles whose footprint misses this extent,
+widened by half its size on each side, are left out of the plan, so
+the page shows nothing far beyond it. By default every tile is planned
+and the view is the full-resolution tiles' footprint.}
 
 \item{file}{Path of the HTML file to write.}
 

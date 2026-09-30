@@ -161,8 +161,9 @@ print.aob_cog <- function(x, ...) {
 #' @param tolerance Allowed mesh error, in source pixels of the level.
 #' @param max_stretch Tiles whose least stretched pixel is larger than this
 #'   many times the level's typical (median) pixel in the view are left out,
-#'   with a message. This drops the far side of the globe from a polar view
-#'   of global data, where pixels grow without bound. `Inf` keeps every tile
+#'   with a message. This drops the far polar cap from a polar view of
+#'   global data (north of about 74N in EPSG:3031 at the default), where
+#'   pixels grow without bound. `Inf` keeps every tile
 #'   that projects.
 #' @return A list of class `"aob_tile_plan"`: `plan` (the scene spec
 #'   `tilePlan` object, with `mesh` data ids still to be named), `vertices`
@@ -434,9 +435,10 @@ scene_add_tiled_raster <- function(scene, id, plan, palette = "viridis", range =
 #' @param coastline Add the bundled coastline south of 40S (densified and
 #'   projected with [gdal_vector_stream()]).
 #' @param extent Optional view `c(xmin, xmax, ymin, ymax)` in view CRS
-#'   units: the initial view, and tiles whose footprint misses it are left
-#'   out of the plan. By default every tile is planned and the view is the
-#'   full-resolution tiles' footprint.
+#'   units: the initial view. Tiles whose footprint misses this extent,
+#'   widened by half its size on each side, are left out of the plan, so
+#'   the page shows nothing far beyond it. By default every tile is planned
+#'   and the view is the full-resolution tiles' footprint.
 #' @param ... Passed to [cog_plan()] (`levels`, `selection`,
 #'   `max_segments`, `tolerance`, `max_stretch`).
 #' @return `cog_scene()`: a scene (spec 0.2) carrying its blobs.
@@ -465,8 +467,13 @@ cog_scene <- function(dsn, crs = "EPSG:3031", palette = "viridis", range = NULL,
                       coastline = TRUE, extent = NULL, ...) {
   need_gdalraster("cog_scene()")
   cog <- if (inherits(dsn, "aob_cog")) dsn else cog_info(dsn, band = band)
-  if (!is.null(extent)) check_extent(extent)
-  plan <- cog_plan(cog, crs, extent = extent, ...)
+  cull <- NULL
+  if (!is.null(extent)) {
+    check_extent(extent)
+    pad <- c(-1, 1, -1, 1) * rep(c(diff(extent[1:2]), diff(extent[3:4])), each = 2) / 2
+    cull <- extent + pad
+  }
+  plan <- cog_plan(cog, crs, extent = cull, ...)
   s <- scene(crs)
   s <- scene_add_tiled_raster(s, "cog", plan, palette = palette, range = range,
                               label = basename(cog$dsn))
@@ -748,7 +755,7 @@ level_meshes <- function(lv, proj, same, n_max, tol, max_pixel = Inf) {
   lattice <- function(t, k) matrix(xy[(t - 1L) * np + seq_len(np), k], n + 1L)
   ok <- vapply(seq_len(nt), function(t) all(is.finite(xy[(t - 1L) * np + seq_len(np), ])), TRUE)
   ## Tiles whose least stretched pixel is still far larger than the level's
-  ## typical pixel (a global grid's far hemisphere in a polar view) are
+  ## typical pixel (a global grid's far polar cap in a polar view) are
   ## left out; a tile with any part near the view's domain is kept.
   stretched <- rep(FALSE, nt)
   if (!same && is.finite(max_pixel)) {

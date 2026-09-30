@@ -302,7 +302,10 @@ test_that("a global lon/lat COG plans sensibly in a polar view", {
   mem$setGeoTransform(c(-180, 0.25, 0, 90, 0, -0.25))
   mem$setProjection(gdalraster::srs_to_wkt("EPSG:4326"))
   mem$write(1L, 0L, 0L, 1440L, 720L, rep(1L, 1440 * 720))
+  ## BLOCKSIZE below the COG driver's advised minimum warns; mute GDAL.
+  gdalraster::push_error_handler("quiet")
   gdalraster::createCopy("COG", f, mem, quiet = TRUE, options = c("BLOCKSIZE=32"))
+  gdalraster::pop_error_handler()
   mem$close()
   cog <- cog_info(f)
   p <- suppressWarnings(suppressMessages(cog_plan(cog, "EPSG:3031", levels = 0)))
@@ -311,7 +314,7 @@ test_that("a global lon/lat COG plans sensibly in a polar view", {
   ## quarter degree is about 28 km at the equator, less toward the pole.
   expect_lt(lv$pixel_size, 60000)
   expect_gt(lv$pixel_size, 10000)
-  ## The far hemisphere's tiles are left out, the southern ones kept.
+  ## The far polar cap's tiles are left out, the southern ones kept.
   expect_message(suppressWarnings(cog_plan(cog, "EPSG:3031", levels = 0)), "stretched")
   n_all <- nrow(cog$levels[[1]]$tiles)
   expect_lt(length(lv$tiles), n_all)

@@ -40,8 +40,9 @@ is no larger than a screen pixel) or \code{"nearest_pixel_size"}.}
 
 \item{max_stretch}{Tiles whose least stretched pixel is larger than this
 many times the level's typical (median) pixel in the view are left out,
-with a message. This drops the far side of the globe from a polar view
-of global data, where pixels grow without bound. \code{Inf} keeps every tile
+with a message. This drops the far polar cap from a polar view of
+global data (north of about 74N in EPSG:3031 at the default), where
+pixels grow without bound. \code{Inf} keeps every tile
 that projects.}
 }
 \value{

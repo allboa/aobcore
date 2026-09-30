@@ -4,8 +4,9 @@
   full-resolution tile. `cog_plan()` measures each level's pixel size as the
   median over the grid (the far pole had pushed it to around 1e20 m, so the
   renderer always chose full resolution), and leaves out tiles stretched past
-  `max_stretch` (default 8) times that size, with a message. The extent passed
-  to `view_cog()` / `cog_scene()` now also culls the plan's tiles.
+  `max_stretch` (default 8) times that size, with a message (the far polar
+  cap of global data). The extent passed to `view_cog()` / `cog_scene()`,
+  widened by half its size on each side, now also culls the plan's tiles.
 * `cog_info()` and `view_cog()` accept a COG URL given as GDAL's
   `"/vsicurl/https://..."` path and give the renderer the plain URL; before,
   the page asked the browser for the `/vsicurl/` path and every tile failed.
