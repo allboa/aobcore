@@ -1,0 +1,116 @@
+test_that("vector_stream() writes native interleaved GeoArrow in the view CRS", {
+  x <- wk::wkt(c("LINESTRING (0 0, 1000 1000)", "LINESTRING (5 5, 6 6)"), crs = "EPSG:3031")
+  s <- vector_stream(x, "EPSG:3031")
+  expect_s3_class(s, "nanoarrow_array_stream")
+  g <- geometry_info(s$get_schema())
+  expect_identical(g$column, "geometry")
+  expect_identical(g$ext, "geoarrow.linestring")
+  expect_identical(g$coords, "+w:2")
+  meta <- s$get_schema()$children$geometry$metadata[["ARROW:extension:metadata"]]
+  expect_match(meta, "3031")
+  df <- as.data.frame(s)
+  expect_identical(nrow(df), 2L)
+  expect_equal(unclass(wk::wk_bbox(df$geometry))[1:4],
+               list(xmin = 0, ymin = 0, xmax = 1000, ymax = 1000))
+})
+
+test_that("each geometry kind gets its native encoding", {
+  cases <- list(
+    "geoarrow.point" = "POINT (1 2)",
+    "geoarrow.polygon" = "POLYGON ((0 0, 1 0, 0 1, 0 0))",
+    "geoarrow.multipoint" = c("POINT (1 2)", "MULTIPOINT ((3 4))"),
+    "geoarrow.multilinestring" = c("LINESTRING (0 0, 1 1)", "MULTILINESTRING ((0 0, 1 1))"),
+    "geoarrow.multipolygon" = "MULTIPOLYGON (((0 0, 1 0, 0 1, 0 0)))"
+  )
+  for (ext in names(cases)) {
+    g <- geometry_info(vector_stream(wk::wkt(cases[[ext]]), "EPSG:3031")$get_schema())
+    expect_identical(g$ext, ext)
+    expect_identical(g$coords, "+w:2")
+  }
+})
+
+test_that("attribute columns pass through from a data frame", {
+  df <- data.frame(name = c("a", "b"), value = c(1.5, 2.5))
+  df$geom <- wk::xy(c(1, 2), c(3, 4), crs = "EPSG:3031")
+  s <- vector_stream(df, "EPSG:3031")
+  expect_identical(names(s$get_schema()$children), c("name", "value", "geom"))
+  expect_identical(geometry_info(s$get_schema())$ext, "geoarrow.point")
+  out <- as.data.frame(s)
+  expect_identical(out$name, c("a", "b"))
+  expect_identical(out$value, c(1.5, 2.5))
+})
+
+test_that("an sf-style data frame uses its sf_column", {
+  df <- data.frame(label = "x")
+  df$other <- wk::wkt("POINT (9 9)")
+  df$shape <- wk::wkt("LINESTRING (0 0, 1 1)")
+  attr(df, "sf_column") <- "shape"
+  s <- vector_stream(df, "EPSG:3031")
+  shape <- s$get_schema()$children$shape
+  expect_identical(shape$metadata[["ARROW:extension:name"]], "geoarrow.linestring")
+  s2 <- vector_stream(df, "EPSG:3031", geometry = "other")
+  other <- s2$get_schema()$children$other
+  expect_identical(other$metadata[["ARROW:extension:name"]], "geoarrow.point")
+  expect_error(vector_stream(df, "EPSG:3031", geometry = "nope"), "not in `x`")
+})
+
+test_that("a WKB stream becomes native GeoArrow, never WKB", {
+  df <- data.frame(id = 1:2)
+  df$geometry <- geoarrow::as_geoarrow_vctr(
+    wk::wkt(c("LINESTRING Z (0 0 1, 1 1 1)", "LINESTRING Z (2 2 1, 3 3 1)")),
+    schema = geoarrow::geoarrow_wkb()
+  )
+  wkb <- nanoarrow::as_nanoarrow_array_stream(df)
+  expect_identical(geometry_info(wkb$get_schema())$ext, "geoarrow.wkb")
+  s <- vector_stream(wkb, "EPSG:3031")
+  g <- geometry_info(s$get_schema())
+  expect_identical(g$ext, "geoarrow.linestring")
+  expect_identical(g$coords, "+w:2")  # Z dropped
+  expect_identical(as.data.frame(s)$id, 1:2)
+})
+
+test_that("vector_stream() refuses a different CRS and accepts a missing one", {
+  expect_error(vector_stream(wk::wkt("POINT (1 2)", crs = "EPSG:4326"), "EPSG:3031"),
+               "does not reproject")
+  expect_silent(vector_stream(wk::wkt("POINT (1 2)"), "EPSG:3031"))
+  expect_silent(vector_stream(wk::wkt("POINT (1 2)", crs = "epsg:3031"), "EPSG:3031"))
+  expect_error(vector_stream(wk::wkt("POINT (1 2)"), "3031"), "authority:code")
+})
+
+test_that("vector_stream() recognises an equivalent CRS via gdalraster", {
+  skip_if_not_installed("gdalraster")
+  wkt <- gdalraster::srs_to_wkt("EPSG:3031")
+  expect_silent(vector_stream(wk::wkt("POINT (1 2)", crs = wkt), "EPSG:3031"))
+})
+
+test_that("vector_stream() refuses input it cannot encode natively", {
+  expect_error(vector_stream(wk::wkt(c("POINT (1 2)", "LINESTRING (0 0, 1 1)")), "EPSG:3031"),
+               "no native GeoArrow encoding")
+  expect_error(vector_stream(wk::wkt("GEOMETRYCOLLECTION (POINT (1 2))"), "EPSG:3031"),
+               "no native GeoArrow encoding")
+  expect_error(vector_stream(wk::wkt(character()), "EPSG:3031"), "no geometries")
+  expect_error(vector_stream(data.frame(a = 1), "EPSG:3031"), "no geometry column")
+  expect_error(vector_stream(1:3, "EPSG:3031"), "cannot be read by wk")
+})
+
+test_that("vector_ipc() writes IPC bytes that read back as native GeoArrow", {
+  x <- wk::wkt("POLYGON ((0 0, 10 0, 0 10, 0 0))", crs = "EPSG:3031")
+  bytes <- vector_ipc(vector_stream(x, "EPSG:3031"))
+  expect_type(bytes, "raw")
+  back <- nanoarrow::read_nanoarrow(bytes)
+  g <- geometry_info(back$get_schema())
+  expect_identical(g$ext, "geoarrow.polygon")
+  expect_identical(g$coords, "+w:2")
+  geom <- as.data.frame(back)$geometry
+  expect_identical(unclass(wk::as_wkt(wk::wk_set_crs(geom, NULL))),
+                   "POLYGON ((0 0, 10 0, 0 10, 0 0))")
+})
+
+test_that("vector_ipc() refuses WKB, separated coordinates and missing geometry", {
+  df <- data.frame(id = 1)
+  df$geometry <- geoarrow::as_geoarrow_vctr(wk::wkt("POINT (1 2)"), schema = geoarrow::geoarrow_wkb())
+  expect_error(vector_ipc(df), "not native GeoArrow")
+  df$geometry <- geoarrow::as_geoarrow_vctr(wk::wkt("POINT (1 2)"), schema = geoarrow::geoarrow_point())
+  expect_error(vector_ipc(df), "interleaved")
+  expect_error(vector_ipc(data.frame(a = 1)), "no native GeoArrow geometry column")
+})
