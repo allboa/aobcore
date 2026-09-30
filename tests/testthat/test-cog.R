@@ -241,21 +241,52 @@ test_that("cog_info() refuses what the spec cannot carry", {
 
 test_that("a /vsicurl/ path gives the renderer its plain URL", {
   u <- "https://example.org/data/chart.tif"
-  expect_identical(dsn_ref(u)$http, u)
-  expect_identical(dsn_ref(paste0("/vsicurl/", u))$http, u)
-  expect_identical(dsn_ref("http://127.0.0.1:8000/a.tif")$http, "http://127.0.0.1:8000/a.tif")
-  expect_null(dsn_ref("/vsis3/bucket/chart.tif")$http)
+  expect_identical(dsn_ref(u), list(gdal = paste0("/vsicurl/", u), http = u))
+  expect_identical(dsn_ref(paste0("/vsicurl/", u)), list(gdal = paste0("/vsicurl/", u), http = u))
+  q <- "/vsicurl?max_retry=3&url=https%3A%2F%2Fexample.org%2Fdata%2Fchart.tif"
+  expect_identical(dsn_ref(q), list(gdal = q, http = u))
   expect_null(dsn_ref("/vsimem/chart.tif")$http)
   expect_null(dsn_ref("chart.tif")$http)
 })
 
+test_that("cloud /vsi paths map to their public https URLs", {
+  withr_env <- function(vars, code) {
+    old <- Sys.getenv(names(vars), unset = NA)
+    do.call(Sys.setenv, as.list(vars))
+    on.exit(for (k in names(old)) if (is.na(old[[k]])) Sys.unsetenv(k) else
+      do.call(Sys.setenv, stats::setNames(list(old[[k]]), k)))
+    code
+  }
+  skip_if_not_installed("gdalraster")
+  withr_env(c(AWS_S3_ENDPOINT = "", AWS_HTTPS = "", AZURE_STORAGE_ACCOUNT = ""), {
+    expect_identical(dsn_ref("/vsis3/bkt/a/b.tif"),
+                     list(gdal = "/vsis3/bkt/a/b.tif", http = "https://bkt.s3.amazonaws.com/a/b.tif"))
+    expect_identical(dsn_ref("/vsigs/bkt/a/b.tif")$http, "https://storage.googleapis.com/bkt/a/b.tif")
+    expect_null(dsn_ref("/vsiaz/ctr/b.tif")$http)
+  })
+  withr_env(c(AWS_S3_ENDPOINT = "data.source.coop", AWS_HTTPS = "",
+              AZURE_STORAGE_ACCOUNT = "acct"), {
+    expect_identical(dsn_ref("/vsis3/bkt/a/b.tif")$http, "https://data.source.coop/bkt/a/b.tif")
+    expect_identical(dsn_ref("/vsiaz/ctr/b.tif")$http, "https://acct.blob.core.windows.net/ctr/b.tif")
+  })
+  withr_env(c(AWS_S3_ENDPOINT = "http://localhost:9000/", AWS_HTTPS = "NO"), {
+    expect_identical(dsn_ref("/vsis3/bkt/b.tif")$http, "http://localhost:9000/bkt/b.tif")
+  })
+})
+
 test_that("a COG the browser cannot fetch is refused unless embedded", {
   skip_if_no_gdal()
-  cog <- cog_info(fixture("polar_3031.tif"))
+  m <- "/vsimem/aob-test-polar.tif"
+  gdalraster::vsi_copy_file(fixture("polar_3031.tif"), m)
+  on.exit(gdalraster::vsi_unlink(m))
+  cog <- cog_info(m)
+  expect_true(cog$local)
+  expect_identical(cog$url, m)
   plan <- cog_plan(cog, "EPSG:3031", levels = 3)
-  plan$cog$url <- "/vsis3/bucket/polar_3031.tif"
-  plan$cog$local <- FALSE
-  expect_error(scene_add_tiled_raster(scene("EPSG:3031"), "sst", plan), "cannot fetch")
+  expect_error(scene_add_tiled_raster(scene("EPSG:3031"), "sst", plan, embed = FALSE),
+               "cannot fetch.*or embed it")
+  s <- scene_add_tiled_raster(scene("EPSG:3031"), "sst", plan)
+  expect_true(any(startsWith(names(scene_blobs(s)), "sst@")))
 })
 
 test_that("view_cog() writes the polar COG page in one call", {

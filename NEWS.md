@@ -3,8 +3,10 @@
 * `cog_info()` and `view_cog()` accept a COG URL given as GDAL's
   `"/vsicurl/https://..."` path and give the renderer the plain URL; before,
   the page asked the browser for the `/vsicurl/` path and every tile failed.
-  A COG under another `/vsi` scheme (such as `/vsis3/`) that is not embedded
-  is now an error, since the browser cannot fetch it.
+  GDAL's `/vsicurl?url=...` form works too. `/vsis3/`, `/vsigs/` and
+  `/vsiaz/` paths are given to the renderer as their public https URLs
+  (public objects only); another `/vsi` path that is not embedded is an
+  error, since the browser cannot fetch it.
 * Tiled COGs per gate A (design decision 0003, R-planned tiles) and scene
   spec 0.2 (#5): `cog_info()` reads each level's grid and tile byte ranges
   through GDAL, `cog_plan()` plans tiles with meshes projected to the view
