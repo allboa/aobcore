@@ -41,7 +41,10 @@ walk) is \code{bounded} and keeps
 its natural edge: Lambert azimuthal equal area gives the whole-Earth disc,
 orthographic stops at the horizon. A divergent one is cut where it becomes
 unreasonable: with \code{k = 2}, south polar stereographic ends just past the
-equator, Web Mercator at 60 degrees north and south.
+equator, Web Mercator at 60 degrees north and south. Pseudocylindrical
+world maps (Mollweide, Robinson, Equal Earth) stretch near their outer
+edge past the poles, so they report \code{bounded = FALSE} although their
+extent is still the whole map.
 
 The centre is the CRS's natural origin: its false easting and northing
 taken back to longitude and latitude (a pole for a polar CRS). A

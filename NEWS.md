@@ -8,7 +8,9 @@
   plus a quarter of its size on each side, and a scene with no `extent`
   opens on its data clipped to it. It limits the camera only; data outside
   it still load. `domain = FALSE`, or `options(aobcore.domain = FALSE)`,
-  turns it off and keeps the 0.1 to 0.3 output as before.
+  turns it off and keeps the 0.1 to 0.3 output as before. The domain needs
+  'gdalraster'; without it `scene()` writes no bounds, so the same code can
+  write 0.4 with 'gdalraster' installed and 0.1 to 0.3 without.
 * A view CRS can be any definition GDAL reads, not only an
   `"authority:code"` string: WKT, a PROJ string, PROJJSON text, an EPSG
   number or an `sf` `crs`. `scene()`, `cog_plan()`, `cog_scene()`,

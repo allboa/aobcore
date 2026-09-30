@@ -59,7 +59,8 @@ units: the initial view. Tiles whose footprint misses this extent,
 widened by half its size on each side, are left out of the plan, so
 the page shows nothing far beyond it. By default every tile is planned
 and the view is the full-resolution tiles' footprint, clipped to the
-view's domain.}
+view's domain. An \code{extent} that misses the domain widens it to cover
+the extent.}
 
 \item{file}{Path of the HTML file to write.}
 

@@ -595,7 +595,8 @@ scene_add_tiled_raster <- function(scene, id, plan, palette = "viridis", range =
 #'   widened by half its size on each side, are left out of the plan, so
 #'   the page shows nothing far beyond it. By default every tile is planned
 #'   and the view is the full-resolution tiles' footprint, clipped to the
-#'   view's domain.
+#'   view's domain. An `extent` that misses the domain widens it to cover
+#'   the extent.
 #' @param domain Passed to [scene()]: by default the CRS's [crs_domain()],
 #'   which keeps the camera near the sensible part of the view CRS. Tiles
 #'   outside it are still planned and drawn.
@@ -661,6 +662,13 @@ cog_scene_ <- function(dsn, crs, palette, range, band, coastline, extent, url, r
   }
   if (!is.null(extent)) {
     check_extent(extent)
+    ## An explicit view outside the domain is what was asked for: widen the
+    ## bounds to take it in rather than let the camera clamp away from it.
+    b <- s$view$bounds
+    if (!is.null(b) && !extents_overlap(extent, b)) {
+      s$view$bounds <- c(min(b[1], extent[1]), max(b[2], extent[2]),
+                         min(b[3], extent[3]), max(b[4], extent[4]))
+    }
   } else {
     extent <- plan_extent(s$layers[[1]]$plan)
     b <- s$view$bounds
@@ -718,6 +726,8 @@ check_band <- function(band, nb) {
   }
   as.integer(band)
 }
+
+extents_overlap <- function(a, b) a[1] < b[2] && a[2] > b[1] && a[3] < b[4] && a[4] > b[3]
 
 check_extent <- function(extent) {
   if (!is.numeric(extent) || length(extent) != 4L || anyNA(extent) ||

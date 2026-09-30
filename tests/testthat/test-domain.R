@@ -23,6 +23,10 @@ test_that("crs_domain() keeps bounded projections whole and cuts divergent ones"
   expect_gt(crs_domain("EPSG:3857", k = 4)$extent[4], 1.3e7)
 
   expect_identical(crs_domain("OGC:CRS84")$extent, c(-180, 180, -90, 90))
+  # Mollweide: the whole map (2 sqrt(2) R by sqrt(2) R), not flagged bounded.
+  moll <- crs_domain("+proj=moll +datum=WGS84")
+  expect_false(moll$bounded)
+  expect_equal(moll$extent[4], sqrt(2) * 6378137, tolerance = 0.01)
   # A false origin moves the centre in CRS units, not in lon/lat.
   utm <- crs_domain("EPSG:32755")
   expect_equal(utm$centre_lonlat, c(147, 0), tolerance = 1e-6)
@@ -73,6 +77,18 @@ test_that("cog_scene() opens on its data clipped to the domain", {
   # The lon/lat COG reaches past the domain; the view stops at it, but its
   # tiles are all still planned.
   expect_true(all(s$view$extent[c(1, 3)] >= b[c(1, 3)] & s$view$extent[c(2, 4)] <= b[c(2, 4)]))
+  # An explicit view outside the domain widens the bounds to take it in.
+  far <- cog_scene(f, "EPSG:3031", levels = 1L, domain = TRUE, extent = c(2e7, 2.1e7, 2e7, 2.1e7))
+  expect_gte(far$view$bounds[2], 2.1e7)
+  tf <- tempfile(fileext = ".html")
+  on.exit(unlink(tf))
+  expect_silent(write_scene_html(far, file = tf))
+  bad <- scene("EPSG:3031", domain = TRUE)
+  bad$view$extent <- c(3e7, 4e7, 3e7, 4e7)
+  expect_error(write_scene_html(bad, file = tf), "does not overlap")
+  bad$view$extent <- NULL
+  bad$view$center <- c(3e7, 0)
+  expect_error(write_scene_html(bad, file = tf), "outside")
   s0 <- cog_scene(f, "EPSG:3031", levels = 1L, domain = FALSE)
   expect_identical(length(s$layers[[1]]$plan$levels[[1]]$tiles),
                    length(s0$layers[[1]]$plan$levels[[1]]$tiles))

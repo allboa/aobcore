@@ -12,8 +12,9 @@ scene_spec_version(scene = NULL)
 \value{
 A character string: \code{"0.1"}, \code{"0.2"} for a scene with a
 \code{tiled_raster} layer, or \code{"0.3"} for one whose tiled raster uses \code{rgb}
-or JPEG tiles, or \code{"0.4"} for one whose view has \code{bounds} (or a scene
-already marked with that version).
+or JPEG tiles, or \code{"0.4"} for one whose view has \code{bounds}. A scene
+already marked with a version keeps at least that version (removing
+its bounds by hand leaves it 0.4).
 }
 \description{
 The version of the allonboard scene spec that this package writes: the

@@ -160,6 +160,14 @@ check_scene_shape <- function(scene, blobs) {
       fail("`scene$view$bounds` must be c(xmin, xmax, ymin, ymax) with xmin < xmax and ymin < ymax.")
     }
     if (view$type == "globe") fail("A globe view has no `bounds`.")
+    if (!is.null(view$extent) && !extents_overlap(view$extent, b)) {
+      fail("`scene$view$extent` does not overlap `scene$view$bounds`, so the camera could ",
+           "never show it; widen the bounds or build the scene with `domain = FALSE`.")
+    }
+    ce <- view$center
+    if (!is.null(ce) && !(ce[1] >= b[1] && ce[1] <= b[2] && ce[2] >= b[3] && ce[2] <= b[4])) {
+      fail("`scene$view$center` lies outside `scene$view$bounds`.")
+    }
     if (!identical(scene$version, "0.4") && !inherits(scene, "aob_scene")) {
       fail("`scene$view$bounds` needs scene spec 0.4.")
     }

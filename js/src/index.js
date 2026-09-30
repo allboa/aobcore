@@ -295,11 +295,7 @@ export async function render(container, scene, options = {}) {
       views: deckView,
       initialViewState,
       layers: [],
-      onViewStateChange: ({ viewState: vs }) => {
-        viewState = limits ? clampView(vs) : vs;
-        if (limits && deck) deck.setProps({ viewState });
-        update();
-      },
+      onViewStateChange: ({ viewState: vs }) => setView(vs),
       onHover: (info) => {
         const c = info.coordinate;
         readout.textContent = c ? `x ${fmt(c[0], span)}   y ${fmt(c[1], span)}` : "";
@@ -313,6 +309,14 @@ export async function render(container, scene, options = {}) {
         }
       },
     };
+    // Every camera change goes through here, so view.bounds hold for
+    // interaction, resize and handle.setView() alike.
+    function setView(vs) {
+      viewState = limits ? clampView(vs) : vs;
+      if (limits && deck) deck.setProps({ viewState });
+      update();
+      return viewState;
+    }
     function update() {
       if (!deck || finalized) return;
       const layers = [];
@@ -362,7 +366,10 @@ export async function render(container, scene, options = {}) {
     };
     showNotes();
     // handle.finalize() stops the scene: resize tracking and the deck.
-    const handle = { deck, scene, tables, decodeMs, bytes: total, warnings, errors, finalize };
+    // handle.view() is the camera; handle.setView(vs) moves it, clamped to
+    // view.bounds as interaction is, and returns where it ended up.
+    const handle = { deck, scene, tables, decodeMs, bytes: total, warnings, errors, finalize,
+                     view: () => viewState, setView };
     container.dataset.aobInfo = `${kib} KiB Arrow decoded in ${decodeMs.toFixed(1)} ms`;
     return handle;
   } catch (err) {

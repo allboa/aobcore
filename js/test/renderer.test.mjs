@@ -398,3 +398,41 @@ try {
   await browser2.close();
   server.close();
 }
+
+// ---- view.bounds keep the camera in (scene spec 0.4) -------------------------
+{
+  const scene = { version: "0.4", view: { type: "projected", crs: "EPSG:3031", bounds: [-1e7, 1e7, -1e7, 1e7] },
+                  data: {}, layers: [] };
+  const browser3 = await chromium.launch({
+    executablePath: process.env.CHROMIUM_PATH || undefined,
+    args: ["--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--ignore-gpu-blocklist"],
+  });
+  try {
+    const page = await browser3.newPage({ viewport: { width: 800, height: 600 } });
+    await page.setContent(`<!DOCTYPE html><html><head><meta charset="utf-8"></head><body style="margin:0;height:100vh">
+<div id="c" style="height:100%;width:100%"></div><script>${bundle}</script></body></html>`);
+    const r = await page.evaluate(async (sc) => {
+      const c = document.getElementById("c");
+      const h = await aob.render(c, sc);
+      const w = c.querySelector("canvas").parentElement.clientWidth;
+      const hh = c.querySelector("canvas").parentElement.clientHeight;
+      const first = h.view();
+      const out = h.setView({ ...first, zoom: -40, target: [5e7, -5e7, 0] });
+      const near = h.setView({ ...first, zoom: first.zoom + 6, target: [2e7, 0, 0] });
+      return { w, hh, first, out, near };
+    }, scene);
+    // Padded bounds: 1.5e7 each side, so 3e7 across.
+    const minZoom = Math.log2(Math.min(r.w / 3e7, r.hh / 3e7));
+    assert.ok(Math.abs(r.out.zoom - minZoom) < 1e-9, `zoom out stops at ${minZoom} (got ${r.out.zoom})`);
+    assert.ok(r.first.zoom >= minZoom - 1e-9, "the initial view is within the limit");
+    // Zoomed out as far as it goes, the (square) padded bounds fill the canvas's
+    // short side and are centred on the long one.
+    assert.deepEqual(r.out.target.slice(0, 2).map((v) => Math.round(v)), [0, 0]);
+    // Zoomed in, a target past the edge is pulled back so the view stays inside.
+    const half = (r.w / 2) * Math.pow(2, -r.near.zoom);
+    assert.ok(Math.abs(r.near.target[0] - (1.5e7 - half)) < 1, `x held at the edge (got ${r.near.target[0]})`);
+    console.log("ok   view.bounds clamp zoom and pan");
+  } finally {
+    await browser3.close();
+  }
+}

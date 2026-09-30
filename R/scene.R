@@ -11,8 +11,9 @@
 #' @param scene Optional scene. Without it, the version of a new scene.
 #' @return A character string: `"0.1"`, `"0.2"` for a scene with a
 #'   `tiled_raster` layer, or `"0.3"` for one whose tiled raster uses `rgb`
-#'   or JPEG tiles, or `"0.4"` for one whose view has `bounds` (or a scene
-#'   already marked with that version).
+#'   or JPEG tiles, or `"0.4"` for one whose view has `bounds`. A scene
+#'   already marked with a version keeps at least that version (removing
+#'   its bounds by hand leaves it 0.4).
 #' @export
 #' @examples
 #' scene_spec_version()
