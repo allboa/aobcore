@@ -40,8 +40,7 @@
 #'   native GeoArrow with interleaved coordinates in `crs`.
 #' @seealso [vector_ipc()] to write the stream as Arrow IPC bytes.
 #' @export
-#' @examplesIf requireNamespace("gdalraster", quietly = TRUE) &&
-#'   !inherits(try(gdalraster::srs_to_wkt("EPSG:3031"), silent = TRUE), "try-error")
+#' @examplesIf requireNamespace("gdalraster", quietly = TRUE) && !inherits(try(gdalraster::srs_to_wkt("EPSG:3031"), silent = TRUE), "try-error")
 #' coast <- system.file("extdata", "coastline_south_40s.geojson", package = "aobcore")
 #' s <- gdal_vector_stream(coast, "EPSG:3031", densify = 0.25)
 #' s$get_schema()$children$geometry$metadata[["ARROW:extension:name"]]
