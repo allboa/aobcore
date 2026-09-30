@@ -1,0 +1,23 @@
+coastline_south_40s.geojson
+---------------------------
+
+Natural Earth 1:50m coastline (ne_50m_coastline), clipped to
+south of 40 degrees S. 170 LineString features, EPSG:4326 (OGC:CRS84
+longitude, latitude order), coordinates rounded to 4 decimal places. One
+attribute, featurecla.
+
+Source: https://www.naturalearthdata.com/, file
+geojson/ne_50m_coastline.geojson from
+https://github.com/nvkelso/natural-earth-vector (master branch, downloaded
+2026-09-30).
+
+License: public domain. Natural Earth data are in the public domain; see
+https://www.naturalearthdata.com/about/terms-of-use/.
+
+Made with GDAL (via gdalraster::ogr2ogr) using:
+
+  ogr2ogr -f GeoJSON -nln coastline_south_40s \
+    -clipsrc -180 -90 180 -40 \
+    -explodecollections -nlt LINESTRING -select featurecla \
+    -lco COORDINATE_PRECISION=4 -lco RFC7946=NO -lco WRITE_BBOX=NO \
+    coastline_south_40s.geojson ne_50m_coastline.geojson
