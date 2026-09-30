@@ -1,4 +1,5 @@
-// allonboard renderer for scene spec 0.1, 0.2 and 0.3, on deck.gl.
+// allonboard renderer for scene spec 0.1 to 0.4, on deck.gl. 0.4 view.bounds keep
+// the camera within them plus a quarter of their size on each side.
 //
 // aob.render(container, scene, {blobs}) draws one scene into an element.
 // blobs maps each data reference's blob key to Arrow IPC bytes (Uint8Array,
@@ -17,8 +18,8 @@ import { decodeTileSamples } from "./jpeg.js";
 import { cssGradient } from "./palettes.js";
 import { CSS } from "./style.js";
 
-const VERSION = "0.0.3";
-const SPECS = ["0.1", "0.2", "0.3"];
+const VERSION = "0.0.4";
+const SPECS = ["0.1", "0.2", "0.3", "0.4"];
 
 
 function injectStyle() {
@@ -34,6 +35,19 @@ function el(tag, cls, text) {
   if (cls) e.className = cls;
   if (text !== undefined) e.textContent = text;
   return e;
+}
+
+// An extent [xmin, xmax, ymin, ymax] widened by `f` of its size on each side.
+function padBounds(e, f) {
+  const dx = (e[1] - e[0]) * f;
+  const dy = (e[3] - e[2]) * f;
+  return [e[0] - dx, e[1] + dx, e[2] - dy, e[3] + dy];
+}
+
+// The overlap of two extents, or null when they do not overlap.
+function intersect(a, b) {
+  const e = [Math.max(a[0], b[0]), Math.min(a[1], b[1]), Math.max(a[2], b[2]), Math.min(a[3], b[3])];
+  return e[0] < e[1] && e[2] < e[3] ? e : null;
 }
 
 function crsLabel(crs) {
@@ -211,10 +225,15 @@ export async function render(container, scene, options = {}) {
     });
     panel.append(list, legends, themeButton());
 
-    // Initial view: extent, then center, then the data bounds.
+    // Initial view: extent, then center, then the data bounds (clipped to
+    // view.bounds when the scene has them), then the bounds themselves.
     const b = ctx.bounds;
     let ext = view.extent;
     if (!ext && isFinite(b[0])) ext = b[1] > b[0] && b[3] > b[2] ? b : [b[0] - 1, b[1] + 1, b[2] - 1, b[3] + 1];
+    // 0.4 view.bounds: the camera is kept within them plus a margin of a
+    // quarter of their size on each side, so their edge can be seen.
+    const limits = !globe && Array.isArray(view.bounds) ? padBounds(view.bounds, 0.25) : null;
+    if (limits && !view.extent) ext = (ext && intersect(ext, view.bounds)) || view.bounds;
     const center = view.center || (ext ? [(ext[0] + ext[1]) / 2, (ext[2] + ext[3]) / 2] : [0, 0]);
     const span = ext ? Math.max(ext[1] - ext[0], ext[3] - ext[2]) : 1;
     const fitZoom = () => {
@@ -233,6 +252,22 @@ export async function render(container, scene, options = {}) {
       deckView = new OrthographicView({ id: "aob", flipY: false, controller: true });
       const z = fitZoom();
       initialViewState = { target: [center[0], center[1], 0], zoom: z, minZoom: z - 4, maxZoom: z + 12 };
+      if (limits) initialViewState = clampView(initialViewState);
+    }
+
+    // Keep an orthographic camera within `limits`: zooming out stops when
+    // they fill the canvas, and panning stops at their edges.
+    function clampView(vs) {
+      const w = canvasHost.clientWidth || 800;
+      const h = canvasHost.clientHeight || 600;
+      const minZoom = Math.log2(Math.min(w / (limits[1] - limits[0]), h / (limits[3] - limits[2])));
+      let zoom = Array.isArray(vs.zoom) ? vs.zoom[0] : vs.zoom;
+      zoom = Math.max(zoom, minZoom);
+      const u = Math.pow(2, -zoom);
+      const axis = (t, lo, hi, half) => (hi - lo <= 2 * half ? (lo + hi) / 2 : Math.min(Math.max(t, lo + half), hi - half));
+      const t = vs.target || [0, 0, 0];
+      const target = [axis(t[0], limits[0], limits[1], (w / 2) * u), axis(t[1], limits[2], limits[3], (h / 2) * u), t[2] || 0];
+      return { ...vs, zoom, target, minZoom };
     }
 
     // The part of the view CRS on screen and the size of one device pixel
@@ -260,10 +295,7 @@ export async function render(container, scene, options = {}) {
       views: deckView,
       initialViewState,
       layers: [],
-      onViewStateChange: ({ viewState: vs }) => {
-        viewState = vs;
-        update();
-      },
+      onViewStateChange: ({ viewState: vs }) => setView(vs),
       onHover: (info) => {
         const c = info.coordinate;
         readout.textContent = c ? `x ${fmt(c[0], span)}   y ${fmt(c[1], span)}` : "";
@@ -277,6 +309,14 @@ export async function render(container, scene, options = {}) {
         }
       },
     };
+    // Every camera change goes through here, so view.bounds hold for
+    // interaction, resize and handle.setView() alike.
+    function setView(vs) {
+      viewState = limits ? clampView(vs) : vs;
+      if (limits && deck) deck.setProps({ viewState });
+      update();
+      return viewState;
+    }
     function update() {
       if (!deck || finalized) return;
       const layers = [];
@@ -295,7 +335,13 @@ export async function render(container, scene, options = {}) {
     update();
     // The view's extent and pixel size change with the element's size, so
     // tiled rasters choose their level and tiles again on resize.
-    const onResize = () => update();
+    const onResize = () => {
+      if (limits && deck) {
+        viewState = clampView(viewState);
+        deck.setProps({ viewState });
+      }
+      update();
+    };
     let observer = null;
     if (typeof ResizeObserver !== "undefined") {
       observer = new ResizeObserver(onResize);
@@ -320,7 +366,10 @@ export async function render(container, scene, options = {}) {
     };
     showNotes();
     // handle.finalize() stops the scene: resize tracking and the deck.
-    const handle = { deck, scene, tables, decodeMs, bytes: total, warnings, errors, finalize };
+    // handle.view() is the camera; handle.setView(vs) moves it, clamped to
+    // view.bounds as interaction is, and returns where it ended up.
+    const handle = { deck, scene, tables, decodeMs, bytes: total, warnings, errors, finalize,
+                     view: () => viewState, setView };
     container.dataset.aobInfo = `${kib} KiB Arrow decoded in ${decodeMs.toFixed(1)} ms`;
     return handle;
   } catch (err) {

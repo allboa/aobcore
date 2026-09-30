@@ -154,6 +154,24 @@ check_scene_shape <- function(scene, blobs) {
   if (view$type != "cartesian" && is.null(view$crs)) {
     fail("A ", view$type, " view needs `scene$view$crs`.")
   }
+  if (!is.null(view$bounds)) {
+    b <- view$bounds
+    if (!is.numeric(b) || length(b) != 4L || anyNA(b) || !(b[1] < b[2] && b[3] < b[4])) {
+      fail("`scene$view$bounds` must be c(xmin, xmax, ymin, ymax) with xmin < xmax and ymin < ymax.")
+    }
+    if (view$type == "globe") fail("A globe view has no `bounds`.")
+    if (!is.null(view$extent) && !extents_overlap(view$extent, b)) {
+      fail("`scene$view$extent` does not overlap `scene$view$bounds`, so the camera could ",
+           "never show it; widen the bounds or build the scene with `domain = FALSE`.")
+    }
+    ce <- view$center
+    if (!is.null(ce) && !(ce[1] >= b[1] && ce[1] <= b[2] && ce[2] >= b[3] && ce[2] <= b[4])) {
+      fail("`scene$view$center` lies outside `scene$view$bounds`.")
+    }
+    if (!identical(scene$version, "0.4") && !inherits(scene, "aob_scene")) {
+      fail("`scene$view$bounds` needs scene spec 0.4.")
+    }
+  }
   data <- scene$data
   if (!is.list(data) || (length(data) > 0L && is.null(names(data)))) {
     fail("`scene$data` must be a named list of data references.")
@@ -206,7 +224,7 @@ check_scene_shape <- function(scene, blobs) {
       if (identical(scene$version, "0.1") && !inherits(scene, "aob_scene")) {
         fail("Layer `", lid, "` is a tiled raster, which needs scene spec 0.2 or later.")
       }
-      if (uses_spec_03(layer) && !identical(scene$version, "0.3") && !inherits(scene, "aob_scene")) {
+      if (uses_spec_03(layer) && !scene$version %in% c("0.3", "0.4") && !inherits(scene, "aob_scene")) {
         fail("Layer `", lid, "` uses `rgb` or JPEG tiles, which need scene spec 0.3.")
       }
       need(lid, layer$source)

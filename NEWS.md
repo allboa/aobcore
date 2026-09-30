@@ -1,5 +1,16 @@
 # aobcore 0.0.0.9000
 
+* Scenes have a view domain by default (allboa/design decision 0005):
+  `scene()`, `cog_scene()` and `view_cog()` take `domain`, by default the
+  new `crs_domain()` of the view CRS, which walks out from the projection
+  centre until the stretch along each bearing passes `k = 2`. It is written
+  as `view.bounds` (scene spec 0.4): the renderer keeps the camera within it
+  plus a quarter of its size on each side, and a scene with no `extent`
+  opens on its data clipped to it. It limits the camera only; data outside
+  it still load. `domain = FALSE`, or `options(aobcore.domain = FALSE)`,
+  turns it off and keeps the 0.1 to 0.3 output as before. The domain needs
+  'gdalraster'; without it `scene()` writes no bounds, so the same code can
+  write 0.4 with 'gdalraster' installed and 0.1 to 0.3 without.
 * A view CRS can be any definition GDAL reads, not only an
   `"authority:code"` string: WKT, a PROJ string, PROJJSON text, an EPSG
   number or an `sf` `crs`. `scene()`, `cog_plan()`, `cog_scene()`,
