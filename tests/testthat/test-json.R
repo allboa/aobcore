@@ -10,7 +10,9 @@ test_that("to_json() writes objects, arrays and scalars", {
 })
 
 test_that("to_json() keeps numbers exact", {
-  x <- c(-5791903.876384494, 0.1, 1e-300, 255, -2)
+  # Coordinate-sized values. (Extreme exponents are left out: R's own
+  # string-to-double conversion is not correctly rounded on every platform.)
+  x <- c(-5791903.876384494, 0.1, 1 / 3, 6378137.123456789, 1.5e-7, 255, -2)
   out <- to_json(x)
   back <- as.numeric(strsplit(gsub("\\[|\\]", "", out), ",")[[1]])
   expect_identical(back, x)

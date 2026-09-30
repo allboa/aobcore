@@ -50,9 +50,12 @@ json_number <- function(x) {
   if (is.integer(x)) {
     return(as.character(x))
   }
+  ## Shortest of 15, 16 or 17 significant digits that reads back exactly.
   out <- sprintf("%.15g", x)
-  lossy <- as.numeric(out) != x
-  out[lossy] <- sprintf("%.17g", x[lossy])
+  for (digits in c("%.16g", "%.17g")) {
+    lossy <- as.numeric(out) != x
+    out[lossy] <- sprintf(digits, x[lossy])
+  }
   out
 }
 
