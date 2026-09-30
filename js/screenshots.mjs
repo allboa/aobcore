@@ -45,7 +45,7 @@ for (const f of pages) {
     await page.waitForTimeout(300);
     const info = await page.evaluate(() => {
       const s = document.querySelector("[data-aob-scene]:not(script)");
-      return s ? s.dataset.aobInfo || "" : "";
+      return s ? [s.dataset.aobInfo, s.dataset.aobTiles].filter(Boolean).join("; ") : "";
     });
     const out = join(outDir, `${basename(f, ".html")}-${scheme}.png`);
     await page.screenshot({ path: out });

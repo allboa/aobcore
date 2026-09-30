@@ -4,14 +4,22 @@
 \alias{scene_spec_version}
 \title{Scene spec version}
 \usage{
-scene_spec_version()
+scene_spec_version(scene = NULL)
+}
+\arguments{
+\item{scene}{Optional scene. Without it, the version of a new scene.}
 }
 \value{
-A character string, currently \code{"0.1"}.
+A character string: \code{"0.1"}, or \code{"0.2"} for a scene with a
+\code{tiled_raster} layer (or one already marked 0.2).
 }
 \description{
-The version of the allonboard scene spec that this package writes.
+The version of the allonboard scene spec that this package writes. A
+scene is written as 0.1 unless it has a tiled raster layer (added by
+\code{\link[=scene_add_tiled_raster]{scene_add_tiled_raster()}}), which needs 0.2; 0.1 output is unchanged
+by the 0.2 additions.
 }
 \examples{
 scene_spec_version()
+scene_spec_version(scene())
 }

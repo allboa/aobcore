@@ -12,6 +12,10 @@
 #                holes and a stroke, multilinestrings, a raster in the view
 #                CRS with no mesh and NaN nodata, and view.local_origin with
 #                origin_subtracted data, in EPSG:3031 away from the pole.
+#   polar-cog-*  scene spec 0.2 tiled rasters: the polar COG fixtures
+#                (inst/extdata, tools/make-polar-cogs.R) in EPSG:3031 as
+#                cog_scene() / view_cog() build them, whole, at the pole
+#                and (3031) far out.
 library(aobcore)
 library(nanoarrow)
 
@@ -124,4 +128,22 @@ s <- list(
 blobs <- list(field = vals, land = ipc(land), tracks = ipc(lines), stations = ipc(pts), cluster = ipc(multi))
 write_scene_html(s, blobs, file.path(out, "kinds.html"), title = "Scene spec 0.1 layer kinds")
 writeLines(scene_json(structure(s, class = "aob_scene")), file.path(out, "kinds.json"))
+
+# ---- tiled COGs (scene spec 0.2) ------------------------------------------
+# The polar COG fixtures drawn with view_cog()'s scene, whole and zoomed in
+# on the pole, and the 3031 one zoomed far out (so a coarser level is chosen). Tile bytes are embedded, so the pages open from file://.
+cogs <- list(
+  "polar-cog-3031" = list(file = "polar_3031.tif", extent = NULL),
+  "polar-cog-3031-pole" = list(file = "polar_3031.tif", extent = c(-9e5, 9e5, -6e5, 6e5)),
+  "polar-cog-3031-far" = list(file = "polar_3031.tif", extent = c(-3e7, 3e7, -3e7, 3e7)),
+  "polar-cog-lonlat" = list(file = "polar_lonlat.tif", extent = NULL),
+  "polar-cog-lonlat-pole" = list(file = "polar_lonlat.tif", extent = c(-9e5, 9e5, -6e5, 6e5))
+)
+for (name in names(cogs)) {
+  x <- cogs[[name]]
+  s <- cog_scene(system.file("extdata", x$file, package = "aobcore"), "EPSG:3031",
+                 palette = "ocean", extent = x$extent)
+  write_scene_html(s, file = file.path(out, paste0(name, ".html")), title = x$file)
+  writeLines(scene_json(s), file.path(out, paste0(name, ".json")))
+}
 cat("wrote", out, "\n")

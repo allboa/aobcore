@@ -1,9 +1,9 @@
 {
   "name": "aob-renderer",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "private": true,
   "type": "module",
-  "description": "allonboard scene spec 0.1 renderer (deck.gl), bundled into aobcore's inst/",
+  "description": "allonboard scene spec 0.1 and 0.2 renderer (deck.gl), bundled into aobcore's inst/",
   "license": "MIT",
   "scripts": {
     "build": "node build.mjs",
@@ -16,7 +16,10 @@
     "@deck.gl/layers": "9.4.0",
     "@deck.gl/mesh-layers": "9.4.0",
     "@math.gl/polygon": "4.1.0",
-    "apache-arrow": "21.2.0"
+    "apache-arrow": "21.2.0",
+    "fflate": "0.8.3",
+    "fzstd": "0.1.1",
+    "geotiff": "3.0.5"
   },
   "devDependencies": {
     "esbuild": "0.28.2",

@@ -16,7 +16,8 @@ A list of class \code{"aob_scene"}.
 \description{
 A minimal scene: a projected view in \code{crs}, with no data and no layers.
 Its fields follow the scene spec (\code{version}, \code{view}, \code{data}, \code{layers}).
-This is a stub; producers and layers come later.
+A scene starts as version 0.1 and becomes 0.2 when a tiled raster is
+added.
 }
 \examples{
 s <- scene()

@@ -73,3 +73,10 @@ export function colorize(values, valid, grid, palette, stops) {
   }
   return px;
 }
+
+// Material for textured meshes: the texture's color as is. deck.gl 9.4
+// lights a SimpleMeshLayer even with material: false (the default phong
+// material and lights apply), which adds a camera-dependent specular
+// highlight to rasters; full ambient and no diffuse or specular light give
+// the plain texture.
+export const UNLIT = { ambient: 1, diffuse: 0, shininess: 0, specularColor: [0, 0, 0] };

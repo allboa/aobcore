@@ -12,13 +12,18 @@ Authors@R: c(
     person("The FlatBuffers project", role = "cph",
            comment = "Bundled flatbuffers JavaScript"),
     person("Mapbox", role = "cph", comment = "Bundled earcut JavaScript"),
-    person("Microsoft Corporation", role = "cph", comment = "Bundled tslib JavaScript")
+    person("Microsoft Corporation", role = "cph", comment = "Bundled tslib JavaScript"),
+    person("Arjun Barrett", role = "cph", comment = "Bundled fflate and fzstd JavaScript"),
+    person("EOX IT Services GmbH", role = "cph",
+           comment = "Bundled geotiff.js LZW and PackBits decoders")
     )
 Description: Builds renderer-neutral map scenes that are drawn in their own
     coordinate reference system, with polar views as the first-class case.
     Data are carried as native 'GeoArrow' and grid descriptors. This is an
-    early skeleton; the package name is a placeholder. Scenes are written to
-    self-contained HTML pages drawn by a bundled 'deck.gl' renderer.
+    early skeleton; the package name is a placeholder. Tiled Cloud Optimized
+    GeoTIFFs are planned in R (levels, tile byte ranges and meshes projected
+    to the view). Scenes are written to self-contained HTML pages drawn by a
+    bundled 'deck.gl' renderer.
 License: MIT + file LICENSE
 Copyright: See inst/COPYRIGHTS for the bundled JavaScript.
 URL: https://github.com/allboa/aobcore

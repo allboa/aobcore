@@ -5,7 +5,7 @@ import { SolidPolygonLayer, PathLayer, ScatterplotLayer, BitmapLayer } from "@de
 import { SimpleMeshLayer } from "@deck.gl/mesh-layers";
 import { earcut } from "@math.gl/polygon";
 import { geometryChunk, partsOf, numericColumn, listColumn, rgbaChunk } from "./arrow.js";
-import { paletteStops, colorize, UnknownPaletteError } from "./palettes.js";
+import { paletteStops, colorize, UnknownPaletteError, UNLIT } from "./palettes.js";
 
 const DEFAULT_FILL = [128, 128, 128, 255];
 const DEFAULT_STROKE = [60, 66, 72, 255];
@@ -256,7 +256,7 @@ function buildRaster(L, ctx) {
         getPosition: anchor,
         getColor: [255, 255, 255, 255],
         sizeScale: 1,
-        material: false,
+        material: UNLIT,
         textureParameters,
       })],
     };

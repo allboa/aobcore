@@ -1,18 +1,23 @@
-// allonboard renderer for scene spec 0.1, on deck.gl.
+// allonboard renderer for scene spec 0.1 and 0.2, on deck.gl.
 //
 // aob.render(container, scene, {blobs}) draws one scene into an element.
 // blobs maps each data reference's blob key to Arrow IPC bytes (Uint8Array,
 // ArrayBuffer or a base64 string); data references with a url are fetched.
+// A 0.2 cog reference is not fetched whole: its tiled_raster layers fetch
+// the planned tiles' byte ranges, or use blobs keyed
+// "<source>@<offset>+<length>" that carry those bytes (see tiles.js).
 // On load, every element with a data-aob-scene attribute is rendered from
 // the JSON script it names and the blob scripts that point at it.
 import { Deck, OrthographicView, _GlobeView as GlobeView, COORDINATE_SYSTEM } from "@deck.gl/core";
 import { decodeBase64, readTable } from "./arrow.js";
 import { buildLayer } from "./layers.js";
+import { buildTiledRaster } from "./tiles.js";
 import { cssGradient } from "./palettes.js";
 import { CSS } from "./style.js";
 
-const VERSION = "0.0.1";
-const SPEC = "0.1";
+const VERSION = "0.0.2";
+const SPECS = ["0.1", "0.2"];
+
 
 function injectStyle() {
   if (document.getElementById("aob-style")) return;
@@ -49,8 +54,8 @@ async function loadBytes(ref, id, blobs) {
 }
 
 function checkScene(scene) {
-  if (!scene || scene.version !== SPEC) {
-    throw new Error(`this renderer draws scene spec ${SPEC}; got ${JSON.stringify(scene && scene.version)}`);
+  if (!scene || !SPECS.includes(scene.version)) {
+    throw new Error(`this renderer draws scene spec ${SPECS.join(" and ")}; got ${JSON.stringify(scene && scene.version)}`);
   }
   for (const k of ["view", "data", "layers"]) {
     if (!scene[k]) throw new Error(`scene has no ${k}`);
@@ -99,6 +104,7 @@ export async function render(container, scene, options = {}) {
   const layerError = (m) => {
     errors.push(m);
     console.warn(`aob: error: ${m}`);
+    showNotes();
   };
   container.classList.add("aob-root");
   container.textContent = "";
@@ -116,6 +122,7 @@ export async function render(container, scene, options = {}) {
     status.classList.toggle("aob-error", !!isError);
     status.hidden = !msg;
   };
+  let showNotes = () => {};
 
   try {
     checkScene(scene);
@@ -125,7 +132,8 @@ export async function render(container, scene, options = {}) {
 
     const t0 = performance.now();
     const tables = {};
-    const ids = Object.keys(scene.data);
+    // Arrow tables are read whole; a cog is read tile by tile by its layers.
+    const ids = Object.keys(scene.data).filter((id) => scene.data[id].format !== "cog");
     const bytes = await Promise.all(ids.map((id) => loadBytes(scene.data[id], id, blobs)));
     let total = 0;
     ids.forEach((id, i) => {
@@ -134,19 +142,31 @@ export async function render(container, scene, options = {}) {
     });
     const decodeMs = performance.now() - t0;
 
+    let pending = 0;
+    const layerStatus = {};
     const ctx = {
       scene,
       tables,
+      blobs,
       warn,
       error: layerError,
+      pending: (d) => {
+        pending += d;
+        container.dataset.aobPending = String(pending);
+      },
+      redraw: () => update(),
+      status: (id, text) => {
+        layerStatus[id] = text;
+      },
       coordinateSystem: globe ? COORDINATE_SYSTEM.LNGLAT : COORDINATE_SYSTEM.CARTESIAN,
       bounds: [Infinity, -Infinity, Infinity, -Infinity],
     };
     const built = scene.layers.map((L) => {
-      if (globe && L.kind === "raster") {
+      if (globe && (L.kind === "raster" || L.kind === "tiled_raster")) {
         warn(`layer ${L.id}: rasters are not drawn on a globe by this renderer yet`);
         return { layers: [], summary: "not drawn on a globe" };
       }
+      if (L.kind === "tiled_raster") return buildTiledRaster(L, ctx);
       return buildLayer(L, ctx);
     });
     const visible = scene.layers.map((L) => L.visible !== false);
@@ -204,36 +224,70 @@ export async function render(container, scene, options = {}) {
       initialViewState = { target: [center[0], center[1], 0], zoom: z, minZoom: z - 4, maxZoom: z + 12 };
     }
 
+    // The part of the view CRS on screen and the size of one device pixel
+    // in view units, for tiled rasters. OrthographicView: 2^zoom CSS pixels
+    // per view unit.
+    let viewState = initialViewState;
+    const currentView = () => {
+      const w = canvasHost.clientWidth || 800;
+      const h = canvasHost.clientHeight || 600;
+      const z = Array.isArray(viewState.zoom) ? viewState.zoom[0] : viewState.zoom;
+      const u = Math.pow(2, -z);
+      const t = viewState.target || [0, 0];
+      return {
+        bounds: [t[0] - (w / 2) * u, t[0] + (w / 2) * u, t[1] - (h / 2) * u, t[1] + (h / 2) * u],
+        unitsPerPixel: u / (window.devicePixelRatio || 1),
+      };
+    };
+
     let ready = false;
     let frames = 0;
-    const deck = new Deck({
+    let deck = null;
+    const deckProps = {
       parent: canvasHost,
       views: deckView,
       initialViewState,
       layers: [],
+      onViewStateChange: ({ viewState: vs }) => {
+        viewState = vs;
+        update();
+      },
       onHover: (info) => {
         const c = info.coordinate;
         readout.textContent = c ? `x ${fmt(c[0], span)}   y ${fmt(c[1], span)}` : "";
       },
       onError: (err) => setStatus(`Rendering error: ${err && err.message ? err.message : err}`, true),
       onAfterRender: () => {
-        if (!ready && ++frames >= 2) {
+        if (!ready && ++frames >= 2 && pending === 0) {
           ready = true;
           container.dataset.aobStatus = "ready";
           if (options.onReady) options.onReady(handle);
         }
       },
-    });
+    };
     function update() {
+      if (!deck) return;
       const layers = [];
-      built.forEach((B, i) => B.layers.forEach((l) => layers.push(l.clone({ visible: visible[i] }))));
+      const view = globe ? null : currentView();
+      built.forEach((B, i) => {
+        // A tiled raster's layers depend on the view; a hidden one loads nothing.
+        const ls = B.dynamic ? (visible[i] ? B.dynamic(view) : []) : B.layers;
+        ls.forEach((l) => layers.push(l.clone({ visible: visible[i] })));
+      });
       deck.setProps({ layers });
+      const tiled = Object.entries(layerStatus).map(([id, t]) => `${id}: ${t}`).join("; ");
+      if (tiled) container.dataset.aobTiles = tiled;
+      else delete container.dataset.aobTiles;
     }
+    deck = new Deck(deckProps);
     update();
     const kib = (total / 1024).toFixed(0);
-    const notes = errors.map((m) => `error: ${m}`).concat(warnings);
-    setStatus(notes.join("; "), errors.length > 0);
-    if (errors.length) container.dataset.aobErrors = String(errors.length);
+    showNotes = () => {
+      const notes = errors.map((m) => `error: ${m}`).concat(warnings);
+      setStatus(notes.join("; "), errors.length > 0);
+      if (errors.length) container.dataset.aobErrors = String(errors.length);
+    };
+    showNotes();
     const handle = { deck, scene, tables, decodeMs, bytes: total, warnings, errors };
     container.dataset.aobInfo = `${kib} KiB Arrow decoded in ${decodeMs.toFixed(1)} ms`;
     return handle;
@@ -277,7 +331,7 @@ export function boot() {
   return out;
 }
 
-export { VERSION as version, SPEC as specVersion };
+export { VERSION as version, SPECS as specVersions };
 
 if (typeof document !== "undefined") {
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot);
