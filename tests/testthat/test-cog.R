@@ -249,6 +249,15 @@ test_that("a /vsicurl/ path gives the renderer its plain URL", {
   expect_null(dsn_ref("chart.tif")$http)
 })
 
+test_that("a COG the browser cannot fetch is refused unless embedded", {
+  skip_if_no_gdal()
+  cog <- cog_info(fixture("polar_3031.tif"))
+  plan <- cog_plan(cog, "EPSG:3031", levels = 3)
+  plan$cog$url <- "/vsis3/bucket/polar_3031.tif"
+  plan$cog$local <- FALSE
+  expect_error(scene_add_tiled_raster(scene("EPSG:3031"), "sst", plan), "cannot fetch")
+})
+
 test_that("view_cog() writes the polar COG page in one call", {
   skip_if_no_gdal()
   f <- tempfile(fileext = ".html")

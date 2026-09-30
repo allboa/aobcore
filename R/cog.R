@@ -366,6 +366,10 @@ scene_add_tiled_raster <- function(scene, id, plan, palette = "viridis", range =
   if (isTRUE(embed) && !cog$local) {
     stop("Only a local COG can be embedded; this one is a URL.", call. = FALSE)
   }
+  if (!isTRUE(embed) && !grepl("^(https?|file)://", cog$url)) {
+    stop("The renderer cannot fetch \"", cog$url, "\"; give the COG as an http(s) URL.",
+         call. = FALSE)
+  }
 
   scene$version <- "0.2"
   scene$data[[ids[1]]] <- list(format = "cog", url = cog$url)
