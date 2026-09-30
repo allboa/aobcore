@@ -42,15 +42,17 @@ cog_scene(
 \item{coastline}{Add the bundled coastline south of 40S (densified and
 projected with \code{\link[=gdal_vector_stream]{gdal_vector_stream()}}).}
 
-\item{extent}{Optional initial view \code{c(xmin, xmax, ymin, ymax)} in view
-CRS units. By default the full-resolution tiles' footprint.}
+\item{extent}{Optional view \code{c(xmin, xmax, ymin, ymax)} in view CRS
+units: the initial view, and tiles whose footprint misses it are left
+out of the plan. By default every tile is planned and the view is the
+full-resolution tiles' footprint.}
 
 \item{file}{Path of the HTML file to write.}
 
 \item{title, theme}{Passed to \code{\link[=write_scene_html]{write_scene_html()}}.}
 
 \item{...}{Passed to \code{\link[=cog_plan]{cog_plan()}} (\code{levels}, \code{selection},
-\code{max_segments}, \code{tolerance}).}
+\code{max_segments}, \code{tolerance}, \code{max_stretch}).}
 }
 \value{
 \code{cog_scene()}: a scene (spec 0.2) carrying its blobs.

@@ -159,6 +159,11 @@ print.aob_cog <- function(x, ...) {
 #'   is no larger than a screen pixel) or `"nearest_pixel_size"`.
 #' @param max_segments Densest mesh lattice per tile edge.
 #' @param tolerance Allowed mesh error, in source pixels of the level.
+#' @param max_stretch Tiles whose least stretched pixel is larger than this
+#'   many times the level's typical (median) pixel in the view are left out,
+#'   with a message. This drops the far side of the globe from a polar view
+#'   of global data, where pixels grow without bound. `Inf` keeps every tile
+#'   that projects.
 #' @return A list of class `"aob_tile_plan"`: `plan` (the scene spec
 #'   `tilePlan` object, with `mesh` data ids still to be named), `vertices`
 #'   and `indices` (Arrow IPC stream bytes), `cog`, and `levels` (the
@@ -174,7 +179,7 @@ print.aob_cog <- function(x, ...) {
 #' pv$plan$levels[[1]]$level
 cog_plan <- function(cog, crs = "EPSG:3031", extent = NULL, units_per_pixel = NULL,
                      levels = NULL, selection = c("coarsest_sufficient", "nearest_pixel_size"),
-                     max_segments = 32L, tolerance = 0.25) {
+                     max_segments = 32L, tolerance = 0.25, max_stretch = 8) {
   need_gdalraster("cog_plan()")
   selection <- match.arg(selection)
   if (!inherits(cog, "aob_cog")) cog <- cog_info(cog)
@@ -190,6 +195,10 @@ cog_plan <- function(cog, crs = "EPSG:3031", extent = NULL, units_per_pixel = NU
       stop("`units_per_pixel` must be a single positive number.", call. = FALSE)
     }
     if (is.null(extent)) stop("A plan for one view needs `extent`.", call. = FALSE)
+  }
+  if (!is.numeric(max_stretch) || length(max_stretch) != 1L || is.na(max_stretch) ||
+      !(max_stretch > 1)) {
+    stop("`max_stretch` must be a single number above 1 (or Inf).", call. = FALSE)
   }
   max_segments <- as.integer(max_segments)
   if (length(max_segments) != 1L || is.na(max_segments) || max_segments < 1L ||
@@ -225,11 +234,14 @@ cog_plan <- function(cog, crs = "EPSG:3031", extent = NULL, units_per_pixel = NU
   nv <- 0
   ni <- 0
   dropped <- 0L
+  stretched <- 0L
   out_levels <- list()
   for (k in rev(keep)) {     # coarse to fine, as a renderer loads them
     lv <- cog$levels[[k]]
-    meshes <- level_meshes(lv, proj, same, max_segments, tolerance * sizes[k])
-    dropped <- dropped + sum(vapply(meshes, is.null, TRUE))
+    meshes <- level_meshes(lv, proj, same, max_segments, tolerance * sizes[k],
+                           max_pixel = max_stretch * sizes[k])
+    stretched <- stretched + attr(meshes, "stretched")
+    dropped <- dropped + sum(vapply(meshes, is.null, TRUE)) - attr(meshes, "stretched")
     tiles <- list()
     for (i in seq_along(meshes)) {
       m <- meshes[[i]]
@@ -262,6 +274,10 @@ cog_plan <- function(cog, crs = "EPSG:3031", extent = NULL, units_per_pixel = NU
       encoding = lv$encoding,
       tiles = tiles
     )
+  }
+  if (stretched > 0L) {
+    message(stretched, " tile(s) stretched past ", max_stretch, " times their level's pixel ",
+            "size in ", crs, " were left out (see `max_stretch`).")
   }
   if (dropped > 0L) {
     warning(dropped, " tile(s) could not be projected to ", crs, " and were left out.",
@@ -417,10 +433,12 @@ scene_add_tiled_raster <- function(scene, id, plan, palette = "viridis", range =
 #' @param band The band to draw.
 #' @param coastline Add the bundled coastline south of 40S (densified and
 #'   projected with [gdal_vector_stream()]).
-#' @param extent Optional initial view `c(xmin, xmax, ymin, ymax)` in view
-#'   CRS units. By default the full-resolution tiles' footprint.
+#' @param extent Optional view `c(xmin, xmax, ymin, ymax)` in view CRS
+#'   units: the initial view, and tiles whose footprint misses it are left
+#'   out of the plan. By default every tile is planned and the view is the
+#'   full-resolution tiles' footprint.
 #' @param ... Passed to [cog_plan()] (`levels`, `selection`,
-#'   `max_segments`, `tolerance`).
+#'   `max_segments`, `tolerance`, `max_stretch`).
 #' @return `cog_scene()`: a scene (spec 0.2) carrying its blobs.
 #'   `view_cog()`: the path of the written page, invisibly.
 #' @export
@@ -447,7 +465,8 @@ cog_scene <- function(dsn, crs = "EPSG:3031", palette = "viridis", range = NULL,
                       coastline = TRUE, extent = NULL, ...) {
   need_gdalraster("cog_scene()")
   cog <- if (inherits(dsn, "aob_cog")) dsn else cog_info(dsn, band = band)
-  plan <- cog_plan(cog, crs, ...)
+  if (!is.null(extent)) check_extent(extent)
+  plan <- cog_plan(cog, crs, extent = extent, ...)
   s <- scene(crs)
   s <- scene_add_tiled_raster(s, "cog", plan, palette = palette, range = range,
                               label = basename(cog$dsn))
@@ -664,9 +683,11 @@ nodata_json <- function(x) {
   x
 }
 
-## Size of one source pixel of a level in view units: the square root of
-## the projected area of the level's grid per pixel, measured on a 17 x 17
-## lattice (cells that do not project are skipped).
+## Size of one source pixel of a level in view units: the median over the
+## cells of a 17 x 17 lattice of the square root of each cell's projected
+## area per pixel (cells that do not project are skipped). The median keeps
+## a few hugely stretched cells (a global grid near the far pole of a polar
+## view) from swamping the level's size.
 level_pixel_size <- function(lv, proj) {
   n <- 16L
   f <- seq(0, 1, length.out = n + 1L)
@@ -681,7 +702,7 @@ level_pixel_size <- function(lv, proj) {
   ok <- is.finite(area)
   if (!any(ok)) return(NA_real_)
   cell_px <- prod(lv$dim) / n^2
-  sqrt(sum(area[ok]) / (sum(ok) * cell_px))
+  stats::median(sqrt(area[ok] / cell_px))
 }
 
 ## Areas of the quads of a lattice (matrices indexed [u, v]).
@@ -704,7 +725,7 @@ select_level <- function(sizes, upp, rule) {
 
 ## Meshes for every tile of a level. Returns a list parallel to lv$tiles,
 ## NULL where the tile does not project.
-level_meshes <- function(lv, proj, same, n_max, tol) {
+level_meshes <- function(lv, proj, same, n_max, tol, max_pixel = Inf) {
   gt <- lv$geotransform
   tw <- lv$tile_size[1]
   th <- lv$tile_size[2]
@@ -726,6 +747,19 @@ level_meshes <- function(lv, proj, same, n_max, tol) {
   xy <- proj(cbind(gt[1] + gu * gt[2], gt[4] + gv * gt[6]))
   lattice <- function(t, k) matrix(xy[(t - 1L) * np + seq_len(np), k], n + 1L)
   ok <- vapply(seq_len(nt), function(t) all(is.finite(xy[(t - 1L) * np + seq_len(np), ])), TRUE)
+  ## Tiles whose least stretched pixel is still far larger than the level's
+  ## typical pixel (a global grid's far hemisphere in a polar view) are
+  ## left out; a tile with any part near the view's domain is kept.
+  stretched <- rep(FALSE, nt)
+  if (!same && is.finite(max_pixel)) {
+    i <- seq_len(n)
+    for (t in which(ok)) {
+      a <- cell_area(lattice(t, 1), lattice(t, 2), i)
+      px <- sqrt(min(a) / (vw[t] * vh[t] / n^2))
+      stretched[t] <- !is.finite(px) || px > max_pixel
+    }
+    ok <- ok & !stretched
+  }
   ## One segment count for the whole level (the most any tile needs), so
   ## neighbouring tiles share edge vertices and no T-junction cracks open.
   s <- if (same || !any(ok)) 1L else {
@@ -733,7 +767,7 @@ level_meshes <- function(lv, proj, same, n_max, tol) {
   }
   keep <- seq(1L, n + 1L, by = n %/% s)
   index <- lattice_index(s)
-  lapply(seq_len(nt), function(t) {
+  out <- lapply(seq_len(nt), function(t) {
     if (!ok[t]) return(NULL)
     r <- (t - 1L) * np + seq_len(np)
     x <- lattice(t, 1)
@@ -751,6 +785,8 @@ level_meshes <- function(lv, proj, same, n_max, tol) {
       window = win
     )
   })
+  attr(out, "stretched") <- sum(stretched)
+  out
 }
 
 ## Fewest segments per edge (a power of two up to the lattice's) whose
