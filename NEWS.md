@@ -1,5 +1,13 @@
 # aobcore 0.0.0.9000
 
+* A view CRS can be any definition GDAL reads, not only an
+  `"authority:code"` string: WKT, a PROJ string, PROJJSON text, an EPSG
+  number or an `sf` `crs`. `scene()`, `cog_plan()`, `cog_scene()`,
+  `view_cog()`, `vector_stream()` and `gdal_vector_stream()` resolve it with
+  the new `scene_crs()`: a definition that is exactly an authority's CRS
+  becomes its code, and one with no code is carried in the scene as a
+  PROJJSON object, as the scene spec already allows. The renderer labels a
+  PROJJSON CRS named "unknown" by its projection method.
 * With `embed = TRUE` (the default for a local COG), the scene's `cog`
   reference is the file's base name, not its absolute `file://` path, so a
   shared page no longer reveals the local directory.

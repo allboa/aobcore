@@ -7,8 +7,10 @@
 scene(crs = "EPSG:3031")
 }
 \arguments{
-\item{crs}{The view CRS as an \code{"authority:code"} string. Defaults to
-\code{"EPSG:3031"} (Antarctic Polar Stereographic).}
+\item{crs}{The view CRS. Defaults to \code{"EPSG:3031"} (Antarctic Polar
+Stereographic). An \code{"authority:code"} string, or any definition GDAL
+reads (WKT, a PROJ string, PROJJSON), which is carried as PROJJSON
+when it has no code; see \code{\link[=scene_crs]{scene_crs()}}.}
 }
 \value{
 A list of class \code{"aob_scene"}.

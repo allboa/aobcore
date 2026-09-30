@@ -18,8 +18,9 @@ gdal_vector_stream(
 \arguments{
 \item{dsn}{A data source GDAL can open: a file path, URL or \verb{/vsi} path.}
 
-\item{crs}{The view CRS as an \code{"authority:code"} string, such as
-\code{"EPSG:3031"}. Passed to \code{ogr2ogr -t_srs}.}
+\item{crs}{The view CRS, such as \code{"EPSG:3031"}, or any definition
+\code{\link[=scene_crs]{scene_crs()}} accepts (WKT, a PROJ string, PROJJSON). Passed to
+\code{ogr2ogr -t_srs} (a code, or PROJJSON).}
 
 \item{layer}{Optional name of the source layer. By default the first.}
 

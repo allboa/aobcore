@@ -27,8 +27,9 @@
 #' temporary `/vsimem` files are removed before this returns.
 #'
 #' @param dsn A data source GDAL can open: a file path, URL or `/vsi` path.
-#' @param crs The view CRS as an `"authority:code"` string, such as
-#'   `"EPSG:3031"`. Passed to `ogr2ogr -t_srs`.
+#' @param crs The view CRS, such as `"EPSG:3031"`, or any definition
+#'   [scene_crs()] accepts (WKT, a PROJ string, PROJJSON). Passed to
+#'   `ogr2ogr -t_srs` (a code, or PROJJSON).
 #' @param layer Optional name of the source layer. By default the first.
 #' @param clip Optional clip box `c(xmin, ymin, xmax, ymax)` in source CRS
 #'   units, passed to `-clipsrc`.
@@ -53,17 +54,14 @@ gdal_vector_stream <- function(dsn, crs, layer = NULL, clip = NULL,
                                options = character(),
                                route = c("auto", "gdal", "r")) {
   route <- match.arg(route)
-  check_crs_string(crs)
+  crs <- scene_crs(crs)
   if (!requireNamespace("gdalraster", quietly = TRUE)) {
     stop("gdal_vector_stream() needs the 'gdalraster' package.", call. = FALSE)
   }
   if (!is.character(dsn) || length(dsn) != 1L || is.na(dsn)) {
     stop("`dsn` must be a single data source name.", call. = FALSE)
   }
-  if (inherits(try(gdalraster::srs_to_wkt(crs), silent = TRUE), "try-error")) {
-    stop("GDAL cannot resolve the CRS \"", crs, "\" (is its PROJ database installed?).",
-         call. = FALSE)
-  }
+  crs_wkt(crs)  # fails early when GDAL cannot resolve it
   has_arrow <- gdal_has_arrow()
   if (route == "auto") route <- if (has_arrow) "gdal" else "r"
   if (route == "gdal" && !has_arrow) {
@@ -71,7 +69,7 @@ gdal_vector_stream <- function(dsn, crs, layer = NULL, clip = NULL,
          "(conda-forge users can install libgdal-arrow-parquet).", call. = FALSE)
   }
 
-  args <- c("-t_srs", crs, "-nln", "data", "-lco", "GEOMETRY_NAME=geometry")
+  args <- c("-t_srs", as.character(crs), "-nln", "data", "-lco", "GEOMETRY_NAME=geometry")
   if (!is.null(clip)) {
     if (!is.numeric(clip) || length(clip) != 4L || anyNA(clip)) {
       stop("`clip` must be c(xmin, ymin, xmax, ymax).", call. = FALSE)
@@ -161,7 +159,7 @@ with_field_crs <- function(stream, column, crs) {
   batches <- nanoarrow::collect_array_stream(stream, validate = FALSE)
   field <- schema$children[[column]]
   ext <- sub("^geoarrow[.]", "", field$metadata[["ARROW:extension:name"]])
-  meta <- geoarrow::na_extension_geoarrow(toupper(ext), crs = crs)$metadata
+  meta <- geoarrow::na_extension_geoarrow(toupper(ext), crs = as.character(crs))$metadata
   field_meta <- field$metadata
   field_meta[["ARROW:extension:metadata"]] <- meta[["ARROW:extension:metadata"]]
   children <- schema$children

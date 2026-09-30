@@ -15,7 +15,8 @@ scene_spec_problems <- function(x) {
   crs_ok <- function(crs) {
     (is.character(crs) && length(crs) == 1L &&
        grepl("^[A-Za-z][A-Za-z0-9_]*:[A-Za-z0-9_.-]+$", crs)) ||
-      (is.list(crs) && is.character(crs$type))
+      (is.list(crs) && is.character(crs$type)) ||
+      (inherits(crs, "aob_json") && grepl("^[[:space:]]*[{].*\"type\"", crs))
   }
   color_ok <- function(col) {
     if (is.list(col)) return(identical(names(col), "column") && is.character(col$column))

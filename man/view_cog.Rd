@@ -35,7 +35,8 @@ cog_scene(
 \arguments{
 \item{dsn}{A COG: local path or \code{http(s)} URL (also as \code{"/vsicurl/<url>"}).}
 
-\item{crs}{The view CRS.}
+\item{crs}{The view CRS: an \code{"authority:code"} string or any definition
+\code{\link[=scene_crs]{scene_crs()}} accepts (WKT, a PROJ string, PROJJSON).}
 
 \item{palette, range}{Passed to \code{\link[=scene_add_tiled_raster]{scene_add_tiled_raster()}}.}
 

@@ -20,7 +20,8 @@ cog_plan(
 \arguments{
 \item{cog}{A COG from \code{\link[=cog_info]{cog_info()}}, or a path or URL passed to it.}
 
-\item{crs}{The view CRS, an \code{"authority:code"} string.}
+\item{crs}{The view CRS: an \code{"authority:code"} string or any definition
+\code{\link[=scene_crs]{scene_crs()}} accepts (WKT, a PROJ string, PROJJSON).}
 
 \item{extent}{Optional \code{c(xmin, xmax, ymin, ymax)} in view CRS units.
 Tiles whose footprint misses it are left out. Required with
