@@ -89,13 +89,20 @@ test_that("an all-levels plan covers every tile with packed meshes", {
   expect_equal(runs[, "first_index"], cumsum(c(0, utils::head(runs[, "index_count"], -1))))
   expect_equal(sum(runs[, "vertex_count"]), p$n_vertices)
 
-  v <- as.data.frame(nanoarrow::read_nanoarrow(p$vertices))
-  idx <- as.data.frame(nanoarrow::read_nanoarrow(p$indices))$index
+  ## Read the float32 lists from their buffers (converting FixedSizeList
+  ## columns to R needs vctrs, which is not a dependency).
+  va <- nanoarrow::read_nanoarrow(p$vertices)$get_next()
+  xy <- function(col) {
+    b <- nanoarrow::convert_buffer(va$children[[col]]$children[[1]]$buffers[[2]])
+    matrix(as.numeric(b)[seq_len(2 * va$length)], ncol = 2, byrow = TRUE)
+  }
+  ia <- nanoarrow::read_nanoarrow(p$indices)$get_next()
+  idx <- nanoarrow::convert_array(ia$children$index, double())
   expect_identical(nanoarrow::infer_nanoarrow_schema(nanoarrow::read_nanoarrow(p$vertices))$children$position$format, "+w:2")
   expect_identical(nanoarrow::infer_nanoarrow_schema(nanoarrow::read_nanoarrow(p$indices))$children$index$format, "I")
-  expect_identical(nrow(v), as.integer(p$n_vertices))
-  pos <- do.call(rbind, v$position)
-  uv <- do.call(rbind, v$uv)
+  expect_identical(va$length, as.integer(p$n_vertices))
+  pos <- xy("position")
+  uv <- xy("uv")
   for (k in seq_along(tiles)) {
     t <- tiles[[k]]
     r <- t$mesh$first_vertex + seq_len(t$mesh$vertex_count)
