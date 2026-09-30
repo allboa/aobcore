@@ -1,7 +1,8 @@
 #' Scene as scene spec JSON
 #'
-#' Writes a scene as a scene spec JSON document: version 0.1, or 0.2 when
-#' the scene has a tiled raster layer (see [scene_spec_version()]). The
+#' Writes a scene as a scene spec JSON document: version 0.1, 0.2 when the
+#' scene has a tiled raster layer, or 0.3 when a tiled raster is drawn as a
+#' colour image or has JPEG tiles (see [scene_spec_version()]). The
 #' blobs are not
 #' included; a transport delivers them beside the document (see
 #' [scene_blobs()]). The output is ASCII: other characters are written as

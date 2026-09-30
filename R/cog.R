@@ -13,7 +13,17 @@
 #' byte ranges are the `BLOCK_OFFSET_<col>_<row>` and `BLOCK_SIZE_<col>_<row>`
 #' metadata items in GDAL's `TIFF` domain for the chosen band. Compression
 #' and predictor come from the `IMAGE_STRUCTURE` domain, the byte order from
-#' the file's first two bytes.
+#' the file's first two bytes, and each band's colour interpretation
+#' (`"Red"`, `"Green"`, `"Blue"`, `"Alpha"`, `"Gray"`, ...) from GDAL.
+#'
+#' Two TIFF tags GDAL does not report are read from the file's image file
+#' directories (IFDs) directly, through GDAL's virtual file layer: each
+#' level's photometric interpretation (tag 262) and, for JPEG, its
+#' JPEGTables (tag 347), the quantization and Huffman tables its tiles
+#' share. The tables go into the level's `encoding$jpeg_tables` (base64), as
+#' scene spec 0.3 carries them. If the IFDs cannot be read, the photometric
+#' interpretation falls back to what GDAL's `IMAGE_STRUCTURE` says (`"YCbCr
+#' JPEG"` compression is YCbCr) and JPEG levels have no tables.
 #'
 #' @param dsn A local path to a COG, an `http(s)` URL (read with GDAL's
 #'   `/vsicurl/`; a `"/vsicurl/https://..."` path is the same URL), or any
@@ -26,11 +36,14 @@
 #'   gives the renderer), `local` (whether the bytes can be read here for
 #'   embedding), `crs` (an `"authority:code"` string when GDAL finds one,
 #'   else PROJJSON text), `wkt`, `band`, `samples_per_pixel`, `planar`,
-#'   `byte_order`, `scale`, `offset`, `nodata`, and `levels`: one list per
-#'   level with `level` (0 is full resolution), `dim`, `geotransform`,
-#'   `extent` (`c(xmin, xmax, ymin, ymax)`), `tile_size`, `encoding` and
-#'   `tiles` (a data frame of `col`, `row`, `byte_offset`, `byte_length`;
-#'   sparse tiles with no bytes are left out).
+#'   `color_interp` (one per band), `photometric` (the full-resolution
+#'   image's TIFF photometric interpretation, such as `"RGB"`, `"YCbCr"` or
+#'   `"MinIsBlack"`; `NA` when unknown), `byte_order`, `scale`, `offset`,
+#'   `nodata`, and `levels`: one list per level with `level` (0 is full
+#'   resolution), `dim`, `geotransform`, `extent` (`c(xmin, xmax, ymin,
+#'   ymax)`), `tile_size`, `photometric`, `encoding` and `tiles` (a data
+#'   frame of `col`, `row`, `byte_offset`, `byte_length`; sparse tiles with
+#'   no bytes are left out).
 #' @seealso [cog_plan()] to plan tiles for a view, [view_cog()] for the one
 #'   call.
 #' @export
@@ -56,6 +69,10 @@ cog_info <- function(dsn, band = 1L) {
   on.exit(ds$close(), add = TRUE)
   nb <- ds$getRasterCount()
   band <- check_band(band, nb)
+  color_interp <- vapply(seq_len(nb), function(b) {
+    v <- tryCatch(ds$getRasterColorInterp(b), error = function(e) NA_character_)
+    if (is.character(v) && length(v) == 1L) v else NA_character_
+  }, "")
   wkt <- ds$getProjection()
   if (!nzchar(wkt)) stop("\"", dsn, "\" has no CRS.", call. = FALSE)
   struct0 <- image_structure(ds)
@@ -76,10 +93,24 @@ cog_info <- function(dsn, band = 1L) {
 
   n_ov <- ds$getOverviewCount(band)
   levels <- vector("list", n_ov + 1L)
+  ifds <- tiff_ifds(gdal_dsn)
+  used <- integer()
   for (k in 0:n_ov) {
     lv <- if (k == 0L) ds else open_raster(gdal_dsn, paste0("OVERVIEW_LEVEL=", k - 1L))
-    levels[[k + 1L]] <- cog_level(lv, k, band, dtype, planar, nb, struct0)
+    L <- cog_level(lv, k, band, dtype, planar, nb, struct0)
     if (k > 0L) lv$close()
+    i <- if (length(ifds)) match_ifd(ifds, L$dim, used) else NA_integer_
+    ifd <- if (is.na(i)) NULL else ifds[[i]]
+    used <- c(used, i)
+    ycbcr <- identical(toupper(L$compression), "YCBCR JPEG")
+    L$photometric <- if (!is.null(ifd) && !is.na(ifd$photometric)) {
+      photometric_name(ifd$photometric)
+    } else if (ycbcr) "YCbCr" else NA_character_
+    if (L$encoding$codec == "jpeg" && length(ifd$jpeg_tables)) {
+      L$encoding$jpeg_tables <- b64_encode(ifd$jpeg_tables)
+    }
+    L$compression <- NULL
+    levels[[k + 1L]] <- L
   }
   byte_order <- tiff_byte_order(gdal_dsn)
   scale <- if (is.na(scale)) 1 else scale
@@ -101,6 +132,8 @@ cog_info <- function(dsn, band = 1L) {
     band = band,
     samples_per_pixel = nb,
     planar = planar,
+    color_interp = color_interp,
+    photometric = levels[[1]]$photometric,
     byte_order = byte_order,
     scale = scale,
     offset = offset,
@@ -116,6 +149,12 @@ print.aob_cog <- function(x, ...) {
   cat("  crs ", crs_label(x$crs), ", band ", x$band, " of ",
       x$samples_per_pixel, ", ", l0$encoding$dtype, " ", l0$encoding$codec,
       " (predictor ", l0$encoding$predictor, ")\n", sep = "")
+  ci <- x$color_interp
+  if (length(ci)) {
+    cat("  colour ", paste(ifelse(is.na(ci), "?", ci), collapse = ", "),
+        if (!is.na(x$photometric %||% NA)) paste0("; photometric ", x$photometric),
+        if (!is.null(rgb_default(x))) "; drawn as a colour image", "\n", sep = "")
+  }
   for (l in x$levels) {
     cat(sprintf("  level %d: %d x %d cells, %d x %d tiles, %d with bytes\n", l$level,
                 l$dim[1], l$dim[2], l$tile_size[1], l$tile_size[2], nrow(l$tiles)))
@@ -360,9 +399,29 @@ print.aob_tile_plan <- function(x, ...) {
 
 #' Add a tiled COG layer to a scene
 #'
-#' Adds a scene spec 0.2 `tiled_raster` layer: a `cog` data reference, the
-#' plan's mesh tables as Arrow blobs, and the plan. The scene becomes a 0.2
-#' scene.
+#' Adds a scene spec `tiled_raster` layer: a `cog` data reference, the
+#' plan's mesh tables as Arrow blobs, and the plan. The layer draws one band
+#' through a palette, or three or four bands as a colour image (`rgb`).
+#'
+#' **Colour images.** By default (`rgb = NULL`) a COG with 3 or 4 Byte
+#' bands whose colour interpretation is Red, Green, Blue (and Alpha) is
+#' drawn as a colour image, unless `palette` is given. `rgb = FALSE` draws
+#' one band through a palette; `rgb = TRUE` draws bands 1, 2 and 3 (and 4
+#' as alpha when it is the alpha band) in colour; `rgb = c(r, g, b)` or
+#' `c(r, g, b, a)` names the bands. A pixel is transparent where the alpha
+#' band is 0 or all three colour bands equal the nodata value. Byte bands
+#' are drawn as they are (0 to 255); other types need `range` (by default
+#' the range of the coarsest level's values over the colour bands).
+#'
+#' **JPEG.** JPEG-compressed COGs (the usual case for imagery) are carried
+#' with each level's shared JPEG tables. Only YCbCr (3 bands, GDAL's
+#' default) and greyscale (`MinIsBlack`, 1 band) JPEG are allowed, since a
+#' browser's JPEG decoder assumes one of those; others are refused.
+#' A JPEG COG's internal mask (its no-data area) is not carried.
+#'
+#' **Version.** The scene is written as scene spec 0.2, or as 0.3 when the
+#' layer uses a 0.3 feature (`rgb`, or JPEG tiles); see
+#' [scene_spec_version()].
 #'
 #' **Transport.** The renderer reads tile bytes by HTTP range requests from
 #' the `cog` URL. A page opened from `file://` cannot range-request a local
@@ -383,9 +442,19 @@ print.aob_tile_plan <- function(x, ...) {
 #' @param plan A plan from [cog_plan()] in the scene's view CRS, or a COG
 #'   (path, URL or [cog_info()] result) to plan with default settings.
 #' @param palette A palette name the renderer knows (`"ocean"`, `"viridis"`,
-#'   `"ice"`, `"gray"`).
-#' @param range `c(low, high)` in scaled values (raw * scale + offset). By
-#'   default the range of the coarsest level's values.
+#'   `"ice"`, `"gray"`). Giving it chooses the palette path when `rgb` is
+#'   `NULL`.
+#' @param range `c(low, high)` in scaled values (raw * scale + offset). With
+#'   a palette, by default the range of the coarsest level's values. With
+#'   `rgb`, the values drawn as zero and full intensity: not needed for Byte
+#'   bands (where it stretches the image).
+#' @param rgb `NULL` (colour when the COG's bands say Red, Green, Blue and
+#'   no palette is given), `TRUE`, `FALSE`, or 3 or 4 band numbers (red,
+#'   green, blue and optionally alpha). The `NULL` default looks at whether
+#'   `palette` was given at all (with [missing()]), so a function that wraps
+#'   this one and always passes `palette` on should pass `rgb` explicitly
+#'   too. A band-interleaved RGB COG is drawn through a palette by default
+#'   (with a message), since colour images need pixel-interleaved tiles.
 #' @param embed Carry the planned tiles' bytes as blobs. Defaults to `TRUE`
 #'   for a local COG and `FALSE` for a URL.
 #' @param url Optional URL (absolute, or relative to the page) the scene gives
@@ -394,7 +463,7 @@ print.aob_tile_plan <- function(x, ...) {
 #'   embedded.
 #' @param label Optional human-readable name.
 #' @param visible Optional initial visibility.
-#' @return The scene, now version 0.2, with the layer appended.
+#' @return The scene, now version 0.2 or 0.3, with the layer appended.
 #' @export
 #' @examplesIf requireNamespace("gdalraster", quietly = TRUE) && !inherits(try(gdalraster::srs_to_wkt("EPSG:3031"), silent = TRUE), "try-error")
 #' f <- system.file("extdata", "polar_3031.tif", package = "aobcore")
@@ -402,9 +471,11 @@ print.aob_tile_plan <- function(x, ...) {
 #' s
 #' names(scene_blobs(s))[1:4]
 scene_add_tiled_raster <- function(scene, id, plan, palette = "viridis", range = NULL,
-                                   embed = NULL, url = NULL, label = NULL, visible = NULL) {
+                                   rgb = NULL, embed = NULL, url = NULL, label = NULL,
+                                   visible = NULL) {
   check_scene(scene)
   check_id(id)
+  if (is.null(rgb) && !missing(palette)) rgb <- FALSE
   if (!inherits(plan, "aob_tile_plan")) plan <- cog_plan(plan, scene$view$crs)
   if (!crs_same(plan$plan$crs, scene$view$crs)) {
     stop("The plan is in ", crs_label(plan$plan$crs), " but the view is in ",
@@ -437,16 +508,29 @@ scene_add_tiled_raster <- function(scene, id, plan, palette = "viridis", range =
     stop("The renderer cannot fetch \"", cog$url, "\"; give the COG as an http(s) URL",
          if (cog$local) " or embed it", ".", call. = FALSE)
   }
-  range <- range %||% cog_value_range(cog)
-  if (!is.numeric(range) || length(range) != 2L || anyNA(range)) {
-    stop("`range` must be c(low, high).", call. = FALSE)
+  bands <- resolve_rgb(cog, rgb)
+  p <- plan$plan
+  check_layer_levels(p$levels, cog, id, bands)
+  if (is.null(bands)) {
+    range <- range %||% cog_value_range(cog)
+  } else if (is.null(range) && !all(vapply(p$levels, function(l) l$encoding$dtype, "") == "uint8")) {
+    range <- cog_value_range(cog, bands = bands[1:3])
+  }
+  if (!is.null(range) && (!is.numeric(range) || length(range) != 2L || anyNA(range) ||
+                          range[1] == range[2])) {
+    stop("`range` must be c(low, high) with low and high different.", call. = FALSE)
+  }
+  if (!is.null(bands)) {
+    ## An rgb layer names its bands itself; encoding.band is the palette's.
+    p$levels <- lapply(p$levels, function(l) {
+      l$encoding$band <- NULL
+      l
+    })
   }
 
-  scene$version <- "0.2"
   scene$data[[ids[1]]] <- list(format = "cog", url = url)
   scene$data[[ids[2]]] <- list(format = "arrow-ipc-stream", blob = ids[2])
   scene$data[[ids[3]]] <- list(format = "arrow-ipc-stream", blob = ids[3])
-  p <- plan$plan
   p$crs <- scene$view$crs
   p$mesh <- list(vertices = ids[2], indices = ids[3])
   layer <- list(
@@ -454,10 +538,19 @@ scene_add_tiled_raster <- function(scene, id, plan, palette = "viridis", range =
     label = check_scalar(label, is.character, "label"),
     visible = check_scalar(visible, is.logical, "visible"),
     source = ids[1],
-    plan = p,
-    palette = list(name = palette, range = as.numeric(range))
+    plan = p
   )
+  if (is.null(bands)) {
+    layer$palette <- list(name = palette, range = as.numeric(range))
+  } else {
+    layer$rgb <- drop_null(list(
+      bands = as.integer(bands[1:3]),
+      alpha = if (length(bands) == 4L) as.integer(bands[4]),
+      range = if (!is.null(range)) as.numeric(range)
+    ))
+  }
   scene$layers[[length(scene$layers) + 1L]] <- drop_null(layer)
+  scene$version <- scene_spec_version(scene)
 
   blobs <- attr(scene, "blobs") %||% list()
   blobs[[ids[2]]] <- plan$vertices
@@ -480,11 +573,19 @@ scene_add_tiled_raster <- function(scene, id, plan, palette = "viridis", range =
 #' from disk with no server. A COG given by URL is read by the browser with
 #' HTTP range requests (the server must allow them, and CORS).
 #'
+#' A COG with 3 or 4 Byte bands whose colour interpretation is Red, Green,
+#' Blue (and Alpha), such as a rendered chart or aerial imagery, is drawn as
+#' a colour image; giving `band` or `palette` (or `rgb = FALSE`) draws one
+#' band through a palette instead.
+#'
 #' @param dsn A COG: local path or `http(s)` URL (also as `"/vsicurl/<url>"`).
 #' @param crs The view CRS: an `"authority:code"` string or any definition
 #'   [scene_crs()] accepts (WKT, a PROJ string, PROJJSON).
-#' @param palette,range Passed to [scene_add_tiled_raster()].
-#' @param band The band to draw.
+#' @param palette,range,rgb Passed to [scene_add_tiled_raster()]. Giving
+#'   `palette` or `band` chooses the palette path when `rgb` is `NULL`;
+#'   this is detected with [missing()], so a function that wraps these and
+#'   always passes `palette` or `band` on should pass `rgb` explicitly too.
+#' @param band The band to draw through the palette.
 #' @param coastline Add the bundled coastline south of 40S (densified and
 #'   projected with [gdal_vector_stream()]). By default only when `crs` is a
 #'   south polar view (one centred on the South Pole, such as EPSG:3031 or
@@ -497,7 +598,8 @@ scene_add_tiled_raster <- function(scene, id, plan, palette = "viridis", range =
 #' @param url Passed to [scene_add_tiled_raster()].
 #' @param ... Passed to [cog_plan()] (`levels`, `selection`,
 #'   `max_segments`, `tolerance`, `max_stretch`, `max_tiles`).
-#' @return `cog_scene()`: a scene (spec 0.2) carrying its blobs.
+#' @return `cog_scene()`: a scene (spec 0.2, or 0.3 for a colour image or
+#'   JPEG tiles) carrying its blobs.
 #'   `view_cog()`: the path of the written page, invisibly.
 #' @export
 #' @examplesIf requireNamespace("gdalraster", quietly = TRUE) && !inherits(try(gdalraster::srs_to_wkt("EPSG:3031"), silent = TRUE), "try-error")
@@ -509,9 +611,12 @@ scene_add_tiled_raster <- function(scene, id, plan, palette = "viridis", range =
 #' }
 view_cog <- function(dsn, crs = "EPSG:3031", palette = "viridis", range = NULL, band = 1L,
                      coastline = NULL, extent = NULL, file = tempfile(fileext = ".html"),
-                     title = NULL, theme = c("auto", "light", "dark"), url = NULL, ...) {
-  s <- cog_scene(dsn, crs = crs, palette = palette, range = range, band = band,
-                 coastline = coastline, extent = extent, url = url, ...)
+                     title = NULL, theme = c("auto", "light", "dark"), url = NULL,
+                     rgb = NULL, ...) {
+  if (is.null(rgb) && (!missing(palette) || !missing(band))) rgb <- FALSE
+  need_gdalraster("view_cog()")
+  s <- cog_scene_(dsn, crs = crs, palette = palette, range = range, band = band,
+                  coastline = coastline, extent = extent, url = url, rgb = rgb, ...)
   write_scene_html(s, file = file, title = title %||% s$layers[[1]]$label, theme = theme)
 }
 
@@ -520,10 +625,17 @@ view_cog <- function(dsn, crs = "EPSG:3031", palette = "viridis", range = NULL, 
 #' @param title,theme Passed to [write_scene_html()].
 #' @export
 cog_scene <- function(dsn, crs = "EPSG:3031", palette = "viridis", range = NULL, band = 1L,
-                      coastline = NULL, extent = NULL, url = NULL, ...) {
+                      coastline = NULL, extent = NULL, url = NULL, rgb = NULL, ...) {
   need_gdalraster("cog_scene()")
+  if (is.null(rgb) && (!missing(palette) || !missing(band))) rgb <- FALSE
+  cog_scene_(dsn, crs, palette, range, band, coastline, extent, url, rgb, ...)
+}
+
+## cog_scene() once `rgb` says whether a palette or band was given.
+cog_scene_ <- function(dsn, crs, palette, range, band, coastline, extent, url, rgb, ...) {
   crs <- scene_crs(crs)
   cog <- if (inherits(dsn, "aob_cog")) dsn else cog_info(dsn, band = band)
+  if (is.null(rgb)) rgb <- rgb_default(cog, quiet = FALSE) %||% FALSE
   cull <- NULL
   if (!is.null(extent)) {
     check_extent(extent)
@@ -532,7 +644,7 @@ cog_scene <- function(dsn, crs = "EPSG:3031", palette = "viridis", range = NULL,
   }
   plan <- cog_plan(cog, crs, extent = cull, ...)
   s <- scene(crs)
-  s <- scene_add_tiled_raster(s, "cog", plan, palette = palette, range = range,
+  s <- scene_add_tiled_raster(s, "cog", plan, palette = palette, range = range, rgb = rgb,
                               url = url, label = basename(cog$dsn))
   if (isTRUE(coastline %||% south_polar_view(crs))) {
     coast <- system.file("extdata", "coastline_south_40s.geojson", package = "aobcore")
@@ -615,7 +727,8 @@ md_item <- function(md, key) if (key %in% names(md)) md[[key]] else NULL
 
 tiff_codecs <- c(NONE = "none", DEFLATE = "deflate", ADOBE_DEFLATE = "deflate", LZW = "lzw",
                  ZSTD = "zstd", LERC = "lerc", LERC_DEFLATE = "lerc_deflate",
-                 LERC_ZSTD = "lerc_zstd", WEBP = "webp", PACKBITS = "packbits")
+                 LERC_ZSTD = "lerc_zstd", WEBP = "webp", PACKBITS = "packbits",
+                 JPEG = "jpeg", "YCBCR JPEG" = "jpeg")
 
 gdal_dtype <- function(name) {
   map <- c(Byte = "uint8", Int8 = "int8", UInt16 = "uint16", Int16 = "int16",
@@ -632,9 +745,8 @@ cog_level <- function(ds, k, band, dtype, planar, nb, struct0) {
   comp <- toupper(md_item(st, "COMPRESSION") %||% md_item(struct0, "COMPRESSION") %||% "NONE")
   codec <- tiff_codecs[comp]
   if (is.na(codec)) {
-    stop("Level ", k, " is compressed with ", comp, ", which scene spec 0.2 does not carry",
-         if (comp %in% c("JPEG", "YCBCR")) " (JPEG keeps shared tables in the TIFF header)",
-         ".", call. = FALSE)
+    stop("Level ", k, " is compressed with ", comp, ", which the scene spec does not carry.",
+         call. = FALSE)
   }
   pred <- md_item(st, "PREDICTOR") %||% md_item(struct0, "PREDICTOR") %||% "1"
   predictor <- c("1" = "none", "2" = "horizontal", "3" = "floating_point")[pred]
@@ -670,6 +782,7 @@ cog_level <- function(ds, k, band, dtype, planar, nb, struct0) {
     geotransform = gt,
     extent = c(gt[1], gt[1] + dim[1] * gt[2], gt[4] + dim[2] * gt[6], gt[4]),
     tile_size = as.integer(ts),
+    compression = comp,
     encoding = enc,
     tiles = tiles
   )
@@ -973,14 +1086,15 @@ tile_blob_key <- function(source, offset, length) {
          format(length, scientific = FALSE, trim = TRUE))
 }
 
-## Range of scaled values in the coarsest level, read through GDAL.
-cog_value_range <- function(cog) {
+## Range of scaled values in the coarsest level, read through GDAL, over
+## `bands` (by default the COG's chosen band).
+cog_value_range <- function(cog, bands = cog$band) {
   k <- length(cog$levels) - 1L
   gdal_dsn <- dsn_ref(cog$dsn)$gdal
   ds <- if (k == 0L) open_raster(gdal_dsn) else open_raster(gdal_dsn, paste0("OVERVIEW_LEVEL=", k - 1L))
   on.exit(ds$close())
   d <- ds$dim()
-  v <- ds$read(cog$band, 0L, 0L, d[1], d[2], d[1], d[2])
+  v <- unlist(lapply(unique(bands), function(b) ds$read(b, 0L, 0L, d[1], d[2], d[1], d[2])))
   if (!is.null(cog$nodata) && !is.nan(cog$nodata)) v[v == cog$nodata] <- NA
   v <- v[is.finite(v)]
   if (!length(v)) return(c(0, 1))
@@ -994,4 +1108,91 @@ plan_extent <- function(plan) {
   fp <- do.call(rbind, lapply(lv$tiles, `[[`, "footprint"))
   if (is.null(fp)) return(NULL)
   c(min(fp[, 1]), max(fp[, 2]), min(fp[, 3]), max(fp[, 4]))
+}
+
+## The colour bands a COG is drawn with by default: c(r, g, b) or
+## c(r, g, b, a) when it has 3 or 4 pixel-interleaved Byte bands whose
+## colour interpretation is Red, Green, Blue (and Alpha) in that order; else
+## NULL. A band-interleaved RGB COG falls back to the palette path (with a
+## message when `quiet` is FALSE), since scene spec 0.3 draws colour images
+## from interleaved tiles only.
+rgb_default <- function(cog, quiet = TRUE) {
+  ci <- cog$color_interp
+  nb <- cog$samples_per_pixel
+  dtype <- cog$levels[[1]]$encoding$dtype
+  if (is.null(ci) || !nb %in% 3:4 || !identical(dtype, "uint8")) return(NULL)
+  want <- c("Red", "Green", "Blue", "Alpha")[seq_len(nb)]
+  if (!identical(unname(ci), want)) return(NULL)
+  if (!identical(cog$planar, "interleaved")) {
+    if (!quiet) {
+      message("This RGB COG stores its bands separately (INTERLEAVE=BAND); drawing band ",
+              cog$band, " through a palette. Rewrite it with INTERLEAVE=PIXEL to draw it ",
+              "in colour.")
+    }
+    return(NULL)
+  }
+  seq_len(nb)
+}
+
+## The rgb argument of scene_add_tiled_raster() as band numbers (3 or 4),
+## or NULL for the palette path.
+resolve_rgb <- function(cog, rgb) {
+  nb <- cog$samples_per_pixel
+  if (is.null(rgb)) return(rgb_default(cog, quiet = FALSE))
+  if (isFALSE(rgb)) return(NULL)
+  if (isTRUE(rgb)) {
+    if (nb < 3L) {
+      stop("`rgb = TRUE` needs 3 or 4 bands; this COG has ", nb, ".", call. = FALSE)
+    }
+    b <- rgb_default(cog)
+    if (!is.null(b)) return(b)
+    ## A band-interleaved RGB COG gets here and is refused, with advice, by
+    ## check_layer_levels().
+    alpha <- nb >= 4L && identical(cog$color_interp[4], "Alpha")
+    return(if (alpha) 1:4 else 1:3)
+  }
+  if (!is.numeric(rgb) || !length(rgb) %in% 3:4 || anyNA(rgb) || any(rgb != round(rgb)) ||
+      any(rgb < 1 | rgb > nb)) {
+    stop("`rgb` must be NULL, TRUE, FALSE, or 3 or 4 band numbers from 1 to ", nb, ".",
+         call. = FALSE)
+  }
+  if (length(rgb) == 4L && rgb[4] %in% rgb[1:3]) {
+    stop("The alpha band in `rgb` must not also be a colour band.", call. = FALSE)
+  }
+  as.integer(rgb)
+}
+
+## What a layer's levels must satisfy beyond the codec: colour images need
+## interleaved samples, and JPEG tiles need YCbCr (3 bands) or MinIsBlack
+## (1 band), interleaved, since a browser's JPEG decoder assumes one of
+## those. The photometric interpretation of each level is in the COG
+## (cog_info()), matched by level number.
+check_layer_levels <- function(levels, cog, id, bands) {
+  fail <- function(...) stop("Layer \"", id, "\": ", ..., call. = FALSE)
+  photometric <- function(k) {
+    for (l in cog$levels) if (identical(l$level, k)) return(l$photometric %||% NA_character_)
+    NA_character_
+  }
+  for (l in levels) {
+    enc <- l$encoding
+    spp <- enc$samples_per_pixel %||% 1L
+    interleaved <- identical(enc$planar %||% "interleaved", "interleaved")
+    if (!is.null(bands) && !interleaved) {
+      fail("level ", l$level, " stores its bands separately; a colour image needs pixel ",
+           "interleaved bands (write the COG with INTERLEAVE=PIXEL).")
+    }
+    if (!identical(enc$codec, "jpeg")) next
+    ph <- photometric(l$level)
+    ok <- (spp == 3L && identical(ph, "YCbCr")) || (spp == 1L && identical(ph, "MinIsBlack"))
+    if (!ok) {
+      fail("level ", l$level, " is JPEG with ", spp, " band", if (spp != 1L) "s",
+           " and photometric ", if (is.na(ph)) "unknown" else ph, "; only YCbCr JPEG ",
+           "(3 bands, GDAL's default) and greyscale MinIsBlack JPEG (1 band) can be drawn. ",
+           "Rewrite the COG, for example with GDAL's COG driver and COMPRESS=JPEG.")
+    }
+    if (!interleaved) {
+      fail("level ", l$level, " is JPEG with separate bands; only interleaved JPEG can be drawn.")
+    }
+  }
+  invisible()
 }

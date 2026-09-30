@@ -17,6 +17,7 @@ view_cog(
   title = NULL,
   theme = c("auto", "light", "dark"),
   url = NULL,
+  rgb = NULL,
   ...
 )
 
@@ -29,6 +30,7 @@ cog_scene(
   coastline = NULL,
   extent = NULL,
   url = NULL,
+  rgb = NULL,
   ...
 )
 }
@@ -38,9 +40,12 @@ cog_scene(
 \item{crs}{The view CRS: an \code{"authority:code"} string or any definition
 \code{\link[=scene_crs]{scene_crs()}} accepts (WKT, a PROJ string, PROJJSON).}
 
-\item{palette, range}{Passed to \code{\link[=scene_add_tiled_raster]{scene_add_tiled_raster()}}.}
+\item{palette, range, rgb}{Passed to \code{\link[=scene_add_tiled_raster]{scene_add_tiled_raster()}}. Giving
+\code{palette} or \code{band} chooses the palette path when \code{rgb} is \code{NULL};
+this is detected with \code{\link[=missing]{missing()}}, so a function that wraps these and
+always passes \code{palette} or \code{band} on should pass \code{rgb} explicitly too.}
 
-\item{band}{The band to draw.}
+\item{band}{The band to draw through the palette.}
 
 \item{coastline}{Add the bundled coastline south of 40S (densified and
 projected with \code{\link[=gdal_vector_stream]{gdal_vector_stream()}}). By default only when \code{crs} is a
@@ -63,7 +68,8 @@ and the view is the full-resolution tiles' footprint.}
 \code{max_segments}, \code{tolerance}, \code{max_stretch}, \code{max_tiles}).}
 }
 \value{
-\code{cog_scene()}: a scene (spec 0.2) carrying its blobs.
+\code{cog_scene()}: a scene (spec 0.2, or 0.3 for a colour image or
+JPEG tiles) carrying its blobs.
 \code{view_cog()}: the path of the written page, invisibly.
 }
 \description{
@@ -78,6 +84,11 @@ require the 'gdalraster' package.
 A local COG's planned tile bytes are embedded in the page, so it opens
 from disk with no server. A COG given by URL is read by the browser with
 HTTP range requests (the server must allow them, and CORS).
+
+A COG with 3 or 4 Byte bands whose colour interpretation is Red, Green,
+Blue (and Alpha), such as a rendered chart or aerial imagery, is drawn as
+a colour image; giving \code{band} or \code{palette} (or \code{rgb = FALSE}) draws one
+band through a palette instead.
 }
 \examples{
 \dontshow{if (requireNamespace("gdalraster", quietly = TRUE) && !inherits(try(gdalraster::srs_to_wkt("EPSG:3031"), silent = TRUE), "try-error")) withAutoprint(\{ # examplesIf}

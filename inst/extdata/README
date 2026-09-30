@@ -39,3 +39,23 @@ make rotation, mirroring and seams visible.
                     the antimeridian is at its edges.
 
 License: generated data, same license as the package.
+
+polar_rgba.tif, polar_ycbcr.tif
+-------------------------------
+
+Synthetic colour images as Cloud Optimized GeoTIFFs, made by
+tools/make-rgb-cogs.R with GDAL's COG driver: EPSG:3031, 250 x 250 cells of
+32 km over +-4000 km, 128 x 128 tiles, 2 overviews.
+
+  polar_rgba.tif    4-band Byte RGBA (Red, Green, Blue, Alpha), LZW, pixel
+                    interleaved. Flat quadrants: red towards 0 (up), green
+                    towards 90E (right), blue towards 180 (down), yellow
+                    towards 90W (left), white rings every 1000 km. Alpha 0
+                    beyond 3800 km, 128 from 2400 to 2600 km, else 255.
+  polar_ycbcr.tif   3-band Byte RGB stored as YCbCr JPEG (photometric 6,
+                    quality 85), with shared JPEGTables per image. A colour
+                    wheel: hue by angle clockwise from 0 (red at 0, green at
+                    120E, blue at 120W), white at the pole, dark rings every
+                    1000 km.
+
+License: generated data, same license as the package.

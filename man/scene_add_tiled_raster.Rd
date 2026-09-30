@@ -10,6 +10,7 @@ scene_add_tiled_raster(
   plan,
   palette = "viridis",
   range = NULL,
+  rgb = NULL,
   embed = NULL,
   url = NULL,
   label = NULL,
@@ -26,10 +27,21 @@ scene_add_tiled_raster(
 (path, URL or \code{\link[=cog_info]{cog_info()}} result) to plan with default settings.}
 
 \item{palette}{A palette name the renderer knows (\code{"ocean"}, \code{"viridis"},
-\code{"ice"}, \code{"gray"}).}
+\code{"ice"}, \code{"gray"}). Giving it chooses the palette path when \code{rgb} is
+\code{NULL}.}
 
-\item{range}{\code{c(low, high)} in scaled values (raw * scale + offset). By
-default the range of the coarsest level's values.}
+\item{range}{\code{c(low, high)} in scaled values (raw * scale + offset). With
+a palette, by default the range of the coarsest level's values. With
+\code{rgb}, the values drawn as zero and full intensity: not needed for Byte
+bands (where it stretches the image).}
+
+\item{rgb}{\code{NULL} (colour when the COG's bands say Red, Green, Blue and
+no palette is given), \code{TRUE}, \code{FALSE}, or 3 or 4 band numbers (red,
+green, blue and optionally alpha). The \code{NULL} default looks at whether
+\code{palette} was given at all (with \code{\link[=missing]{missing()}}), so a function that wraps
+this one and always passes \code{palette} on should pass \code{rgb} explicitly
+too. A band-interleaved RGB COG is drawn through a palette by default
+(with a message), since colour images need pixel-interleaved tiles.}
 
 \item{embed}{Carry the planned tiles' bytes as blobs. Defaults to \code{TRUE}
 for a local COG and \code{FALSE} for a URL.}
@@ -44,14 +56,34 @@ embedded.}
 \item{visible}{Optional initial visibility.}
 }
 \value{
-The scene, now version 0.2, with the layer appended.
+The scene, now version 0.2 or 0.3, with the layer appended.
 }
 \description{
-Adds a scene spec 0.2 \code{tiled_raster} layer: a \code{cog} data reference, the
-plan's mesh tables as Arrow blobs, and the plan. The scene becomes a 0.2
-scene.
+Adds a scene spec \code{tiled_raster} layer: a \code{cog} data reference, the
+plan's mesh tables as Arrow blobs, and the plan. The layer draws one band
+through a palette, or three or four bands as a colour image (\code{rgb}).
 }
 \details{
+\strong{Colour images.} By default (\code{rgb = NULL}) a COG with 3 or 4 Byte
+bands whose colour interpretation is Red, Green, Blue (and Alpha) is
+drawn as a colour image, unless \code{palette} is given. \code{rgb = FALSE} draws
+one band through a palette; \code{rgb = TRUE} draws bands 1, 2 and 3 (and 4
+as alpha when it is the alpha band) in colour; \code{rgb = c(r, g, b)} or
+\code{c(r, g, b, a)} names the bands. A pixel is transparent where the alpha
+band is 0 or all three colour bands equal the nodata value. Byte bands
+are drawn as they are (0 to 255); other types need \code{range} (by default
+the range of the coarsest level's values over the colour bands).
+
+\strong{JPEG.} JPEG-compressed COGs (the usual case for imagery) are carried
+with each level's shared JPEG tables. Only YCbCr (3 bands, GDAL's
+default) and greyscale (\code{MinIsBlack}, 1 band) JPEG are allowed, since a
+browser's JPEG decoder assumes one of those; others are refused.
+A JPEG COG's internal mask (its no-data area) is not carried.
+
+\strong{Version.} The scene is written as scene spec 0.2, or as 0.3 when the
+layer uses a 0.3 feature (\code{rgb}, or JPEG tiles); see
+\code{\link[=scene_spec_version]{scene_spec_version()}}.
+
 \strong{Transport.} The renderer reads tile bytes by HTTP range requests from
 the \code{cog} URL. A page opened from \verb{file://} cannot range-request a local
 file, so for a local COG (\code{embed = TRUE}, the default when the COG is not

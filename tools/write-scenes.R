@@ -17,6 +17,11 @@
 #                cog_scene() / view_cog() build them, whole, at the pole
 #                and (3031) far out; polar-cog-lonlat-laea147 is the lon/lat
 #                COG in a south polar LAEA with no EPSG code (PROJJSON view).
+#   polar-rgb-*  scene spec 0.3 colour images (inst/extdata,
+#                tools/make-rgb-cogs.R) as cog_scene() draws them by default:
+#                an RGBA LZW COG (alpha 0, 128 and 255) and a YCbCr JPEG COG
+#                (tiles joined to the level's JPEGTables), whole and at the
+#                pole (full resolution).
 library(aobcore)
 library(nanoarrow)
 
@@ -148,6 +153,22 @@ for (name in names(cogs)) {
   x <- cogs[[name]]
   s <- cog_scene(system.file("extdata", x$file, package = "aobcore"), x$crs %||% "EPSG:3031",
                  palette = "ocean", extent = x$extent)
+  write_scene_html(s, file = file.path(out, paste0(name, ".html")), title = x$file)
+  writeLines(scene_json(s), file.path(out, paste0(name, ".json")))
+}
+
+# ---- colour images (scene spec 0.3) ---------------------------------------
+rgb <- list(
+  "polar-rgb-rgba" = list(file = "polar_rgba.tif", extent = NULL),
+  "polar-rgb-rgba-pole" = list(file = "polar_rgba.tif", extent = c(-9e5, 9e5, -6e5, 6e5)),
+  "polar-rgb-ycbcr" = list(file = "polar_ycbcr.tif", extent = NULL),
+  "polar-rgb-ycbcr-pole" = list(file = "polar_ycbcr.tif", extent = c(-9e5, 9e5, -6e5, 6e5))
+)
+for (name in names(rgb)) {
+  x <- rgb[[name]]
+  s <- cog_scene(system.file("extdata", x$file, package = "aobcore"), "EPSG:3031",
+                 extent = x$extent)
+  stopifnot(identical(s$version, "0.3"), !is.null(s$layers[[1]]$rgb))
   write_scene_html(s, file = file.path(out, paste0(name, ".html")), title = x$file)
   writeLines(scene_json(s), file.path(out, paste0(name, ".json")))
 }

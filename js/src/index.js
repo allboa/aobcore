@@ -1,22 +1,24 @@
-// allonboard renderer for scene spec 0.1 and 0.2, on deck.gl.
+// allonboard renderer for scene spec 0.1, 0.2 and 0.3, on deck.gl.
 //
 // aob.render(container, scene, {blobs}) draws one scene into an element.
 // blobs maps each data reference's blob key to Arrow IPC bytes (Uint8Array,
 // ArrayBuffer or a base64 string); data references with a url are fetched.
 // A 0.2 cog reference is not fetched whole: its tiled_raster layers fetch
 // the planned tiles' byte ranges, or use blobs keyed
-// "<source>@<offset>+<length>" that carry those bytes (see tiles.js).
+// "<source>@<offset>+<length>" that carry those bytes (see tiles.js). 0.3
+// adds colour images (rgb) and jpeg tiles to tiled_raster layers.
 // On load, every element with a data-aob-scene attribute is rendered from
 // the JSON script it names and the blob scripts that point at it.
 import { Deck, OrthographicView, _GlobeView as GlobeView, COORDINATE_SYSTEM } from "@deck.gl/core";
 import { decodeBase64, readTable } from "./arrow.js";
 import { buildLayer } from "./layers.js";
 import { buildTiledRaster } from "./tiles.js";
+import { decodeTileSamples } from "./jpeg.js";
 import { cssGradient } from "./palettes.js";
 import { CSS } from "./style.js";
 
-const VERSION = "0.0.2";
-const SPECS = ["0.1", "0.2"];
+const VERSION = "0.0.3";
+const SPECS = ["0.1", "0.2", "0.3"];
 
 
 function injectStyle() {
@@ -59,7 +61,7 @@ async function loadBytes(ref, id, blobs) {
 
 function checkScene(scene) {
   if (!scene || !SPECS.includes(scene.version)) {
-    throw new Error(`this renderer draws scene spec ${SPECS.join(" and ")}; got ${JSON.stringify(scene && scene.version)}`);
+    throw new Error(`this renderer draws scene spec ${SPECS.join(", ")}; got ${JSON.stringify(scene && scene.version)}`);
   }
   for (const k of ["view", "data", "layers"]) {
     if (!scene[k]) throw new Error(`scene has no ${k}`);
@@ -362,6 +364,9 @@ export function boot() {
 }
 
 export { VERSION as version, SPECS as specVersions };
+// For tests: decode one tile's bytes to {samples, spp} as a layer does
+// (jpeg through the browser's decoder). Not a stable interface.
+export { decodeTileSamples as _decodeTileSamples };
 
 if (typeof document !== "undefined") {
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot);

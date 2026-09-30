@@ -14,6 +14,11 @@
 // 4. A 0.2 tiled raster read by HTTP range requests from a local server
 //    draws, one from a server that ignores Range downloads the file once,
 //    and one with an unsupported codec is a layer error.
+// 5. Scene spec 0.3 colour images: in Node, joining jpeg tables to a tile,
+//    colorizeRGB (bands, alpha, nodata, range) and the RGBA LZW tile of
+//    test/rgb-tiles.json against GDAL; in the browser, the YCbCr JPEG tile
+//    decoded by the browser against GDAL's read, and a 0.3 scene of the
+//    JPEG COG over HTTP range requests.
 // Also in Node: the range reader keeps a whole-file (200) response, and the
 // tile cache evicts least recently used idle tiles.
 // Set CHROMIUM_PATH to pick a browser; SKIP_BROWSER=1 runs only part 1.
@@ -23,7 +28,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { tableToIPC, tableFromArrays } from "apache-arrow";
 import { paletteStops, colorize, UnknownPaletteError } from "../src/palettes.js";
-import { decodeTile, UnsupportedCodecError } from "../src/decode.js";
+import { decodeTile, decodeSamples, jpegStream, samplesFromRGBA, colorizeRGB, encodingProblem, UnsupportedCodecError } from "../src/decode.js";
 import { selectLevel, rangeReader, tilesToEvict } from "../src/tiles.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -56,10 +61,62 @@ for (const c of cases) {
   assert.ok(Math.abs(sum - c.sum) <= 1e-6 * Math.max(1, Math.abs(c.sum)), `${c.name}: sum ${sum} vs ${c.sum}`);
   console.log(`ok   decode ${c.name}`);
 }
-for (const codec of ["lerc", "lerc_deflate", "lerc_zstd", "webp", "jpeg"]) {
+for (const codec of ["lerc", "lerc_deflate", "lerc_zstd", "webp"]) {
   assert.throws(() => decodeTile(new Uint8Array(4), { codec, dtype: "uint8" }, 1, 1), UnsupportedCodecError, codec);
 }
 console.log("ok   unsupported codecs throw");
+
+// ---- 5a. colour images in Node ---------------------------------------------
+{
+  const u8 = (a) => Uint8Array.from(a);
+  // tables: SOI, a DQT stub, EOI; tile: SOI, SOF stub, EOI.
+  const joined = jpegStream(u8([0xff, 0xd8, 0xff, 0xdb, 1, 0xff, 0xd9]), u8([0xff, 0xd8, 0xff, 0xc0, 2, 0xff, 0xd9]));
+  assert.deepEqual([...joined], [0xff, 0xd8, 0xff, 0xdb, 1, 0xff, 0xc0, 2, 0xff, 0xd9]);
+  assert.deepEqual([...jpegStream(null, u8([0xff, 0xd8, 9]))], [0xff, 0xd8, 9], "no tables: the tile as is");
+  assert.throws(() => jpegStream(u8([0xff, 0xd8, 0xff, 0xd9]), u8([1, 2, 3])), /SOI/);
+  assert.deepEqual([...samplesFromRGBA(u8([1, 2, 3, 255, 4, 5, 6, 255]), 3)], [1, 2, 3, 4, 5, 6]);
+  assert.deepEqual([...samplesFromRGBA(u8([7, 7, 7, 255]), 1)], [7]);
+  const jpg = { codec: "jpeg", dtype: "uint8", samples_per_pixel: 3, planar: "interleaved" };
+  assert.equal(encodingProblem(jpg), null);
+  assert.match(encodingProblem({ ...jpg, samples_per_pixel: 4 }), /1 or 3 samples/);
+  assert.match(encodingProblem({ ...jpg, dtype: "uint16" }), /uint8/);
+  assert.match(encodingProblem({ ...jpg, predictor: "horizontal" }), /predictor/);
+  assert.throws(() => decodeSamples(new Uint8Array(4), jpg, 1, 1), /browser/);
+
+  // Two pixels of 4 bands: bands name red, green, blue and alpha.
+  const enc = { dtype: "uint8" };
+  const px = colorizeRGB(u8([10, 20, 30, 255, 1, 2, 3, 128]), 4, 2, 1, null, enc, undefined, { bands: [1, 2, 3], alpha: 4 });
+  assert.deepEqual([...px], [10, 20, 30, 255, 1, 2, 3, 128]);
+  const bgr = colorizeRGB(u8([10, 20, 30, 0, 1, 2, 3, 9]), 4, 2, 1, null, enc, undefined, { bands: [3, 2, 1], alpha: 4 });
+  assert.deepEqual([...bgr], [0, 0, 0, 0, 3, 2, 1, 9], "alpha 0 is transparent; bands are reordered");
+  const nd = colorizeRGB(u8([0, 0, 0, 0, 5, 0]), 3, 2, 1, null, enc, 0, { bands: [1, 2, 3] });
+  assert.deepEqual([...nd], [0, 0, 0, 0, 0, 5, 0, 255], "all colour bands at nodata is transparent, one is not");
+  const grey = colorizeRGB(u8([200]), 1, 1, 1, null, enc, undefined, { bands: [1, 1, 1] });
+  assert.deepEqual([...grey], [200, 200, 200, 255]);
+  // uint8 ignores scale and offset unless a range is given; a range stretches.
+  const scaled = { dtype: "uint8", scale: 2, offset: 1 };
+  assert.deepEqual([...colorizeRGB(u8([100, 100, 100]), 3, 1, 1, null, scaled, undefined, { bands: [1, 2, 3] })], [100, 100, 100, 255]);
+  assert.deepEqual([...colorizeRGB(u8([0, 50, 100]), 3, 1, 1, null, enc, undefined, { bands: [1, 2, 3], range: [0, 100] })], [0, 128, 255, 255]);
+  // uint16 with a range in scaled values, clamped; the window leaves padding transparent.
+  const u16 = colorizeRGB(Uint16Array.from([0, 2000, 4000, 9, 9, 9]), 3, 2, 1, { x: 0, y: 0, width: 1, height: 1 },
+    { dtype: "uint16", scale: 0.001 }, undefined, { bands: [1, 2, 3], range: [0, 2] });
+  assert.deepEqual([...u16], [0, 255, 255, 255, 0, 0, 0, 0]);
+  console.log("ok   colour images: jpeg table join, rgb bands, alpha, nodata and range");
+
+  for (const c of JSON.parse(readFileSync(join(here, "rgb-tiles.json"), "utf8")).filter((c) => c.encoding.codec !== "jpeg")) {
+    const [w, h] = c.size;
+    const { samples, spp } = decodeSamples(new Uint8Array(Buffer.from(c.bytes, "base64")), c.encoding, w, h);
+    const want = new Uint8Array(Buffer.from(c.samples, "base64"));
+    assert.equal(spp, c.encoding.samples_per_pixel);
+    const win = c.window;
+    for (let r = 0; r < win.height; r++) {
+      for (let k = 0; k < win.width * spp; k++) {
+        if (samples[r * w * spp + k] !== want[r * win.width * spp + k]) assert.fail(`${c.name}: row ${r} sample ${k}`);
+      }
+    }
+    console.log(`ok   decode ${c.name}`);
+  }
+}
 const lv = [{ pixel_size: 256 }, { pixel_size: 32 }, { pixel_size: 64 }, { pixel_size: 128 }];
 assert.equal(selectLevel(lv, 100, "coarsest_sufficient"), 2);
 assert.equal(selectLevel(lv, 10, "coarsest_sufficient"), 1, "finest when none suffices");
@@ -184,6 +241,9 @@ try {
 // ---- 4. tiled raster over HTTP range requests -------------------------------
 const { createServer } = await import("node:http");
 const tiff = readFileSync(join(here, "..", "..", "inst", "extdata", "polar_3031.tif"));
+const ycbcr = readFileSync(join(here, "..", "..", "inst", "extdata", "polar_ycbcr.tif"));
+const rgbScene = JSON.parse(readFileSync(join(here, "rgb-scene.json"), "utf8"));
+const rgbTiles = JSON.parse(readFileSync(join(here, "rgb-tiles.json"), "utf8"));
 const tiled = JSON.parse(readFileSync(join(here, "tiled-scene.json"), "utf8"));
 const fine = JSON.parse(readFileSync(join(here, "tiled-scene-fine.json"), "utf8"));
 const pageFor = (sc, bl) => `<!DOCTYPE html><html><head><meta charset="utf-8"></head><body style="margin:0;height:100vh">
@@ -200,7 +260,9 @@ const pages = {
   "/tiled.html": pageFor(tiled.scene, tiled.blobs),
   "/norange/tiled.html": pageFor(fine.scene, fine.blobs),
   "/bad.html": pageFor(bad, { ...tiled.blobs, values: blobs.values }),
+  "/rgb.html": pageFor(rgbScene.scene, rgbScene.blobs),
 };
+const rgbRanges = [];
 const ranges = [];
 let wholeFile = 0;
 const server = createServer((req, res) => {
@@ -213,6 +275,18 @@ const server = createServer((req, res) => {
     wholeFile++;
     res.writeHead(200, { "content-type": "image/tiff" });
     return res.end(tiff);
+  }
+  if (req.url === "/polar_ycbcr.tif") {
+    const m = /^bytes=(\d+)-(\d+)$/.exec(req.headers.range || "");
+    if (!m) {
+      res.writeHead(200, { "content-type": "image/tiff" });
+      return res.end(ycbcr);
+    }
+    rgbRanges.push(req.headers.range);
+    const a = Number(m[1]);
+    const b = Number(m[2]);
+    res.writeHead(206, { "content-type": "image/tiff", "content-range": `bytes ${a}-${b}/${ycbcr.length}` });
+    return res.end(ycbcr.subarray(a, b + 1));
   }
   if (req.url === "/polar_3031.tif") {
     const m = /^bytes=(\d+)-(\d+)$/.exec(req.headers.range || "");
@@ -278,6 +352,48 @@ try {
   assert.match(b.line, /error: layer sst: level \d: codec lerc is not supported by this renderer/);
   assert.deepEqual(b.counts, ["2 x 2 cells", "error: codec lerc is not supported by this renderer"]);
   console.log("ok   unsupported codec is a layer error");
+
+  // ---- 5b. colour images in the browser -----------------------------------
+  const rgb = await state("/rgb.html");
+  assert.equal(rgb.status, "ready");
+  assert.equal(rgb.errors, undefined, rgb.line);
+  assert.equal(rgb.pending, "0");
+  assert.match(rgb.tiles, /^cog: level \d, \d+ tiles?$/);
+  assert.ok(rgbRanges.length > 0, "jpeg tiles were fetched with range requests");
+  console.log(`ok   0.3 colour image of a YCbCr JPEG COG over HTTP range requests (${rgb.tiles})`);
+
+  // The browser's JPEG decode of a tile joined to its tables, against GDAL.
+  const page = await browser2.newPage();
+  await page.goto(base + "/rgb.html");
+  await page.waitForFunction(() => document.querySelector("div[data-aob-scene]").dataset.aobStatus === "ready", null, { timeout: 60000 });
+  for (const c of rgbTiles) {
+    const got = await page.evaluate(async (c) => {
+      const bytes = Uint8Array.from(atob(c.bytes), (ch) => ch.charCodeAt(0));
+      const want = Uint8Array.from(atob(c.samples), (ch) => ch.charCodeAt(0));
+      const [w, h] = c.size;
+      const { samples, spp } = await aob._decodeTileSamples(bytes, c.encoding, w, h);
+      let sum = 0;
+      let max = 0;
+      const n = c.window.width * c.window.height * spp;
+      for (let r = 0; r < c.window.height; r++) {
+        for (let k = 0; k < c.window.width * spp; k++) {
+          const d = Math.abs(samples[r * w * spp + k] - want[r * c.window.width * spp + k]);
+          sum += d;
+          if (d > max) max = d;
+        }
+      }
+      return { spp, mean: sum / n, max };
+    }, c);
+    assert.equal(got.spp, c.encoding.samples_per_pixel, c.name);
+    if (c.encoding.codec === "jpeg") {
+      // Decoders upsample chroma differently, so sharp edges differ a little.
+      assert.ok(got.mean < 1.5, `${c.name}: mean difference ${got.mean}`);
+    } else {
+      assert.equal(got.max, 0, c.name);
+    }
+    console.log(`ok   browser decode ${c.name} (mean difference ${got.mean.toFixed(3)}, max ${got.max})`);
+  }
+  await page.close();
 } finally {
   await browser2.close();
   server.close();

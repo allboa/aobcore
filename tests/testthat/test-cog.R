@@ -228,12 +228,12 @@ test_that("cog_info() refuses what the spec cannot carry", {
   mem$setProjection(gdalraster::srs_to_wkt("EPSG:3031"))
   mem$write(1L, 0L, 0L, 64L, 64L, rep(1, 64 * 64))
   png <- tempfile(fileext = ".png")
-  jpeg <- tempfile(fileext = ".tif")
-  on.exit(unlink(c(png, jpeg, paste0(png, ".aux.xml"))), add = TRUE)
+  lzma <- tempfile(fileext = ".tif")
+  on.exit(unlink(c(png, lzma, paste0(png, ".aux.xml"))), add = TRUE)
   made <- function(...) isTRUE(tryCatch(gdalraster::createCopy(...), error = function(e) FALSE))
   if (made("PNG", png, mem, quiet = TRUE)) expect_error(cog_info(png), "tiled GeoTIFF")
-  if (made("GTiff", jpeg, mem, quiet = TRUE, options = c("TILED=YES", "COMPRESS=JPEG"))) {
-    expect_error(cog_info(jpeg), "JPEG")
+  if (made("GTiff", lzma, mem, quiet = TRUE, options = c("TILED=YES", "COMPRESS=LZMA"))) {
+    expect_error(cog_info(lzma), "LZMA")
   }
   expect_error(cog_info(tempfile()), "No file")
   expect_error(cog_info(fixture("polar_3031.tif"), band = 2), "band")
