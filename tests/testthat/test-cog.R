@@ -239,6 +239,16 @@ test_that("cog_info() refuses what the spec cannot carry", {
   expect_error(cog_info(fixture("polar_3031.tif"), band = 2), "band")
 })
 
+test_that("a /vsicurl/ path gives the renderer its plain URL", {
+  u <- "https://example.org/data/chart.tif"
+  expect_identical(dsn_ref(u)$http, u)
+  expect_identical(dsn_ref(paste0("/vsicurl/", u))$http, u)
+  expect_identical(dsn_ref("http://127.0.0.1:8000/a.tif")$http, "http://127.0.0.1:8000/a.tif")
+  expect_null(dsn_ref("/vsis3/bucket/chart.tif")$http)
+  expect_null(dsn_ref("/vsimem/chart.tif")$http)
+  expect_null(dsn_ref("chart.tif")$http)
+})
+
 test_that("view_cog() writes the polar COG page in one call", {
   skip_if_no_gdal()
   f <- tempfile(fileext = ".html")

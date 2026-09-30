@@ -16,7 +16,8 @@
 #' the file's first two bytes.
 #'
 #' @param dsn A local path to a COG, an `http(s)` URL (read with GDAL's
-#'   `/vsicurl/`), or any GDAL `/vsi` path.
+#'   `/vsicurl/`; a `"/vsicurl/https://..."` path is the same URL), or any
+#'   GDAL `/vsi` path.
 #' @param band The band to draw, 1-based.
 #' @return A list of class `"aob_cog"`: `dsn`, `url` (the reference a scene
 #'   gives the renderer), `local` (whether the bytes can be read here for
@@ -39,13 +40,14 @@ cog_info <- function(dsn, band = 1L) {
   if (!is.character(dsn) || length(dsn) != 1L || is.na(dsn) || !nzchar(dsn)) {
     stop("`dsn` must be a single path or URL.", call. = FALSE)
   }
-  is_url <- grepl("^https?://", dsn)
+  ref <- dsn_ref(dsn)
+  is_url <- !is.null(ref$http)
   local <- !is_url && !startsWith(dsn, "/vsi")
   if (local) {
     if (!file.exists(dsn)) stop("No file at \"", dsn, "\".", call. = FALSE)
     dsn <- normalizePath(dsn, winslash = "/")
   }
-  gdal_dsn <- if (is_url) paste0("/vsicurl/", dsn) else dsn
+  gdal_dsn <- if (is_url) paste0("/vsicurl/", ref$http) else dsn
 
   ds <- open_raster(gdal_dsn)
   on.exit(ds$close(), add = TRUE)
@@ -89,7 +91,7 @@ cog_info <- function(dsn, band = 1L) {
 
   structure(list(
     dsn = dsn,
-    url = if (local) file_url(dsn) else dsn,
+    url = if (local) file_url(dsn) else if (is_url) ref$http else dsn,
     local = local || (!is_url && startsWith(dsn, "/vsimem/")),
     crs = crs_ref(wkt),
     wkt = wkt,
@@ -402,7 +404,7 @@ scene_add_tiled_raster <- function(scene, id, plan, palette = "viridis", range =
 #' from disk with no server. A COG given by URL is read by the browser with
 #' HTTP range requests (the server must allow them, and CORS).
 #'
-#' @param dsn A COG: local path or `http(s)` URL.
+#' @param dsn A COG: local path or `http(s)` URL (also as `"/vsicurl/<url>"`).
 #' @param crs The view CRS.
 #' @param palette,range Passed to [scene_add_tiled_raster()].
 #' @param band The band to draw.
@@ -587,6 +589,14 @@ crs_ref <- function(wkt) {
     return(code)
   }
   structure(gdalraster::srs_to_projjson(wkt), class = "aob_json")
+}
+
+## The http(s) URL of a dsn given as a URL or as GDAL's "/vsicurl/<url>"
+## (the renderer fetches the URL itself; the prefix means nothing to a
+## browser), or NULL.
+dsn_ref <- function(dsn) {
+  http <- sub("^/vsicurl/", "", dsn)
+  list(http = if (grepl("^https?://", http)) http)
 }
 
 file_url <- function(path) {
@@ -800,7 +810,8 @@ tile_blob_key <- function(source, offset, length) {
 ## Range of scaled values in the coarsest level, read through GDAL.
 cog_value_range <- function(cog) {
   k <- length(cog$levels) - 1L
-  gdal_dsn <- if (grepl("^https?://", cog$dsn)) paste0("/vsicurl/", cog$dsn) else cog$dsn
+  http <- dsn_ref(cog$dsn)$http
+  gdal_dsn <- if (is.null(http)) cog$dsn else paste0("/vsicurl/", http)
   ds <- if (k == 0L) open_raster(gdal_dsn) else open_raster(gdal_dsn, paste0("OVERVIEW_LEVEL=", k - 1L))
   on.exit(ds$close())
   d <- ds$dim()

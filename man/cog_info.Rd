@@ -8,7 +8,8 @@ cog_info(dsn, band = 1L)
 }
 \arguments{
 \item{dsn}{A local path to a COG, an \code{http(s)} URL (read with GDAL's
-\verb{/vsicurl/}), or any GDAL \verb{/vsi} path.}
+\verb{/vsicurl/}; a \code{"/vsicurl/https://..."} path is the same URL), or any
+GDAL \verb{/vsi} path.}
 
 \item{band}{The band to draw, 1-based.}
 }

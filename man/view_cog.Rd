@@ -31,7 +31,7 @@ cog_scene(
 )
 }
 \arguments{
-\item{dsn}{A COG: local path or \code{http(s)} URL.}
+\item{dsn}{A COG: local path or \code{http(s)} URL (also as \code{"/vsicurl/<url>"}).}
 
 \item{crs}{The view CRS.}
 
