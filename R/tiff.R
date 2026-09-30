@@ -6,7 +6,10 @@
 ## Returns a list with one entry per IFD in file order: `subfile`
 ## (NewSubfileType, 254), `width`, `height`, `compression`, `photometric`,
 ## `samples_per_pixel` and `jpeg_tables` (raw, or NULL). Any failure gives
-## NULL: callers fall back to what GDAL reports.
+## NULL: callers fall back to what GDAL reports. A malformed file cannot
+## make it read much: an IFD may hold at most 4096 entries, JPEGTables of
+## more than 64 KiB are skipped, and at most `max_ifds` IFDs are read, each
+## once.
 tiff_ifds <- function(dsn, max_ifds = 64L) {
   tryCatch(read_tiff_ifds(dsn, max_ifds), error = function(e) NULL)
 }
@@ -15,7 +18,7 @@ read_tiff_ifds <- function(dsn, max_ifds) {
   f <- gdalraster::VSIFile$new(dsn)
   on.exit(f$close())
   at <- function(offset, n) {
-    f$seek(offset, "SEEK_SET")
+    if (!is.finite(offset) || offset < 0 || f$seek(offset, "SEEK_SET") != 0) stop("seek failed")
     b <- f$read(n)
     if (length(b) != n) stop("short read")
     b
@@ -48,6 +51,7 @@ read_tiff_ifds <- function(dsn, max_ifds) {
   while (next_ifd > 0 && length(out) < max_ifds && !next_ifd %in% seen) {
     seen <- c(seen, next_ifd)
     n <- uint(at(next_ifd, count_size), count_size)
+    if (n > 4096) stop("too many IFD entries")
     body <- at(next_ifd + count_size, n * entry_size + off_size)
     ifd <- list(subfile = 0, width = NA_real_, height = NA_real_, compression = 1,
                 photometric = NA_real_, samples_per_pixel = 1, jpeg_tables = NULL)
@@ -61,6 +65,7 @@ read_tiff_ifds <- function(dsn, max_ifds) {
       size <- if (type >= 1 && type <= length(type_size)) type_size[type] else 0
       if (size == 0) next
       total <- size * count
+      if (tag == 347 && total > 65536) next
       data <- if (total <= off_size) vbytes[seq_len(total)] else
         if (tag == 347) at(uint(vbytes, off_size), total) else NULL
       if (tag == 347) {

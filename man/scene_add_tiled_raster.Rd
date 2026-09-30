@@ -37,7 +37,11 @@ bands (where it stretches the image).}
 
 \item{rgb}{\code{NULL} (colour when the COG's bands say Red, Green, Blue and
 no palette is given), \code{TRUE}, \code{FALSE}, or 3 or 4 band numbers (red,
-green, blue and optionally alpha).}
+green, blue and optionally alpha). The \code{NULL} default looks at whether
+\code{palette} was given at all (with \code{\link[=missing]{missing()}}), so a function that wraps
+this one and always passes \code{palette} on should pass \code{rgb} explicitly
+too. A band-interleaved RGB COG is drawn through a palette by default
+(with a message), since colour images need pixel-interleaved tiles.}
 
 \item{embed}{Carry the planned tiles' bytes as blobs. Defaults to \code{TRUE}
 for a local COG and \code{FALSE} for a URL.}

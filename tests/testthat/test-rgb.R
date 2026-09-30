@@ -242,3 +242,57 @@ test_that("scene_spec_version() is the lowest version that fits", {
   tr_jpeg$plan$levels[[1]]$encoding$codec <- "jpeg"
   expect_identical(scene_spec_version(with_layer(tr_jpeg)), "0.3")
 })
+
+test_that("the TIFF reader refuses malformed IFDs without large reads", {
+  skip_if_not_installed("gdalraster")
+  le <- function(x, size) {
+    if (size == 8L) return(c(writeBin(as.integer(x %% 2^32 - (x %% 2^32 >= 2^31) * 2^32), raw(), size = 4L, endian = "little"),
+                             writeBin(as.integer(x %/% 2^32), raw(), size = 4L, endian = "little")))
+    writeBin(as.integer(x), raw(), size = size, endian = "little")
+  }
+  tif <- function(bytes) {
+    f <- tempfile(fileext = ".tif")
+    writeBin(bytes, f)
+    f
+  }
+  ii <- charToRaw("II")
+  ## BigTIFF whose IFD claims a huge entry count.
+  f1 <- tif(c(ii, le(43, 2L), le(8, 2L), le(0, 2L), le(16, 8L), le(2^40, 8L), raw(16)))
+  ## BigTIFF whose first IFD is at 2^62.
+  f2 <- tif(c(ii, le(43, 2L), le(8, 2L), le(0, 2L), le(2^62, 8L), raw(16)))
+  ## Classic TIFF: one IFD with a width and JPEGTables claiming 1e9 bytes.
+  entries <- c(le(256, 2L), le(3, 2L), le(1, 4L), le(5, 2L), raw(2),
+               le(347, 2L), le(7, 2L), le(1e9, 4L), le(38, 4L))
+  f3 <- tif(c(ii, le(42, 2L), le(8, 4L), le(2, 2L), entries, le(0, 4L)))
+  ## Classic TIFF whose IFD points back at itself.
+  f4 <- tif(c(ii, le(42, 2L), le(8, 4L), le(1, 2L), entries[1:12], le(8, 4L)))
+  on.exit(unlink(c(f1, f2, f3, f4)))
+  expect_null(tiff_ifds(f1))
+  expect_null(tiff_ifds(f2))
+  x <- tiff_ifds(f3)
+  expect_length(x, 1L)
+  expect_identical(x[[1]]$width, 5)
+  expect_null(x[[1]]$jpeg_tables)
+  y <- tiff_ifds(f4)
+  expect_length(y, 1L)
+  expect_identical(y[[1]]$width, 5)
+})
+
+test_that("band-interleaved RGB falls back to a palette; equal range ends are refused", {
+  skip_if_no_gdal()
+  f <- make_rgb_tif("COG", c("COMPRESS=DEFLATE", "INTERLEAVE=BAND"))
+  skip_if(is.null(f), "this GDAL cannot write a band-interleaved COG")
+  on.exit(unlink(f))
+  cog <- cog_info(f)
+  skip_if(!identical(cog$planar, "separate"), "GDAL wrote a pixel-interleaved COG")
+  expect_null(rgb_default(cog))
+  expect_message(s <- cog_scene(f, coastline = FALSE), "INTERLEAVE=PIXEL")
+  expect_false(is.null(s$layers[[1]]$palette))
+  expect_identical(s$version, "0.2")
+  expect_error(cog_scene(f, rgb = TRUE, coastline = FALSE), "INTERLEAVE=PIXEL")
+
+  rgba <- fixture("polar_rgba.tif")
+  expect_error(cog_scene(rgba, range = c(5, 5), coastline = FALSE), "low and high different")
+  expect_error(cog_scene(rgba, palette = "gray", range = c(5, 5), coastline = FALSE),
+               "low and high different")
+})

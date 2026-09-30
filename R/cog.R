@@ -450,7 +450,11 @@ print.aob_tile_plan <- function(x, ...) {
 #'   bands (where it stretches the image).
 #' @param rgb `NULL` (colour when the COG's bands say Red, Green, Blue and
 #'   no palette is given), `TRUE`, `FALSE`, or 3 or 4 band numbers (red,
-#'   green, blue and optionally alpha).
+#'   green, blue and optionally alpha). The `NULL` default looks at whether
+#'   `palette` was given at all (with [missing()]), so a function that wraps
+#'   this one and always passes `palette` on should pass `rgb` explicitly
+#'   too. A band-interleaved RGB COG is drawn through a palette by default
+#'   (with a message), since colour images need pixel-interleaved tiles.
 #' @param embed Carry the planned tiles' bytes as blobs. Defaults to `TRUE`
 #'   for a local COG and `FALSE` for a URL.
 #' @param url Optional URL (absolute, or relative to the page) the scene gives
@@ -512,8 +516,9 @@ scene_add_tiled_raster <- function(scene, id, plan, palette = "viridis", range =
   } else if (is.null(range) && !all(vapply(p$levels, function(l) l$encoding$dtype, "") == "uint8")) {
     range <- cog_value_range(cog, bands = bands[1:3])
   }
-  if (!is.null(range) && (!is.numeric(range) || length(range) != 2L || anyNA(range))) {
-    stop("`range` must be c(low, high).", call. = FALSE)
+  if (!is.null(range) && (!is.numeric(range) || length(range) != 2L || anyNA(range) ||
+                          range[1] == range[2])) {
+    stop("`range` must be c(low, high) with low and high different.", call. = FALSE)
   }
   if (!is.null(bands)) {
     ## An rgb layer names its bands itself; encoding.band is the palette's.
@@ -577,7 +582,9 @@ scene_add_tiled_raster <- function(scene, id, plan, palette = "viridis", range =
 #' @param crs The view CRS: an `"authority:code"` string or any definition
 #'   [scene_crs()] accepts (WKT, a PROJ string, PROJJSON).
 #' @param palette,range,rgb Passed to [scene_add_tiled_raster()]. Giving
-#'   `palette` or `band` chooses the palette path when `rgb` is `NULL`.
+#'   `palette` or `band` chooses the palette path when `rgb` is `NULL`;
+#'   this is detected with [missing()], so a function that wraps these and
+#'   always passes `palette` or `band` on should pass `rgb` explicitly too.
 #' @param band The band to draw through the palette.
 #' @param coastline Add the bundled coastline south of 40S (densified and
 #'   projected with [gdal_vector_stream()]). By default only when `crs` is a
@@ -628,7 +635,7 @@ cog_scene <- function(dsn, crs = "EPSG:3031", palette = "viridis", range = NULL,
 cog_scene_ <- function(dsn, crs, palette, range, band, coastline, extent, url, rgb, ...) {
   crs <- scene_crs(crs)
   cog <- if (inherits(dsn, "aob_cog")) dsn else cog_info(dsn, band = band)
-  if (is.null(rgb)) rgb <- rgb_default(cog) %||% FALSE
+  if (is.null(rgb)) rgb <- rgb_default(cog, quiet = FALSE) %||% FALSE
   cull <- NULL
   if (!is.null(extent)) {
     check_extent(extent)
@@ -1104,15 +1111,26 @@ plan_extent <- function(plan) {
 }
 
 ## The colour bands a COG is drawn with by default: c(r, g, b) or
-## c(r, g, b, a) when it has 3 or 4 Byte bands whose colour interpretation
-## is Red, Green, Blue (and Alpha) in that order; else NULL.
-rgb_default <- function(cog) {
+## c(r, g, b, a) when it has 3 or 4 pixel-interleaved Byte bands whose
+## colour interpretation is Red, Green, Blue (and Alpha) in that order; else
+## NULL. A band-interleaved RGB COG falls back to the palette path (with a
+## message when `quiet` is FALSE), since scene spec 0.3 draws colour images
+## from interleaved tiles only.
+rgb_default <- function(cog, quiet = TRUE) {
   ci <- cog$color_interp
   nb <- cog$samples_per_pixel
   dtype <- cog$levels[[1]]$encoding$dtype
   if (is.null(ci) || !nb %in% 3:4 || !identical(dtype, "uint8")) return(NULL)
   want <- c("Red", "Green", "Blue", "Alpha")[seq_len(nb)]
   if (!identical(unname(ci), want)) return(NULL)
+  if (!identical(cog$planar, "interleaved")) {
+    if (!quiet) {
+      message("This RGB COG stores its bands separately (INTERLEAVE=BAND); drawing band ",
+              cog$band, " through a palette. Rewrite it with INTERLEAVE=PIXEL to draw it ",
+              "in colour.")
+    }
+    return(NULL)
+  }
   seq_len(nb)
 }
 
@@ -1120,7 +1138,7 @@ rgb_default <- function(cog) {
 ## or NULL for the palette path.
 resolve_rgb <- function(cog, rgb) {
   nb <- cog$samples_per_pixel
-  if (is.null(rgb)) return(rgb_default(cog))
+  if (is.null(rgb)) return(rgb_default(cog, quiet = FALSE))
   if (isFALSE(rgb)) return(NULL)
   if (isTRUE(rgb)) {
     if (nb < 3L) {
@@ -1128,6 +1146,8 @@ resolve_rgb <- function(cog, rgb) {
     }
     b <- rgb_default(cog)
     if (!is.null(b)) return(b)
+    ## A band-interleaved RGB COG gets here and is refused, with advice, by
+    ## check_layer_levels().
     alpha <- nb >= 4L && identical(cog$color_interp[4], "Alpha")
     return(if (alpha) 1:4 else 1:3)
   }

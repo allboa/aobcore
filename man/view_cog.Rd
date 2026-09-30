@@ -41,7 +41,9 @@ cog_scene(
 \code{\link[=scene_crs]{scene_crs()}} accepts (WKT, a PROJ string, PROJJSON).}
 
 \item{palette, range, rgb}{Passed to \code{\link[=scene_add_tiled_raster]{scene_add_tiled_raster()}}. Giving
-\code{palette} or \code{band} chooses the palette path when \code{rgb} is \code{NULL}.}
+\code{palette} or \code{band} chooses the palette path when \code{rgb} is \code{NULL};
+this is detected with \code{\link[=missing]{missing()}}, so a function that wraps these and
+always passes \code{palette} or \code{band} on should pass \code{rgb} explicitly too.}
 
 \item{band}{The band to draw through the palette.}
 
