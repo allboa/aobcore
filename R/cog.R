@@ -594,12 +594,16 @@ scene_add_tiled_raster <- function(scene, id, plan, palette = "viridis", range =
 #'   units: the initial view. Tiles whose footprint misses this extent,
 #'   widened by half its size on each side, are left out of the plan, so
 #'   the page shows nothing far beyond it. By default every tile is planned
-#'   and the view is the full-resolution tiles' footprint.
+#'   and the view is the full-resolution tiles' footprint, clipped to the
+#'   view's domain.
+#' @param domain Passed to [scene()]: by default the CRS's [crs_domain()],
+#'   which keeps the camera near the sensible part of the view CRS. Tiles
+#'   outside it are still planned and drawn.
 #' @param url Passed to [scene_add_tiled_raster()].
 #' @param ... Passed to [cog_plan()] (`levels`, `selection`,
 #'   `max_segments`, `tolerance`, `max_stretch`, `max_tiles`).
-#' @return `cog_scene()`: a scene (spec 0.2, or 0.3 for a colour image or
-#'   JPEG tiles) carrying its blobs.
+#' @return `cog_scene()`: a scene (spec 0.4 with a domain; without one 0.2,
+#'   or 0.3 for a colour image or JPEG tiles) carrying its blobs.
 #'   `view_cog()`: the path of the written page, invisibly.
 #' @export
 #' @examplesIf requireNamespace("gdalraster", quietly = TRUE) && !inherits(try(gdalraster::srs_to_wkt("EPSG:3031"), silent = TRUE), "try-error")
@@ -612,11 +616,12 @@ scene_add_tiled_raster <- function(scene, id, plan, palette = "viridis", range =
 view_cog <- function(dsn, crs = "EPSG:3031", palette = "viridis", range = NULL, band = 1L,
                      coastline = NULL, extent = NULL, file = tempfile(fileext = ".html"),
                      title = NULL, theme = c("auto", "light", "dark"), url = NULL,
-                     rgb = NULL, ...) {
+                     rgb = NULL, domain = getOption("aobcore.domain", TRUE), ...) {
   if (is.null(rgb) && (!missing(palette) || !missing(band))) rgb <- FALSE
   need_gdalraster("view_cog()")
   s <- cog_scene_(dsn, crs = crs, palette = palette, range = range, band = band,
-                  coastline = coastline, extent = extent, url = url, rgb = rgb, ...)
+                  coastline = coastline, extent = extent, url = url, rgb = rgb,
+                  domain = domain, ...)
   write_scene_html(s, file = file, title = title %||% s$layers[[1]]$label, theme = theme)
 }
 
@@ -625,14 +630,16 @@ view_cog <- function(dsn, crs = "EPSG:3031", palette = "viridis", range = NULL, 
 #' @param title,theme Passed to [write_scene_html()].
 #' @export
 cog_scene <- function(dsn, crs = "EPSG:3031", palette = "viridis", range = NULL, band = 1L,
-                      coastline = NULL, extent = NULL, url = NULL, rgb = NULL, ...) {
+                      coastline = NULL, extent = NULL, url = NULL, rgb = NULL,
+                      domain = getOption("aobcore.domain", TRUE), ...) {
   need_gdalraster("cog_scene()")
   if (is.null(rgb) && (!missing(palette) || !missing(band))) rgb <- FALSE
-  cog_scene_(dsn, crs, palette, range, band, coastline, extent, url, rgb, ...)
+  cog_scene_(dsn, crs, palette, range, band, coastline, extent, url, rgb, domain = domain, ...)
 }
 
 ## cog_scene() once `rgb` says whether a palette or band was given.
-cog_scene_ <- function(dsn, crs, palette, range, band, coastline, extent, url, rgb, ...) {
+cog_scene_ <- function(dsn, crs, palette, range, band, coastline, extent, url, rgb,
+                       domain = TRUE, ...) {
   crs <- scene_crs(crs)
   cog <- if (inherits(dsn, "aob_cog")) dsn else cog_info(dsn, band = band)
   if (is.null(rgb)) rgb <- rgb_default(cog, quiet = FALSE) %||% FALSE
@@ -643,7 +650,7 @@ cog_scene_ <- function(dsn, crs, palette, range, band, coastline, extent, url, r
     cull <- extent + pad
   }
   plan <- cog_plan(cog, crs, extent = cull, ...)
-  s <- scene(crs)
+  s <- scene(crs, domain = domain)
   s <- scene_add_tiled_raster(s, "cog", plan, palette = palette, range = range, rgb = rgb,
                               url = url, label = basename(cog$dsn))
   if (isTRUE(coastline %||% south_polar_view(crs))) {
@@ -656,6 +663,11 @@ cog_scene_ <- function(dsn, crs, palette, range, band, coastline, extent, url, r
     check_extent(extent)
   } else {
     extent <- plan_extent(s$layers[[1]]$plan)
+    b <- s$view$bounds
+    if (!is.null(extent) && !is.null(b)) {
+      clip <- c(max(extent[1], b[1]), min(extent[2], b[2]), max(extent[3], b[3]), min(extent[4], b[4]))
+      extent <- if (clip[1] < clip[2] && clip[3] < clip[4]) clip else b
+    }
   }
   if (!is.null(extent)) s$view$extent <- as.numeric(extent)
   s

@@ -18,6 +18,7 @@ view_cog(
   theme = c("auto", "light", "dark"),
   url = NULL,
   rgb = NULL,
+  domain = getOption("aobcore.domain", TRUE),
   ...
 )
 
@@ -31,6 +32,7 @@ cog_scene(
   extent = NULL,
   url = NULL,
   rgb = NULL,
+  domain = getOption("aobcore.domain", TRUE),
   ...
 )
 }
@@ -56,7 +58,8 @@ EPSG:3976), since the coastline is of the far south.}
 units: the initial view. Tiles whose footprint misses this extent,
 widened by half its size on each side, are left out of the plan, so
 the page shows nothing far beyond it. By default every tile is planned
-and the view is the full-resolution tiles' footprint.}
+and the view is the full-resolution tiles' footprint, clipped to the
+view's domain.}
 
 \item{file}{Path of the HTML file to write.}
 
@@ -64,12 +67,16 @@ and the view is the full-resolution tiles' footprint.}
 
 \item{url}{Passed to \code{\link[=scene_add_tiled_raster]{scene_add_tiled_raster()}}.}
 
+\item{domain}{Passed to \code{\link[=scene]{scene()}}: by default the CRS's \code{\link[=crs_domain]{crs_domain()}},
+which keeps the camera near the sensible part of the view CRS. Tiles
+outside it are still planned and drawn.}
+
 \item{...}{Passed to \code{\link[=cog_plan]{cog_plan()}} (\code{levels}, \code{selection},
 \code{max_segments}, \code{tolerance}, \code{max_stretch}, \code{max_tiles}).}
 }
 \value{
-\code{cog_scene()}: a scene (spec 0.2, or 0.3 for a colour image or
-JPEG tiles) carrying its blobs.
+\code{cog_scene()}: a scene (spec 0.4 with a domain; without one 0.2,
+or 0.3 for a colour image or JPEG tiles) carrying its blobs.
 \code{view_cog()}: the path of the written page, invisibly.
 }
 \description{

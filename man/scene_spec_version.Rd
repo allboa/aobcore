@@ -12,16 +12,17 @@ scene_spec_version(scene = NULL)
 \value{
 A character string: \code{"0.1"}, \code{"0.2"} for a scene with a
 \code{tiled_raster} layer, or \code{"0.3"} for one whose tiled raster uses \code{rgb}
-or JPEG tiles (or a scene already marked with that version).
+or JPEG tiles, or \code{"0.4"} for one whose view has \code{bounds} (or a scene
+already marked with that version).
 }
 \description{
 The version of the allonboard scene spec that this package writes: the
 lowest version that can express the scene. A scene is written as 0.1
 unless it has a tiled raster layer (added by \code{\link[=scene_add_tiled_raster]{scene_add_tiled_raster()}}),
 which needs 0.2; a tiled raster drawn as a colour image (\code{rgb}) or with
-JPEG tiles needs 0.3. Each version only adds to the one before, so 0.1
-and 0.2 output is unchanged by the later additions, and a renderer or
-validator that knows only 0.2 still reads every palette COG scene.
+JPEG tiles needs 0.3; a view with \code{bounds} (see \code{\link[=scene]{scene()}}'s \code{domain})
+needs 0.4. Each version only adds to the one before, so earlier output is
+unchanged by the later additions.
 }
 \examples{
 scene_spec_version()

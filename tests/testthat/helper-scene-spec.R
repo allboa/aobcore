@@ -1,3 +1,8 @@
+# Scenes in these tests carry no view domain (scene spec 0.4 bounds) unless
+# a test asks for one, so the version rules for 0.1 to 0.3 are tested as
+# before; test-domain.R covers the default domain.
+options(aobcore.domain = FALSE)
+
 # A structural check of a scene against scene spec 0.1, with no node or
 # JSON Schema validator. It covers the rules the producers here can break:
 # the top-level shape, the view, data references (format, exactly one of

@@ -4,13 +4,19 @@
 \alias{scene}
 \title{Create an empty scene}
 \usage{
-scene(crs = "EPSG:3031")
+scene(crs = "EPSG:3031", domain = getOption("aobcore.domain", TRUE))
 }
 \arguments{
 \item{crs}{The view CRS. Defaults to \code{"EPSG:3031"} (Antarctic Polar
 Stereographic). An \code{"authority:code"} string, or any definition GDAL
 reads (WKT, a PROJ string, PROJJSON), which is carried as PROJJSON
 when it has no code; see \code{\link[=scene_crs]{scene_crs()}}.}
+
+\item{domain}{The region the camera is kept within: \code{TRUE} (the default,
+unless the option \code{aobcore.domain} says otherwise) for \code{\link[=crs_domain]{crs_domain()}}
+of \code{crs} with its defaults (left out, with no error,
+when 'gdalraster' is not installed or cannot measure the CRS), \code{FALSE}
+for none, a \code{\link[=crs_domain]{crs_domain()}} result, or an extent \code{c(xmin, xmax, ymin, ymax)} in view CRS units.}
 }
 \value{
 A list of class \code{"aob_scene"}.
@@ -19,7 +25,15 @@ A list of class \code{"aob_scene"}.
 A minimal scene: a projected view in \code{crs}, with no data and no layers.
 Its fields follow the scene spec (\code{version}, \code{view}, \code{data}, \code{layers}).
 A scene starts as version 0.1 and becomes 0.2 when a tiled raster is
-added (0.3 for a colour image or JPEG tiles).
+added (0.3 for a colour image or JPEG tiles). A view with \code{bounds} is
+scene spec 0.4.
+}
+\details{
+By default the view gets the CRS's domain (allboa/design decision 0005,
+\code{\link[=crs_domain]{crs_domain()}}) as \code{view$bounds}: the renderer keeps the camera within
+it, plus a margin, and a scene with no \code{extent} opens on its data clipped
+to it, or on the whole domain when it has no data. The domain limits the
+camera only; data outside it still load and draw.
 }
 \examples{
 s <- scene()

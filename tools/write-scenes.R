@@ -12,7 +12,8 @@
 #                holes and a stroke, multilinestrings, a raster in the view
 #                CRS with no mesh and NaN nodata, and view.local_origin with
 #                origin_subtracted data, in EPSG:3031 away from the pole.
-#   polar-cog-*  scene spec 0.2 tiled rasters: the polar COG fixtures
+#   polar-cog-*  tiled rasters, scene spec 0.4 since each view has the
+#                CRS's domain as bounds (decision 0005): the polar COG fixtures
 #                (inst/extdata, tools/make-polar-cogs.R) in EPSG:3031 as
 #                cog_scene() / view_cog() build them, whole, at the pole
 #                and (3031) far out; polar-cog-lonlat-laea147 is the lon/lat
@@ -166,8 +167,9 @@ rgb <- list(
 )
 for (name in names(rgb)) {
   x <- rgb[[name]]
+  # No domain, so these stay 0.3 scenes and CI validates 0.3 output too.
   s <- cog_scene(system.file("extdata", x$file, package = "aobcore"), "EPSG:3031",
-                 extent = x$extent)
+                 extent = x$extent, domain = FALSE)
   stopifnot(identical(s$version, "0.3"), !is.null(s$layers[[1]]$rgb))
   write_scene_html(s, file = file.path(out, paste0(name, ".html")), title = x$file)
   writeLines(scene_json(s), file.path(out, paste0(name, ".json")))
