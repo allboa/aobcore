@@ -114,3 +114,15 @@ test_that("vector_ipc() refuses WKB, separated coordinates and missing geometry"
   expect_error(vector_ipc(df), "interleaved")
   expect_error(vector_ipc(data.frame(a = 1)), "no native GeoArrow geometry column")
 })
+
+test_that("no geometries give an empty stream of the declared type", {
+  v <- geoarrow::as_geoarrow_vctr(wk::wkt(character(), crs = "EPSG:3031"),
+                                  schema = geoarrow::geoarrow_polygon())
+  s <- vector_stream(v, "EPSG:3031")
+  g <- geometry_info(s$get_schema())
+  expect_identical(g$ext, "geoarrow.polygon")
+  expect_identical(g$coords, "+w:2")
+  expect_identical(nrow(as.data.frame(s)), 0L)
+  expect_error(vector_stream(wk::wkb(crs = "EPSG:3031"), "EPSG:3031"),
+               "no geometries and declares no point, line or polygon type")
+})

@@ -11,6 +11,7 @@ scene_add_tiled_raster(
   palette = "viridis",
   range = NULL,
   embed = NULL,
+  url = NULL,
   label = NULL,
   visible = NULL
 )
@@ -33,6 +34,11 @@ default the range of the coarsest level's values.}
 \item{embed}{Carry the planned tiles' bytes as blobs. Defaults to \code{TRUE}
 for a local COG and \code{FALSE} for a URL.}
 
+\item{url}{Optional URL (absolute, or relative to the page) the scene gives
+the renderer for the COG. By default the COG's http(s) URL, its
+\verb{file://} URL when neither embedded nor a URL, or its base name when
+embedded.}
+
 \item{label}{Optional human-readable name.}
 
 \item{visible}{Optional initial visibility.}
@@ -52,10 +58,12 @@ file, so for a local COG (\code{embed = TRUE}, the default when the COG is not
 a URL) the bytes of every planned tile are also carried as blobs beside
 the scene, one per tile, keyed \code{"<source id>@<byte_offset>+<byte_length>"}.
 The renderer uses such a blob when it has one and fetches the range
-otherwise. The \code{cog} reference still names the source file (as a
-\verb{file://} URL). Embedding copies the planned tiles' compressed bytes, so a
-page for a large local COG is large; plan fewer levels or serve the COG
-over HTTP instead.
+otherwise. With \code{embed = TRUE} the \code{cog} reference is the file's base
+name, a URL relative to the page, so a shared page does not reveal the
+local directory (and works when the COG is served beside it). Give \code{url}
+to write another reference. Embedding copies the planned tiles'
+compressed bytes, so a page for a large local COG is large; plan fewer
+levels or serve the COG over HTTP instead.
 }
 \examples{
 \dontshow{if (requireNamespace("gdalraster", quietly = TRUE) && !inherits(try(gdalraster::srs_to_wkt("EPSG:3031"), silent = TRUE), "try-error")) withAutoprint(\{ # examplesIf}

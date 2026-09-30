@@ -11,11 +11,12 @@ view_cog(
   palette = "viridis",
   range = NULL,
   band = 1L,
-  coastline = TRUE,
+  coastline = NULL,
   extent = NULL,
   file = tempfile(fileext = ".html"),
   title = NULL,
   theme = c("auto", "light", "dark"),
+  url = NULL,
   ...
 )
 
@@ -25,8 +26,9 @@ cog_scene(
   palette = "viridis",
   range = NULL,
   band = 1L,
-  coastline = TRUE,
+  coastline = NULL,
   extent = NULL,
+  url = NULL,
   ...
 )
 }
@@ -40,7 +42,9 @@ cog_scene(
 \item{band}{The band to draw.}
 
 \item{coastline}{Add the bundled coastline south of 40S (densified and
-projected with \code{\link[=gdal_vector_stream]{gdal_vector_stream()}}).}
+projected with \code{\link[=gdal_vector_stream]{gdal_vector_stream()}}). By default only when \code{crs} is a
+south polar view (one centred on the South Pole, such as EPSG:3031 or
+EPSG:3976), since the coastline is of the far south.}
 
 \item{extent}{Optional view \code{c(xmin, xmax, ymin, ymax)} in view CRS
 units: the initial view. Tiles whose footprint misses this extent,
@@ -52,8 +56,10 @@ and the view is the full-resolution tiles' footprint.}
 
 \item{title, theme}{Passed to \code{\link[=write_scene_html]{write_scene_html()}}.}
 
+\item{url}{Passed to \code{\link[=scene_add_tiled_raster]{scene_add_tiled_raster()}}.}
+
 \item{...}{Passed to \code{\link[=cog_plan]{cog_plan()}} (\code{levels}, \code{selection},
-\code{max_segments}, \code{tolerance}, \code{max_stretch}).}
+\code{max_segments}, \code{tolerance}, \code{max_stretch}, \code{max_tiles}).}
 }
 \value{
 \code{cog_scene()}: a scene (spec 0.2) carrying its blobs.

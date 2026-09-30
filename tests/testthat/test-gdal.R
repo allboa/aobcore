@@ -102,3 +102,63 @@ test_that("gdal_vector_stream() checks its arguments", {
     expect_error(gdal_vector_stream(coast_path(), "EPSG:3031", route = "gdal"), "Arrow driver")
   }
 })
+
+test_that("-nlt counts as native only for the six native types", {
+  expect_true(gdal_native_type("x", NULL, c("-nlt", "MULTIPOLYGON")))
+  expect_true(gdal_native_type("x", NULL, c("-nlt", "linestring25D")))
+  expect_true(gdal_native_type("x", NULL, c("-nlt", "POINTZM", "-sql", "select 1")))
+  expect_false(gdal_native_type("x", NULL, c("-nlt", "GEOMETRY")))
+  expect_false(gdal_native_type("x", NULL, c("-nlt", "GEOMETRYCOLLECTION")))
+  expect_false(gdal_native_type("x", NULL, c("-nlt", "CONVERT_TO_CURVE")))
+  expect_false(gdal_native_type("x", NULL, c("-nlt", "PROMOTE_TO_MULTI", "-sql", "select 1")))
+  expect_identical(nlt_values(c("-nlt", "MultiLineStringZ", "-where", "a", "-nlt")),
+                   "MULTILINESTRING")
+  skip_if_no_gdal()
+  ## PROMOTE_TO_MULTI and CONVERT_TO_LINEAR fall through to the layer's type.
+  expect_true(gdal_native_type(coast_path(), NULL, c("-nlt", "PROMOTE_TO_MULTI")))
+  expect_true(gdal_native_type(coast_path(), NULL, c("-nlt", "CONVERT_TO_LINEAR")))
+})
+
+test_that("-nlt values that are not native types still give native GeoArrow", {
+  skip_if_no_gdal()
+  routes <- if (gdal_has_arrow()) c("gdal", "r") else "r"
+  cases <- list(c("-nlt", "GEOMETRY"), c("-nlt", "PROMOTE_TO_MULTI"),
+                c("-nlt", "MULTILINESTRING25D"), c("-nlt", "MULTILINESTRINGZM"))
+  for (route in routes) {
+    for (o in cases) {
+      s <- gdal_vector_stream(coast_path(), "EPSG:3031", options = o, route = route)
+      g <- geometry_info(s$get_schema())
+      expect_true(g$ext %in% c("geoarrow.linestring", "geoarrow.multilinestring"))
+      expect_identical(g$coords, "+w:2")
+      df <- as.data.frame(s)
+      expect_identical(nrow(df), 170L)
+      expect_false(any(is.na(wk::as_wkb(df$geometry))))
+    }
+  }
+})
+
+test_that("both routes write the field's CRS metadata", {
+  skip_if_no_gdal()
+  skip_if_not(gdal_has_arrow(), "GDAL has no Arrow driver")
+  a <- gdal_vector_stream(coast_path(), "EPSG:3031", route = "gdal")$get_schema()
+  b <- gdal_vector_stream(coast_path(), "EPSG:3031", route = "r")$get_schema()
+  expect_identical(a$children$geometry$metadata, b$children$geometry$metadata)
+  expect_match(a$children$geometry$metadata[["ARROW:extension:metadata"]], "PROJJSON|projjson")
+})
+
+test_that("a clip that removes every feature gives an empty layer of the layer's type", {
+  skip_if_no_gdal()
+  routes <- if (gdal_has_arrow()) c("gdal", "r") else "r"
+  for (route in routes) {
+    s <- gdal_vector_stream(coast_path(), "EPSG:3031", clip = c(0, 0, 1, 1), route = route)
+    g <- geometry_info(s$get_schema())
+    expect_identical(g$ext, "geoarrow.linestring")
+    expect_identical(g$coords, "+w:2")
+    expect_identical(nrow(as.data.frame(s)), 0L)
+    sc <- scene_add_vector(scene("EPSG:3031"), "coast",
+                           gdal_vector_stream(coast_path(), "EPSG:3031", clip = c(0, 0, 1, 1),
+                                              route = route),
+                           stroke = c(0, 0, 0, 255))
+    expect_valid_scene(sc)
+  }
+})

@@ -281,6 +281,10 @@ export async function render(container, scene, options = {}) {
     }
     deck = new Deck(deckProps);
     update();
+    // The view's extent and pixel size change with the element's size, so
+    // tiled rasters choose their level and tiles again on resize.
+    if (typeof ResizeObserver !== "undefined") new ResizeObserver(() => update()).observe(canvasHost);
+    else window.addEventListener("resize", () => update());
     const kib = (total / 1024).toFixed(0);
     showNotes = () => {
       const notes = errors.map((m) => `error: ${m}`).concat(warnings);

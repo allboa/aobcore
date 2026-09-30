@@ -1,5 +1,39 @@
 # aobcore 0.0.0.9000
 
+* With `embed = TRUE` (the default for a local COG), the scene's `cog`
+  reference is the file's base name, not its absolute `file://` path, so a
+  shared page no longer reveals the local directory.
+  `scene_add_tiled_raster()`, `cog_scene()` and `view_cog()` take `url =`
+  to write another reference (#11).
+* `cog_plan()` has a tile budget, `max_tiles` (default 1024): an
+  `all_levels` plan adds levels coarse to fine and leaves out, with a
+  warning, a level that would pass it and every finer level. Pass `extent`
+  to plan part of a large COG at full resolution, or `max_tiles = Inf` (#11).
+* `view_cog()` and `cog_scene()` add the south-of-40S coastline by default
+  only when the view CRS is centred on the South Pole (`coastline = NULL`);
+  `TRUE` and `FALSE` still force it (#11).
+* The renderer keeps at most 256 idle decoded tiles, dropping the least
+  recently drawn, aborts tile fetches the view no longer needs, chooses the
+  level and tiles again when the page is resized, and, when a server
+  ignores `Range` and sends the whole COG, keeps that one response and cuts
+  later tiles from it rather than downloading the file per tile (#11).
+* CI runs the scenespec validator on the scenes `tools/write-scenes.R`
+  writes, including `cog_scene()` output (#11).
+* `gdal_vector_stream()`: `-nlt` in `options` counts as a native type only
+  for point, line and polygon types (single or multi, with any Z, M or 25D
+  suffix); `-nlt GEOMETRY` and other non-native types go through WKB and
+  are converted in R instead of failing in GDAL, and `PROMOTE_TO_MULTI` and
+  `CONVERT_TO_LINEAR` defer to the layer's type. The Arrow route drops Z
+  and M in GDAL (`-dim XY`), as its driver writes 2D only (#9).
+* `gdal_vector_stream()`'s Arrow route writes the PROJJSON CRS to the
+  geometry field's `ARROW:extension:metadata`, as the R route does, so both
+  routes give the same field (#9).
+* Zero features (for example a clip that removes everything) give an empty
+  stream of the declared geometry type: the layer's type in
+  `gdal_vector_stream()`, and the `sfc` class or 'geoarrow' type in
+  `vector_stream()`. Empty input with no declared native type is still an
+  error, now documented (#9).
+
 * A global lon/lat COG in a polar view no longer asks the browser for every
   full-resolution tile. `cog_plan()` measures each level's pixel size as the
   median over the grid (the far pole had pushed it to around 1e20 m, so the

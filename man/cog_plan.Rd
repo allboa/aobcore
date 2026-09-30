@@ -13,7 +13,8 @@ cog_plan(
   selection = c("coarsest_sufficient", "nearest_pixel_size"),
   max_segments = 32L,
   tolerance = 0.25,
-  max_stretch = 8
+  max_stretch = 8,
+  max_tiles = 1024
 )
 }
 \arguments{
@@ -44,6 +45,14 @@ with a message. This drops the far polar cap from a polar view of
 global data (north of about 74N in EPSG:3031 at the default), where
 pixels grow without bound. \code{Inf} keeps every tile
 that projects.}
+
+\item{max_tiles}{Tile budget for an \code{all_levels} plan. Levels are added
+coarse to fine, and a level that would take the plan past this many
+tiles is left out with its finer levels, with a warning; the coarsest
+level is always kept. The page carries a mesh for every planned tile
+(and, for a local COG, its bytes), so this bounds its size. Pass
+\code{extent} to plan part of a large COG at full resolution, or \code{Inf} for
+no budget.}
 }
 \value{
 A list of class \code{"aob_tile_plan"}: \code{plan} (the scene spec
@@ -71,8 +80,8 @@ warning.
 With \code{units_per_pixel}, the plan covers one view (\code{coverage = "view"}):
 one level, chosen by \code{selection} from the levels' pixel sizes, and the
 tiles whose footprint meets \code{extent}. Without it, the plan holds every
-level (\code{coverage = "all_levels"}) and the renderer chooses a level as the
-view changes, using the \code{selection} rule.
+level (\code{coverage = "all_levels"}), up to \code{max_tiles} tiles in all, and the
+renderer chooses a level as the view changes, using the \code{selection} rule.
 }
 \examples{
 \dontshow{if (requireNamespace("gdalraster", quietly = TRUE) && !inherits(try(gdalraster::srs_to_wkt("EPSG:3031"), silent = TRUE), "try-error")) withAutoprint(\{ # examplesIf}

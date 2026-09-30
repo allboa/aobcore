@@ -9,6 +9,10 @@
 // reports as a layer error. Nothing falls back silently.
 import { unzlibSync } from "fflate";
 import { decompress as zstdDecompress } from "fzstd";
+// These two paths are geotiff.js internals, not its public exports: when
+// the geotiff version in package.json changes, check they still exist and
+// still export a default decoder class with a synchronous decodeBlock(buffer)
+// (npm test decodes lzw and packbits tiles and fails if they do not).
 import LZWDecoder from "../node_modules/geotiff/dist-module/compression/lzw.js";
 import PackbitsDecoder from "../node_modules/geotiff/dist-module/compression/packbits.js";
 

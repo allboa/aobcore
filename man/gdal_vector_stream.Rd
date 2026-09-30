@@ -63,6 +63,10 @@ of mixed or unknown type (and for \code{-sql} in \code{options} without \code{-n
 the Arrow driver writes WKB and it is converted in R, so the output is
 never WKB. Pass \code{-nlt} in \code{options} to declare the type yourself.
 
+A source with no features left (for example after \code{clip}) gives an
+empty stream of the layer's declared geometry type. When the type is
+mixed or unknown, no native type can be chosen and that is an error.
+
 The stream is read fully into memory (as Arrow IPC bytes) and the
 temporary \verb{/vsimem} files are removed before this returns.
 }

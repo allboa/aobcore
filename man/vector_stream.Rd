@@ -46,6 +46,12 @@ Z and M values are dropped. Single and multi geometries of one kind are
 promoted to the multi type. Mixed kinds (points with lines, for example)
 and geometry collections cannot be encoded as native GeoArrow and are an
 error.
+
+Input with no geometries (for example, a clip that removed everything)
+gives an empty stream of the type the input declares: an \code{sfc} class
+such as \code{sfc_MULTIPOLYGON}, or a 'geoarrow' vector's type. Empty input
+that declares no point, line or polygon type (an empty \code{\link[wk:wkb]{wk::wkb()}}, say)
+is an error, since no native type can be chosen.
 }
 \examples{
 x <- wk::wkt("LINESTRING (0 0, 1000 1000)", crs = "EPSG:3031")

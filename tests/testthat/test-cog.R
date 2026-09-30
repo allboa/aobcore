@@ -168,7 +168,7 @@ test_that("a tiled raster makes a valid 0.2 scene; other scenes stay 0.1", {
   expect_identical(scene_spec_version(s), "0.2")
   expect_output(print(s), "scene spec 0.2")
   expect_identical(s$data$sst$format, "cog")
-  expect_match(s$data$sst$url, "^file:///.*polar_3031[.]tif$")
+  expect_identical(s$data$sst$url, "polar_3031.tif")
   layer <- s$layers[[1]]
   expect_identical(layer$kind, "tiled_raster")
   expect_equal(layer$palette$range, c(-1.839, 14.607))
@@ -344,4 +344,56 @@ test_that("view_cog() writes the polar COG page in one call", {
   s <- cog_scene(fixture("polar_3031.tif"), coastline = FALSE, extent = c(-1e6, 1e6, -1e6, 1e6))
   expect_identical(s$view$extent, c(-1e6, 1e6, -1e6, 1e6))
   expect_length(s$layers, 1L)
+})
+
+test_that("an embedded COG is named by its base name, and url overrides it", {
+  skip_if_no_gdal()
+  f <- fixture("polar_3031.tif")
+  s <- scene_add_tiled_raster(scene("EPSG:3031"), "sst", f, range = c(0, 1))
+  expect_identical(s$data$sst$url, "polar_3031.tif")
+  expect_false(grepl(dirname(f), scene_json(s), fixed = TRUE))
+  expect_valid_tiled_scene(s)
+  s2 <- scene_add_tiled_raster(scene("EPSG:3031"), "sst", f, range = c(0, 1),
+                               url = "https://example.org/sst.tif")
+  expect_identical(s2$data$sst$url, "https://example.org/sst.tif")
+  expect_error(scene_add_tiled_raster(scene("EPSG:3031"), "sst", f, url = ""), "`url`")
+  ## Not embedded, a local COG keeps its file:// URL.
+  s3 <- scene_add_tiled_raster(scene("EPSG:3031"), "sst", f, embed = FALSE, range = c(0, 1))
+  expect_match(s3$data$sst$url, "^file:///.*polar_3031[.]tif$")
+  s4 <- cog_scene(f, coastline = FALSE, url = "sst.tif")
+  expect_identical(s4$data$cog$url, "sst.tif")
+})
+
+test_that("an all-levels plan keeps to max_tiles, coarse levels first", {
+  skip_if_no_gdal()
+  f <- fixture("polar_3031.tif")
+  ## Levels 3, 2, 1, 0 have 1, 1, 4 and 16 tiles.
+  expect_warning(p <- cog_plan(f, "EPSG:3031", max_tiles = 6),
+                 "Level 0 left out.*max_tiles")
+  expect_identical(vapply(p$plan$levels, `[[`, 0L, "level"), 3:1)
+  expect_warning(p <- cog_plan(f, "EPSG:3031", max_tiles = 1), "Levels 0, 1, 2 left out")
+  expect_identical(vapply(p$plan$levels, `[[`, 0L, "level"), 3L)
+  expect_valid_tiled_scene(scene_add_tiled_raster(scene("EPSG:3031"), "sst", p, range = c(0, 1)))
+  expect_no_warning(p <- cog_plan(f, "EPSG:3031", max_tiles = 22))
+  expect_length(p$plan$levels, 4L)
+  ## With an extent, tiles are counted after culling.
+  expect_no_warning(p <- cog_plan(f, "EPSG:3031", extent = c(-1e5, 1e5, -1e5, 1e5), max_tiles = 8))
+  expect_length(p$plan$levels, 4L)
+  expect_error(cog_plan(f, "EPSG:3031", max_tiles = 0), "max_tiles")
+})
+
+test_that("the coastline is on by default for south polar views only", {
+  skip_if_no_gdal()
+  expect_true(south_polar_view("EPSG:3031"))
+  expect_true(south_polar_view("EPSG:3976"))
+  expect_false(south_polar_view("EPSG:3413"))
+  expect_false(south_polar_view("EPSG:3857"))
+  expect_false(south_polar_view("EPSG:4326"))
+  expect_false(south_polar_view("EPSG:32758"))
+  f <- fixture("polar_3031.tif")
+  expect_identical(vapply(cog_scene(f)$layers, `[[`, "", "kind"), c("tiled_raster", "path"))
+  expect_length(cog_scene(f, coastline = FALSE)$layers, 1L)
+  s <- cog_scene(fixture("polar_lonlat.tif"), crs = "EPSG:4326")
+  expect_length(s$layers, 1L)
+  expect_length(cog_scene(fixture("polar_lonlat.tif"), crs = "EPSG:4326", coastline = TRUE)$layers, 2L)
 })

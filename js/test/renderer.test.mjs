@@ -12,7 +12,10 @@
 //    unknown palette still draws its other layers, the raster layer is not
 //    drawn, and the status line reports "error: unknown palette".
 // 4. A 0.2 tiled raster read by HTTP range requests from a local server
-//    draws, and one with an unsupported codec is a layer error.
+//    draws, one from a server that ignores Range downloads the file once,
+//    and one with an unsupported codec is a layer error.
+// Also in Node: the range reader keeps a whole-file (200) response, and the
+// tile cache evicts least recently used idle tiles.
 // Set CHROMIUM_PATH to pick a browser; SKIP_BROWSER=1 runs only part 1.
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -21,7 +24,7 @@ import { fileURLToPath } from "node:url";
 import { tableToIPC, tableFromArrays } from "apache-arrow";
 import { paletteStops, colorize, UnknownPaletteError } from "../src/palettes.js";
 import { decodeTile, UnsupportedCodecError } from "../src/decode.js";
-import { selectLevel } from "../src/tiles.js";
+import { selectLevel, rangeReader, tilesToEvict } from "../src/tiles.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -64,6 +67,43 @@ assert.equal(selectLevel(lv, 1000, "coarsest_sufficient"), 0);
 assert.equal(selectLevel(lv, 100, "nearest_pixel_size"), 3);
 assert.equal(selectLevel(lv, 96, "nearest_pixel_size"), 2, "ties go to the finer level");
 console.log("ok   level selection");
+
+// Range reader: 206 answers are used as they are; a 200 (Range ignored) is
+// read once and later tiles are cut from it, even when requested together.
+{
+  const file = Uint8Array.from({ length: 100 }, (_, i) => i);
+  let bodies = 0;
+  let cancelled = 0;
+  const fake = (ignore) => async (url, opts) => {
+    const [a, b] = /bytes=(\d+)-(\d+)/.exec(opts.headers.Range).slice(1).map(Number);
+    await new Promise((r) => setTimeout(r, 5));
+    const part = ignore ? file : file.slice(a, b + 1);
+    return {
+      status: ignore ? 200 : 206, ok: true,
+      body: { cancel: async () => { cancelled++; } },
+      arrayBuffer: async () => { bodies++; return part.slice().buffer; },
+    };
+  };
+  const partial = rangeReader(fake(false));
+  assert.deepEqual([...await partial("u", 10, 3)], [10, 11, 12]);
+  bodies = 0;
+  const whole = rangeReader(fake(true));
+  const got = await Promise.all([whole("u", 0, 2), whole("u", 50, 2), whole("u", 98, 2)]);
+  assert.deepEqual(got.map((x) => [...x]), [[0, 1], [50, 51], [98, 99]]);
+  assert.deepEqual([...await whole("u", 20, 1)], [20]);
+  assert.equal(bodies, 1, "the whole file is read once");
+  assert.equal(cancelled, 2, "the other whole-file bodies are cancelled");
+  await assert.rejects(whole("u", 99, 5), /has 100 bytes/);
+  console.log("ok   range reader keeps a whole-file response");
+}
+{
+  const t = (used) => ({ used });
+  const cached = [t(5), t(1), t(9), t(3), t(9)];
+  assert.deepEqual(tilesToEvict(cached, 9, 3), []);
+  assert.deepEqual(tilesToEvict(cached, 9, 1).map((x) => x.used), [1, 3]);
+  assert.deepEqual(tilesToEvict(cached, 9, 0).map((x) => x.used), [1, 3, 5]);
+  console.log("ok   tile cache evicts least recently used idle tiles");
+}
 
 if (process.env.SKIP_BROWSER) process.exit(0);
 
@@ -136,13 +176,21 @@ bad.layers.push({ id: "values", kind: "raster", grid: { crs: "EPSG:3031", extent
 bad.data.values = { format: "arrow-ipc-stream", blob: "values" };
 const pages = {
   "/tiled.html": pageFor(tiled.scene, tiled.blobs),
+  "/norange/tiled.html": pageFor(tiled.scene, tiled.blobs),
   "/bad.html": pageFor(bad, { ...tiled.blobs, values: blobs.values }),
 };
 const ranges = [];
+let wholeFile = 0;
 const server = createServer((req, res) => {
   if (pages[req.url]) {
     res.writeHead(200, { "content-type": "text/html" });
     return res.end(pages[req.url]);
+  }
+  if (req.url === "/norange/polar_3031.tif") {
+    // A server that ignores Range.
+    wholeFile++;
+    res.writeHead(200, { "content-type": "image/tiff" });
+    return res.end(tiff);
   }
   if (req.url === "/polar_3031.tif") {
     const m = /^bytes=(\d+)-(\d+)$/.exec(req.headers.range || "");
@@ -192,6 +240,17 @@ try {
   assert.ok(ranges.length > 0, "tiles were fetched with range requests");
   for (const r of ranges) assert.ok(want.has(r), `range ${r} is a planned tile`);
   console.log(`ok   tiled raster over HTTP range requests (${ok.tiles}; ${ranges.length} ranges)`);
+
+  const nr = await state("/norange/tiled.html");
+  assert.equal(nr.status, "ready");
+  assert.equal(nr.errors, undefined, nr.line);
+  assert.match(nr.tiles, /^sst: level [23], \d+ tiles?$/);
+  assert.ok(wholeFile >= 1, "the file was fetched");
+  const nTiles = Number(/(\d+) tiles?$/.exec(nr.tiles)[1]);
+  // Requests sent together each get a 200; the reader keeps one body and
+  // cancels the rest (the Node test above checks it reads one body).
+  assert.ok(wholeFile <= nTiles, `whole file sent ${wholeFile} times for ${nTiles} tiles`);
+  console.log(`ok   a server that ignores Range sends the file ${wholeFile} time(s) for ${nTiles} tile(s)`);
 
   const b = await state("/bad.html");
   assert.equal(b.status, "ready", "the rest of the scene still draws");
