@@ -139,9 +139,10 @@ skip_if_no_gdal <- function() {
   skip_if_not(ok, "gdalraster cannot resolve EPSG:3031 (PROJ database not found)")
 }
 
-# A structural check of a scene spec 0.2 scene with tiled raster layers:
+# A structural check of a scene spec 0.2 or 0.3 scene with tiled raster layers:
 # keys and required fields of cog references, tiled_raster layers, plans,
-# levels, encodings and tiles, following scene-0.2.schema.json, plus the
+# levels, encodings and tiles, following scene-0.2.schema.json (and 0.3's
+# rgb and jpeg additions: a 0.2 scene must use neither), plus the
 # validator's cross-checks (plan.crs is view.crs, windows fit their tile and
 # the level grid, mesh row runs do not overlap). Vector layers are checked by
 # scene_spec_problems() on the scene with its tiled layers removed.
@@ -156,19 +157,27 @@ tiled_spec_problems <- function(x) {
     miss <- setdiff(keys, names(obj))
     if (length(miss)) add(where, ": missing ", paste(miss, collapse = ", "))
   }
-  if (!identical(x$version, "0.2")) add("version must be \"0.2\"")
+  if (!isTRUE(x$version %in% c("0.2", "0.3"))) add("version must be \"0.2\" or \"0.3\"")
+  v03 <- identical(x$version, "0.3")
   tiled <- vapply(x$layers, function(l) identical(l$kind, "tiled_raster"), TRUE)
   rest <- x
   rest$version <- "0.1"
   rest$layers <- x$layers[!tiled]
   rest$data <- x$data[!vapply(x$data, function(d) identical(d$format, "cog"), TRUE)]
   p <- c(p, scene_spec_problems(rest))
-  codecs <- c("none", "deflate", "lzw", "zstd", "lerc", "lerc_deflate", "lerc_zstd", "webp", "packbits")
+  codecs <- c("none", "deflate", "lzw", "zstd", "lerc", "lerc_deflate", "lerc_zstd", "webp", "packbits",
+              if (v03) "jpeg")
   dtypes <- c("uint8", "int8", "uint16", "int16", "uint32", "int32", "float32", "float64")
   for (l in x$layers[tiled]) {
     w <- paste0("layer ", l$id)
-    only(l, c("id", "kind", "label", "visible", "source", "plan", "palette"), w)
-    need(l, c("id", "kind", "source", "plan", "palette"), w)
+    only(l, c("id", "kind", "label", "visible", "source", "plan", "palette", if (v03) "rgb"), w)
+    need(l, c("id", "kind", "source", "plan"), w)
+    if (is.null(l$palette) == is.null(l$rgb)) add(w, ": needs exactly one of palette and rgb")
+    if (!is.null(l$rgb)) {
+      only(l$rgb, c("bands", "alpha", "range"), paste(w, "rgb"))
+      if (length(l$rgb$bands) != 3L) add(w, ": rgb needs 3 bands")
+      if (!is.null(l$rgb$alpha) && l$rgb$alpha %in% l$rgb$bands) add(w, ": alpha is a colour band")
+    }
     src <- x$data[[l$source]]
     if (!identical(src$format, "cog")) add(w, ": source is not a cog")
     only(src, c("format", "url"), paste(w, "source"))
@@ -197,7 +206,19 @@ tiled_spec_problems <- function(x) {
       only(lv$grid, c("crs", "extent", "dim", "nodata"), paste(lw, "grid"))
       enc <- lv$encoding
       only(enc, c("codec", "predictor", "dtype", "byte_order", "samples_per_pixel", "planar",
-                  "band", "scale", "offset"), paste(lw, "encoding"))
+                  "band", "scale", "offset", if (v03) "jpeg_tables"), paste(lw, "encoding"))
+      spp <- enc$samples_per_pixel %||% 1
+      if (!is.null(l$rgb)) {
+        if (!is.null(enc$band)) add(lw, ": rgb layer with encoding.band")
+        if (max(c(l$rgb$bands, l$rgb$alpha)) > spp) add(lw, ": rgb band out of range")
+        if (!identical(enc$planar %||% "interleaved", "interleaved")) add(lw, ": rgb needs interleaved")
+        if (!identical(enc$dtype, "uint8") && is.null(l$rgb$range)) add(lw, ": rgb needs a range")
+      }
+      if (identical(enc$codec, "jpeg")) {
+        if (!identical(enc$dtype, "uint8") || !spp %in% c(1, 3) ||
+            !identical(enc$predictor %||% "none", "none") ||
+            !identical(enc$planar %||% "interleaved", "interleaved")) add(lw, ": bad jpeg encoding")
+      } else if (!is.null(enc$jpeg_tables)) add(lw, ": jpeg_tables without jpeg")
       if (!isTRUE(enc$codec %in% codecs)) add(lw, ": bad codec")
       if (!isTRUE(enc$dtype %in% dtypes)) add(lw, ": bad dtype")
       if ((enc$band %||% 1) > (enc$samples_per_pixel %||% 1)) add(lw, ": band out of range")

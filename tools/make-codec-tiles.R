@@ -124,3 +124,55 @@ blobs <- lapply(scene_blobs(s), b64)
 out <- file.path("js", "test", "tiled-scene-fine.json")
 writeLines(paste0('{"scene":', scene_json(s), ',"blobs":', aobcore:::json_value(blobs), "}"), out)
 cat("wrote", out, file.size(out), "bytes\n")
+
+# js/test/rgb-tiles.json: one tile of each colour COG fixture (tools/
+# make-rgb-cogs.R), its coarsest level, with every sample GDAL reads for the
+# tile's window (interleaved, base64): the RGBA LZW tile must decode exactly,
+# and the YCbCr JPEG tile, decoded by the browser from the tile joined to the
+# level's JPEGTables, must match GDAL's read (which converts YCbCr to RGB) to
+# within JPEG decoder differences.
+rgb_case <- function(name, file) {
+  f <- system.file("extdata", file, package = "aobcore")
+  cog <- cog_info(f)
+  k <- length(cog$levels)
+  lv <- cog$levels[[k]]
+  t <- lv$tiles[1, ]
+  con <- file(f, "rb")
+  seek(con, t$byte_offset)
+  bytes <- readBin(con, "raw", t$byte_length)
+  close(con)
+  ts <- lv$tile_size
+  vw <- min(ts[1], lv$dim[1])
+  vh <- min(ts[2], lv$dim[2])
+  ds <- new(GDALRaster, f, TRUE, paste0("OVERVIEW_LEVEL=", k - 2L))
+  nb <- cog$samples_per_pixel
+  v <- sapply(seq_len(nb), function(b) ds$read(b, 0L, 0L, vw, vh, vw, vh))
+  ds$close()
+  enc <- lv$encoding
+  enc$band <- NULL
+  list(
+    name = name,
+    encoding = enc,
+    size = as.integer(ts),
+    window = list(x = 0L, y = 0L, width = as.integer(vw), height = as.integer(vh)),
+    bytes = b64(bytes),
+    samples = b64(as.raw(t(v)))
+  )
+}
+rgb_cases <- list(
+  rgb_case("lzw rgba uint8 (polar_rgba.tif)", "polar_rgba.tif"),
+  rgb_case("jpeg ycbcr uint8 with jpeg_tables (polar_ycbcr.tif)", "polar_ycbcr.tif")
+)
+out <- file.path("js", "test", "rgb-tiles.json")
+writeLines(aobcore:::json_value(rgb_cases, ""), out)
+cat("wrote", out, file.size(out), "bytes\n")
+
+# js/test/rgb-scene.json: polar_ycbcr.tif drawn as a colour image (scene
+# spec 0.3, jpeg tiles), read by HTTP range requests.
+s <- cog_scene(system.file("extdata", "polar_ycbcr.tif", package = "aobcore"), "EPSG:3031",
+               coastline = FALSE, url = "polar_ycbcr.tif")
+attr(s, "blobs") <- attr(s, "blobs")[c("cog_vertices", "cog_indices")]
+blobs <- lapply(scene_blobs(s), b64)
+out <- file.path("js", "test", "rgb-scene.json")
+writeLines(paste0('{"scene":', scene_json(s), ',"blobs":', aobcore:::json_value(blobs), "}"), out)
+cat("wrote", out, file.size(out), "bytes\n")

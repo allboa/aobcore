@@ -49,9 +49,9 @@ jobs:
           args: 'c("--no-manual", "--as-cran")'
           error-on: '"warning"'
 
-      # Scene spec 0.2 output from cog_scene() (and the 0.1 scenes) checked
-      # by the scenespec validator, not only by the R tests' structural
-      # checks. Linux only: it has R, the package's dependencies and Node.
+      # Scene spec 0.2 and 0.3 output from cog_scene() (palette COGs, and
+      # RGBA and YCbCr JPEG colour images) and the 0.1 scenes checked by the
+      # scenespec validator, not only by the R tests' structural checks. Linux only: it has R, the package's dependencies and Node.
       - name: Validate written scenes with the scenespec validator
         if: runner.os == 'Linux'
         env:

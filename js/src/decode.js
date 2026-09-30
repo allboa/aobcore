@@ -1,12 +1,16 @@
-// Tile bytes to sample values, per scene spec 0.2 tileEncoding: decompress
-// (codec), undo the TIFF predictor, read samples in the stated byte order,
-// and pick the band. Pure functions with no DOM, so they run in Node tests.
+// Tile bytes to sample values, per scene spec 0.2/0.3 tileEncoding:
+// decompress (codec), undo the TIFF predictor, read samples in the stated
+// byte order, and pick the band (palette) or keep every sample (rgb). Pure
+// functions with no DOM, so they run in Node tests.
 //
 // Codecs: none, deflate (fflate), zstd (fzstd), lzw and packbits (the
 // decoders from geotiff.js, imported by file because the package exports
-// only its whole reader). lerc, lerc_deflate, lerc_zstd and webp are not
-// supported: decodeTile throws UnsupportedCodecError, which the layer
-// reports as a layer error. Nothing falls back silently.
+// only its whole reader), and jpeg (0.3), which is decoded by the browser's
+// own image decoder in jpeg.js: here are only the pure parts (joining the
+// shared tables to a tile, and reading samples back out of RGBA). lerc,
+// lerc_deflate, lerc_zstd and webp are not supported: decodeTile throws
+// UnsupportedCodecError, which the layer reports as a layer error. Nothing
+// falls back silently.
 import { unzlibSync } from "fflate";
 import { decompress as zstdDecompress } from "fzstd";
 // These two paths are geotiff.js internals, not its public exports: when
@@ -18,7 +22,7 @@ import PackbitsDecoder from "../node_modules/geotiff/dist-module/compression/pac
 
 export class UnsupportedCodecError extends Error {}
 
-export const SUPPORTED_CODECS = ["none", "deflate", "lzw", "zstd", "packbits"];
+export const SUPPORTED_CODECS = ["none", "deflate", "lzw", "zstd", "packbits", "jpeg"];
 
 const DTYPES = {
   uint8: [Uint8Array, 1, "getUint8"],
@@ -41,7 +45,38 @@ export function encodingProblem(enc) {
   if (pred === "floating_point" && !/^float/.test(enc.dtype)) return "the floating point predictor needs a float dtype";
   if (pred === "horizontal" && /^float/.test(enc.dtype)) return "the horizontal predictor needs an integer dtype";
   if (!["none", "horizontal", "floating_point"].includes(pred)) return `predictor ${pred} is not supported`;
+  if (enc.codec === "jpeg") {
+    const spp = enc.samples_per_pixel || 1;
+    if (enc.dtype !== "uint8") return "jpeg tiles must be uint8";
+    if (pred !== "none") return "jpeg tiles take no predictor";
+    if ((enc.planar || "interleaved") !== "interleaved") return "jpeg tiles must be interleaved";
+    if (spp !== 1 && spp !== 3) return `jpeg tiles have 1 or 3 samples, not ${spp}`;
+  }
   return null;
+}
+
+// Scene spec 0.3 jpeg: a standalone JPEG stream for a tile is the level's
+// shared tables without their final EOI marker (2 bytes) followed by the
+// tile without its leading SOI marker (2 bytes). Without tables the tile is
+// already a complete stream.
+export function jpegStream(tables, tile) {
+  if (!tables || tables.length < 4) return tile;
+  if (tile.length < 2 || tile[0] !== 0xff || tile[1] !== 0xd8) throw new Error("jpeg tile does not start with an SOI marker");
+  if (tables[tables.length - 2] !== 0xff || tables[tables.length - 1] !== 0xd9) throw new Error("jpeg_tables do not end with an EOI marker");
+  const out = new Uint8Array(tables.length - 2 + tile.length - 2);
+  out.set(tables.subarray(0, tables.length - 2), 0);
+  out.set(tile.subarray(2), tables.length - 2);
+  return out;
+}
+
+// Samples of a decoded JPEG, from the RGBA pixels a browser gives: one
+// sample (greyscale, R = G = B) or three (red, green, blue; the decoder
+// converted YCbCr), interleaved.
+export function samplesFromRGBA(rgba, spp) {
+  const n = rgba.length / 4;
+  const out = new Uint8Array(n * spp);
+  for (let i = 0; i < n; i++) for (let k = 0; k < spp; k++) out[i * spp + k] = rgba[i * 4 + k];
+  return out;
 }
 
 function toArrayBuffer(u8) {
@@ -69,8 +104,26 @@ export function decompress(codec, bytes) {
 // raw samples of the chosen band as a typed array of w * h values, row 0 at
 // the top.
 export function decodeTile(raw, enc, w, h) {
+  const { samples, spp } = decodeSamples(raw, enc, w, h);
+  return pickBand(samples, spp, enc.band || 1, w * h);
+}
+
+// One band (1-based) out of interleaved samples.
+export function pickBand(samples, spp, band, n) {
+  if (spp === 1) return samples;
+  const one = new samples.constructor(n);
+  const b = band - 1;
+  for (let i = 0; i < n; i++) one[i] = samples[i * spp + b];
+  return one;
+}
+
+// Decode one tile to all its samples: {samples, spp}, interleaved, w * h *
+// spp raw values (spp is 1 for planar separate tiles). Not for jpeg, which
+// needs the browser's decoder (jpeg.js).
+export function decodeSamples(raw, enc, w, h) {
   const problem = encodingProblem(enc);
   if (problem) throw new UnsupportedCodecError(problem);
+  if (enc.codec === "jpeg") throw new Error("jpeg tiles are decoded by the browser's image decoder (jpeg.js), not decodeSamples");
   const bytes = decompress(enc.codec, raw);
   const [Ctor, size, getter] = DTYPES[enc.dtype];
   const planar = enc.planar || "interleaved";
@@ -99,11 +152,7 @@ export function decodeTile(raw, enc, w, h) {
       }
     }
   }
-  if (spp === 1) return out;
-  const band = (enc.band || 1) - 1;
-  const one = new Ctor(w * h);
-  for (let i = 0; i < w * h; i++) one[i] = out[i * spp + band];
-  return one;
+  return { samples: out, spp };
 }
 
 // TIFF predictor 3 (Adobe tech note 3): per row, the bytes of the samples
@@ -154,6 +203,53 @@ export function colorizeTile(values, w, h, win, enc, nodata, range, lut) {
       px[p * 4 + 1] = lut[k * 3 + 1];
       px[p * 4 + 2] = lut[k * 3 + 2];
       px[p * 4 + 3] = 255;
+    }
+  }
+  return px;
+}
+
+// Scene spec 0.3 rgb: interleaved samples (spp per pixel) to RGBA pixels (w
+// x h, padding transparent). rgb.bands are 1-based red, green and blue
+// bands, rgb.alpha an optional opacity band. uint8 samples without
+// rgb.range are drawn as they are (0 to 255; scale and offset do not
+// apply); otherwise scaled values (raw * scale + offset) from range[0] to
+// range[1] map to 0 to 255, clamped, for colour and alpha alike. A pixel is
+// transparent when its alpha is 0, when all three colour samples equal
+// nodata (raw), or when a colour sample is NaN.
+export function colorizeRGB(samples, spp, w, h, win, enc, nodata, rgb) {
+  const px = new Uint8ClampedArray(w * h * 4);
+  const [rb, gb, bb] = rgb.bands.map((b) => b - 1);
+  const ab = rgb.alpha ? rgb.alpha - 1 : -1;
+  const direct = enc.dtype === "uint8" && !rgb.range;
+  const scale = direct || enc.scale === undefined ? 1 : enc.scale;
+  const offset = direct || enc.offset === undefined ? 0 : enc.offset;
+  const lo = direct ? 0 : rgb.range[0];
+  const span = direct ? 255 : rgb.range[1] - rgb.range[0] || 1;
+  const hasNodata = typeof nodata === "number";
+  const nd = hasNodata && samples instanceof Float32Array ? Math.fround(nodata) : nodata;
+  const level = (raw) => {
+    const k = Math.round((((raw * scale + offset) - lo) / span) * 255);
+    return k < 0 ? 0 : k > 255 ? 255 : k;
+  };
+  const x0 = win ? win.x : 0;
+  const y0 = win ? win.y : 0;
+  const x1 = win ? win.x + win.width : w;
+  const y1 = win ? win.y + win.height : h;
+  for (let r = y0; r < y1; r++) {
+    for (let c = x0; c < x1; c++) {
+      const p = r * w + c;
+      const o = p * spp;
+      const R = samples[o + rb];
+      const G = samples[o + gb];
+      const B = samples[o + bb];
+      if (R !== R || G !== G || B !== B) continue;
+      if (hasNodata && R === nd && G === nd && B === nd) continue;
+      const A = ab < 0 ? 255 : level(samples[o + ab]);
+      if (A === 0) continue;
+      px[p * 4] = level(R);
+      px[p * 4 + 1] = level(G);
+      px[p * 4 + 2] = level(B);
+      px[p * 4 + 3] = A;
     }
   }
   return px;

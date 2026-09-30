@@ -8,6 +8,30 @@
   becomes its code, and one with no code is carried in the scene as a
   PROJJSON object, as the scene spec already allows. The renderer labels a
   PROJJSON CRS named "unknown" by its projection method.
+* RGB(A) COGs are drawn as colour images (scene spec 0.3 `rgb`), not one
+  band through a palette. `scene_add_tiled_raster()`, `cog_scene()` and
+  `view_cog()` do so by default when the COG has 3 or 4 Byte bands whose
+  colour interpretation is Red, Green, Blue (and Alpha); `band =`,
+  `palette =` or `rgb = FALSE` keep the single-band palette path, and
+  `rgb = c(r, g, b[, a])` picks the bands. Alpha 0, or all colour bands at
+  nodata, is transparent. Non-Byte bands take `range` (by default the
+  data's) (#13).
+* JPEG-compressed COGs are no longer refused: each level's shared JPEG
+  tables are carried in the plan (`encoding$jpeg_tables`, scene spec 0.3)
+  and the renderer decodes each tile, joined to its tables, with the
+  browser's JPEG decoder. Only YCbCr (3 bands) and greyscale (1 band) JPEG
+  are allowed; other photometric interpretations are refused with an error
+  naming the layer and level (#13).
+* `cog_info()` records each band's colour interpretation (`color_interp`)
+  and each level's TIFF photometric interpretation (`photometric`), and
+  reads JPEGTables, from the TIFF image directories (classic TIFF and
+  BigTIFF, through GDAL's virtual file layer, falling back to GDAL's
+  metadata when they cannot be read) (#13).
+* Scenes are written at the lowest spec version that expresses them: 0.3
+  only when a tiled raster uses `rgb` or JPEG tiles, else 0.2 or 0.1 as
+  before (#13).
+* New fixtures `polar_rgba.tif` (RGBA, LZW) and `polar_ycbcr.tif` (YCbCr
+  JPEG), made by `tools/make-rgb-cogs.R` (#13).
 * With `embed = TRUE` (the default for a local COG), the scene's `cog`
   reference is the file's base name, not its absolute `file://` path, so a
   shared page no longer reveals the local directory.

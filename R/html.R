@@ -13,7 +13,7 @@
 #'
 #' @param scene A scene from [scene()] and [scene_add_data()] or
 #'   [scene_add_vector()], which carries its blobs; or a plain list following
-#'   scene spec 0.1 or 0.2, with `version`, `view`, `data` and `layers`. It is written
+#'   scene spec 0.1, 0.2 or 0.3, with `version`, `view`, `data` and `layers`. It is written
 #'   with [scene_json()].
 #' @param blobs A named list of raw vectors, each an Arrow IPC stream or file,
 #'   named by the `blob` keys used in `scene$data`. Defaults to the blobs the
@@ -144,7 +144,7 @@ check_scene_shape <- function(scene, blobs) {
   }
   if (!is.character(scene$version) || length(scene$version) != 1L ||
       !scene$version %in% scene_spec_versions) {
-    fail("`scene$version` must be \"", paste(scene_spec_versions, collapse = "\" or \""), "\".")
+    fail("`scene$version` must be one of \"", paste(scene_spec_versions, collapse = "\", \""), "\".")
   }
   view <- scene$view
   if (!is.list(view) || !is.character(view$type) || length(view$type) != 1L ||
@@ -203,8 +203,11 @@ check_scene_shape <- function(scene, blobs) {
         need(lid, layer$mesh$indices)
       }
     } else if (identical(kind, "tiled_raster")) {
-      if (!identical(scene$version, "0.2") && !inherits(scene, "aob_scene")) {
-        fail("Layer `", lid, "` is a tiled raster, which needs scene spec 0.2.")
+      if (identical(scene$version, "0.1") && !inherits(scene, "aob_scene")) {
+        fail("Layer `", lid, "` is a tiled raster, which needs scene spec 0.2 or later.")
+      }
+      if (uses_spec_03(layer) && !identical(scene$version, "0.3") && !inherits(scene, "aob_scene")) {
+        fail("Layer `", lid, "` uses `rgb` or JPEG tiles, which need scene spec 0.3.")
       }
       need(lid, layer$source)
       if (!identical(data[[layer$source]]$format, "cog")) {

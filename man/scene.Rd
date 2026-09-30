@@ -19,7 +19,7 @@ A list of class \code{"aob_scene"}.
 A minimal scene: a projected view in \code{crs}, with no data and no layers.
 Its fields follow the scene spec (\code{version}, \code{view}, \code{data}, \code{layers}).
 A scene starts as version 0.1 and becomes 0.2 when a tiled raster is
-added.
+added (0.3 for a colour image or JPEG tiles).
 }
 \examples{
 s <- scene()

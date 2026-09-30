@@ -1,5 +1,5 @@
-// Scene spec 0.2 tiled_raster layers to deck.gl layers. Like layers.js, this
-// is where spec concepts meet deck.gl names.
+// Scene spec 0.2 and 0.3 tiled_raster layers to deck.gl layers. Like
+// layers.js, this is where spec concepts meet deck.gl names.
 //
 // The producer planned everything: levels, tiles, byte ranges and meshes in
 // the view CRS. Here the renderer picks a level for the current zoom (the
@@ -7,7 +7,9 @@
 // viewport, gets each tile's bytes (an embedded blob keyed
 // "<source>@<offset>+<length>" when the page carries one, else an HTTP range
 // request to the cog URL), decodes them and draws each tile's mesh slice
-// with the tile as its texture.
+// with the tile as its texture. A layer colours one band through a palette,
+// or (0.3) draws three bands as red, green and blue, with an optional alpha
+// band (rgb). jpeg tiles (0.3) are decoded by the browser (jpeg.js).
 //
 // Tiles no longer in view stay cached, up to MAX_CACHED decoded tiles; past
 // that the least recently drawn are dropped (and fetched again if needed).
@@ -15,7 +17,8 @@
 import { SimpleMeshLayer } from "@deck.gl/mesh-layers";
 import { numericColumn, listColumn, decodeBase64 } from "./arrow.js";
 import { paletteStops, ramp, UnknownPaletteError, UNLIT } from "./palettes.js";
-import { decodeTile, colorizeTile, encodingProblem } from "./decode.js";
+import { pickBand, colorizeTile, colorizeRGB, encodingProblem } from "./decode.js";
+import { decodeTileSamples } from "./jpeg.js";
 
 const textureParameters = { minFilter: "nearest", magFilter: "nearest", mipmapFilter: "none" };
 
@@ -129,17 +132,29 @@ export function buildTiledRaster(L, ctx) {
     ctx.error(`${what}: ${msg}; not drawn`);
     return { summary: `error: ${summary || msg}`, layers: [] };
   };
-  let stops;
-  try {
-    stops = paletteStops(L.palette.name);
-  } catch (err) {
-    if (!(err instanceof UnknownPaletteError)) throw err;
-    return fail(err.message, "unknown palette");
+  const rgb = L.rgb || null;
+  if (!rgb === !L.palette) return fail("a tiled raster needs exactly one of palette and rgb", "needs palette or rgb");
+  let stops = null;
+  if (!rgb) {
+    try {
+      stops = paletteStops(L.palette.name);
+    } catch (err) {
+      if (!(err instanceof UnknownPaletteError)) throw err;
+      return fail(err.message, "unknown palette");
+    }
   }
   const plan = L.plan;
   for (const lv of plan.levels) {
     const problem = encodingProblem(lv.encoding);
     if (problem) return fail(`level ${lv.level}: ${problem}`, problem.replace(/ \(.*$/, ""));
+    if (rgb) {
+      const enc = lv.encoding;
+      const spp = enc.samples_per_pixel || 1;
+      const need = Math.max(...rgb.bands, rgb.alpha || 0);
+      if ((enc.planar || "interleaved") !== "interleaved") return fail(`level ${lv.level}: rgb needs interleaved samples`, "rgb needs interleaved samples");
+      if (need > spp) return fail(`level ${lv.level}: rgb names band ${need} of ${spp}`, "rgb band out of range");
+      if (enc.dtype !== "uint8" && !rgb.range) return fail(`level ${lv.level}: rgb of ${enc.dtype} samples needs a range`, "rgb needs a range");
+    }
   }
   const src = scene.data[L.source];
   const url = typeof document !== "undefined" ? new URL(src.url, document.baseURI).href : src.url;
@@ -152,7 +167,7 @@ export function buildTiledRaster(L, ctx) {
   const texAll = uv.values instanceof Float32Array ? uv.values : Float32Array.from(uv.values);
 
   const lut = new Uint8Array(256 * 3);
-  for (let k = 0; k < 256; k++) lut.set(ramp(stops, k / 255), k * 3);
+  if (stops) for (let k = 0; k < 256; k++) lut.set(ramp(stops, k / 255), k * 3);
 
   // Every tile of the plan, with its level.
   const acc = ctx.bounds;
@@ -206,8 +221,12 @@ export function buildTiledRaster(L, ctx) {
     if (signal.aborted) throw signal.reason;
     if (bytes.length !== t.byte_length) throw new Error(`tile ${tile.key}: got ${bytes.length} bytes, expected ${t.byte_length}`);
     const [w, h] = t.size;
-    const values = decodeTile(bytes, lv.encoding, w, h);
-    const px = colorizeTile(values, w, h, t.window, lv.encoding, lv.grid.nodata, L.palette.range, lut);
+    const { samples, spp } = await decodeTileSamples(bytes, lv.encoding, w, h);
+    if (signal.aborted) throw signal.reason;
+    const px = rgb
+      ? colorizeRGB(samples, spp, w, h, t.window, lv.encoding, lv.grid.nodata, rgb)
+      : colorizeTile(pickBand(samples, spp, lv.encoding.band || 1, w * h), w, h, t.window, lv.encoding,
+        lv.grid.nodata, L.palette.range, lut);
     const image = document.createElement("canvas");
     image.width = w;
     image.height = h;
@@ -303,7 +322,7 @@ export function buildTiledRaster(L, ctx) {
 
   const nTiles = levels.reduce((s, l) => s + l.tiles.length, 0);
   return {
-    legend: { id: L.id, label: L.label || L.id, stops, range: L.palette.range },
+    legend: rgb ? null : { id: L.id, label: L.label || L.id, stops, range: L.palette.range },
     summary: `${nTiles} tiles in ${levels.length} level${levels.length === 1 ? "" : "s"}`,
     layers: [],
     dynamic,

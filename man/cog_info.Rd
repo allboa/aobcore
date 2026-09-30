@@ -21,11 +21,13 @@ A list of class \code{"aob_cog"}: \code{dsn}, \code{url} (the reference a scene
 gives the renderer), \code{local} (whether the bytes can be read here for
 embedding), \code{crs} (an \code{"authority:code"} string when GDAL finds one,
 else PROJJSON text), \code{wkt}, \code{band}, \code{samples_per_pixel}, \code{planar},
-\code{byte_order}, \code{scale}, \code{offset}, \code{nodata}, and \code{levels}: one list per
-level with \code{level} (0 is full resolution), \code{dim}, \code{geotransform},
-\code{extent} (\code{c(xmin, xmax, ymin, ymax)}), \code{tile_size}, \code{encoding} and
-\code{tiles} (a data frame of \code{col}, \code{row}, \code{byte_offset}, \code{byte_length};
-sparse tiles with no bytes are left out).
+\code{color_interp} (one per band), \code{photometric} (the full-resolution
+image's TIFF photometric interpretation, such as \code{"RGB"}, \code{"YCbCr"} or
+\code{"MinIsBlack"}; \code{NA} when unknown), \code{byte_order}, \code{scale}, \code{offset},
+\code{nodata}, and \code{levels}: one list per level with \code{level} (0 is full
+resolution), \code{dim}, \code{geotransform}, \code{extent} (\code{c(xmin, xmax, ymin, ymax)}), \code{tile_size}, \code{photometric}, \code{encoding} and \code{tiles} (a data
+frame of \code{col}, \code{row}, \code{byte_offset}, \code{byte_length}; sparse tiles with
+no bytes are left out).
 }
 \description{
 Reads what a tile plan needs from a COG through GDAL: the source CRS, and
@@ -42,7 +44,16 @@ of 12 rows over 50 degrees does not have a pixel 8 times the base). Tile
 byte ranges are the \verb{BLOCK_OFFSET_<col>_<row>} and \verb{BLOCK_SIZE_<col>_<row>}
 metadata items in GDAL's \code{TIFF} domain for the chosen band. Compression
 and predictor come from the \code{IMAGE_STRUCTURE} domain, the byte order from
-the file's first two bytes.
+the file's first two bytes, and each band's colour interpretation
+(\code{"Red"}, \code{"Green"}, \code{"Blue"}, \code{"Alpha"}, \code{"Gray"}, ...) from GDAL.
+
+Two TIFF tags GDAL does not report are read from the file's image file
+directories (IFDs) directly, through GDAL's virtual file layer: each
+level's photometric interpretation (tag 262) and, for JPEG, its
+JPEGTables (tag 347), the quantization and Huffman tables its tiles
+share. The tables go into the level's \code{encoding$jpeg_tables} (base64), as
+scene spec 0.3 carries them. If the IFDs cannot be read, the photometric
+interpretation falls back to what GDAL's \code{IMAGE_STRUCTURE} says (\code{"YCbCr JPEG"} compression is YCbCr) and JPEG levels have no tables.
 }
 \examples{
 \dontshow{if (requireNamespace("gdalraster", quietly = TRUE)) withAutoprint(\{ # examplesIf}
