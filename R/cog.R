@@ -16,7 +16,11 @@
 #' the file's first two bytes.
 #'
 #' @param dsn A local path to a COG, an `http(s)` URL (read with GDAL's
-#'   `/vsicurl/`), or any GDAL `/vsi` path.
+#'   `/vsicurl/`; a `"/vsicurl/https://..."` path is the same URL), or any
+#'   GDAL `/vsi` path. The renderer fetches tiles itself, so `/vsis3/`,
+#'   `/vsigs/` and `/vsiaz/` paths are given to it as their public https
+#'   URLs (honouring `AWS_S3_ENDPOINT`, always path style, `AWS_HTTPS` and
+#'   `AZURE_STORAGE_ACCOUNT`); that works for public objects only.
 #' @param band The band to draw, 1-based.
 #' @return A list of class `"aob_cog"`: `dsn`, `url` (the reference a scene
 #'   gives the renderer), `local` (whether the bytes can be read here for
@@ -39,13 +43,14 @@ cog_info <- function(dsn, band = 1L) {
   if (!is.character(dsn) || length(dsn) != 1L || is.na(dsn) || !nzchar(dsn)) {
     stop("`dsn` must be a single path or URL.", call. = FALSE)
   }
+  ref <- dsn_ref(dsn)
   is_url <- grepl("^https?://", dsn)
   local <- !is_url && !startsWith(dsn, "/vsi")
   if (local) {
     if (!file.exists(dsn)) stop("No file at \"", dsn, "\".", call. = FALSE)
     dsn <- normalizePath(dsn, winslash = "/")
   }
-  gdal_dsn <- if (is_url) paste0("/vsicurl/", dsn) else dsn
+  gdal_dsn <- ref$gdal
 
   ds <- open_raster(gdal_dsn)
   on.exit(ds$close(), add = TRUE)
@@ -89,8 +94,8 @@ cog_info <- function(dsn, band = 1L) {
 
   structure(list(
     dsn = dsn,
-    url = if (local) file_url(dsn) else dsn,
-    local = local || (!is_url && startsWith(dsn, "/vsimem/")),
+    url = if (local) file_url(dsn) else ref$http %||% dsn,
+    local = local || startsWith(dsn, "/vsimem/"),
     crs = crs_ref(wkt),
     wkt = wkt,
     band = band,
@@ -356,13 +361,17 @@ scene_add_tiled_raster <- function(scene, id, plan, palette = "viridis", range =
   if (!is.character(palette) || length(palette) != 1L || is.na(palette) || !nzchar(palette)) {
     stop("`palette` must be a single palette name.", call. = FALSE)
   }
-  range <- range %||% cog_value_range(cog)
-  if (!is.numeric(range) || length(range) != 2L || anyNA(range)) {
-    stop("`range` must be c(low, high).", call. = FALSE)
-  }
   embed <- embed %||% cog$local
   if (isTRUE(embed) && !cog$local) {
     stop("Only a local COG can be embedded; this one is a URL.", call. = FALSE)
+  }
+  if (!isTRUE(embed) && !grepl("^(https?|file)://", cog$url)) {
+    stop("The renderer cannot fetch \"", cog$url, "\"; give the COG as an http(s) URL",
+         if (cog$local) " or embed it", ".", call. = FALSE)
+  }
+  range <- range %||% cog_value_range(cog)
+  if (!is.numeric(range) || length(range) != 2L || anyNA(range)) {
+    stop("`range` must be c(low, high).", call. = FALSE)
   }
 
   scene$version <- "0.2"
@@ -402,7 +411,7 @@ scene_add_tiled_raster <- function(scene, id, plan, palette = "viridis", range =
 #' from disk with no server. A COG given by URL is read by the browser with
 #' HTTP range requests (the server must allow them, and CORS).
 #'
-#' @param dsn A COG: local path or `http(s)` URL.
+#' @param dsn A COG: local path or `http(s)` URL (also as `"/vsicurl/<url>"`).
 #' @param crs The view CRS.
 #' @param palette,range Passed to [scene_add_tiled_raster()].
 #' @param band The band to draw.
@@ -587,6 +596,59 @@ crs_ref <- function(wkt) {
     return(code)
   }
   structure(gdalraster::srs_to_projjson(wkt), class = "aob_json")
+}
+
+## How GDAL and the renderer each reach a dsn: `gdal`, the path GDAL
+## opens, and `http`, the plain URL the browser fetches (NULL when there is
+## none). A "/vsicurl/" prefix means nothing to a browser. /vsis3/,
+## /vsigs/ and /vsiaz/ paths map to their public https URLs, which work in
+## the browser only for public (unsigned) objects; GDAL keeps the /vsi path
+## and its credentials.
+dsn_ref <- function(dsn) {
+  if (grepl("^https?://", dsn)) return(list(gdal = paste0("/vsicurl/", dsn), http = dsn))
+  http <- NULL
+  if (grepl("^/vsicurl/https?://", dsn)) {
+    http <- sub("^/vsicurl/", "", dsn)
+  } else if (startsWith(dsn, "/vsicurl?")) {
+    for (p in strsplit(sub("^/vsicurl\\?", "", dsn), "&", fixed = TRUE)[[1]]) {
+      if (startsWith(p, "url=")) http <- utils::URLdecode(sub("^url=", "", p))
+    }
+    if (!is.null(http) && !grepl("^https?://", http)) http <- NULL
+  } else if (grepl("^/vsis3/[^/]+/.", dsn)) {
+    key <- url_path(sub("^/vsis3/", "", dsn))
+    endpoint <- vsi_config("AWS_S3_ENDPOINT")
+    if (nzchar(endpoint)) {
+      scheme <- if (toupper(vsi_config("AWS_HTTPS")) %in% c("NO", "FALSE", "OFF")) "http" else "https"
+      endpoint <- sub("^https?://", "", sub("/+$", "", endpoint))
+      http <- paste0(scheme, "://", endpoint, "/", key)
+    } else {
+      bucket <- sub("/.*$", "", key)
+      ## Path style for dotted bucket names: the *.s3.amazonaws.com
+      ## certificate covers one subdomain level only.
+      http <- if (grepl(".", bucket, fixed = TRUE)) paste0("https://s3.amazonaws.com/", key) else
+        paste0("https://", bucket, ".s3.amazonaws.com/", sub("^[^/]+/", "", key))
+    }
+  } else if (grepl("^/vsigs/[^/]+/.", dsn)) {
+    http <- paste0("https://storage.googleapis.com/", url_path(sub("^/vsigs/", "", dsn)))
+  } else if (grepl("^/vsiaz/[^/]+/.", dsn)) {
+    account <- vsi_config("AZURE_STORAGE_ACCOUNT")
+    if (nzchar(account)) {
+      http <- paste0("https://", account, ".blob.core.windows.net/", url_path(sub("^/vsiaz/", "", dsn)))
+    }
+  }
+  list(gdal = dsn, http = http)
+}
+
+## A GDAL configuration option (GDAL also reads it from the environment).
+vsi_config <- function(key) {
+  v <- tryCatch(gdalraster::get_config_option(key), error = function(e) "")
+  if (!is.character(v) || length(v) != 1L || is.na(v)) "" else v
+}
+
+## A bucket/key path with each segment percent-encoded for a URL.
+url_path <- function(path) {
+  seg <- strsplit(path, "/", fixed = TRUE)[[1]]
+  paste(vapply(seg, utils::URLencode, "", reserved = TRUE), collapse = "/")
 }
 
 file_url <- function(path) {
@@ -800,7 +862,7 @@ tile_blob_key <- function(source, offset, length) {
 ## Range of scaled values in the coarsest level, read through GDAL.
 cog_value_range <- function(cog) {
   k <- length(cog$levels) - 1L
-  gdal_dsn <- if (grepl("^https?://", cog$dsn)) paste0("/vsicurl/", cog$dsn) else cog$dsn
+  gdal_dsn <- dsn_ref(cog$dsn)$gdal
   ds <- if (k == 0L) open_raster(gdal_dsn) else open_raster(gdal_dsn, paste0("OVERVIEW_LEVEL=", k - 1L))
   on.exit(ds$close())
   d <- ds$dim()

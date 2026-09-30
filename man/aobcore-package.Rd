@@ -6,7 +6,7 @@
 \alias{aobcore-package}
 \title{aobcore: Lean Core for 'allonboard' Map Scenes}
 \description{
-Builds renderer-neutral map scenes that are drawn in their own coordinate reference system, with polar views as the first-class case. Data are carried as native 'GeoArrow' and grid descriptors. This is an early skeleton; the package name is a placeholder. Scenes are written to self-contained HTML pages drawn by a bundled 'deck.gl' renderer.
+Builds renderer-neutral map scenes that are drawn in their own coordinate reference system, with polar views as the first-class case. Data are carried as native 'GeoArrow' and grid descriptors. This is an early skeleton; the package name is a placeholder. Tiled Cloud Optimized GeoTIFFs are planned in R (levels, tile byte ranges and meshes projected to the view). Scenes are written to self-contained HTML pages drawn by a bundled 'deck.gl' renderer.
 }
 \seealso{
 Useful links:
@@ -32,6 +32,8 @@ Other contributors:
   \item The FlatBuffers project (Bundled flatbuffers JavaScript) [copyright holder]
   \item Mapbox (Bundled earcut JavaScript) [copyright holder]
   \item Microsoft Corporation (Bundled tslib JavaScript) [copyright holder]
+  \item Arjun Barrett (Bundled fflate and fzstd JavaScript) [copyright holder]
+  \item EOX IT Services GmbH (Bundled geotiff.js LZW and PackBits decoders) [copyright holder]
 }
 
 }
