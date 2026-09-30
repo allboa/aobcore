@@ -54,10 +54,15 @@ jobs:
       # checks. Linux only: it has R, the package's dependencies and Node.
       - name: Validate written scenes with the scenespec validator
         if: runner.os == 'Linux'
+        env:
+          # A pinned scenespec commit (main after scene spec 0.3), so a spec
+          # change cannot turn this check red unseen; bump it deliberately.
+          SCENESPEC_SHA: ef3820057784d08633ba9e47d79ed41b13e56828
         run: |
           R CMD INSTALL .
           Rscript tools/write-scenes.R "$RUNNER_TEMP/scenes"
-          git clone --depth 1 https://github.com/allboa/scenespec "$RUNNER_TEMP/scenespec"
+          git clone https://github.com/allboa/scenespec "$RUNNER_TEMP/scenespec"
           cd "$RUNNER_TEMP/scenespec"
+          git checkout --detach "$SCENESPEC_SHA"
           npm ci --no-audit --no-fund
           node scripts/validate.js "$RUNNER_TEMP"/scenes/*.json

@@ -74,26 +74,47 @@ console.log("ok   level selection");
   const file = Uint8Array.from({ length: 100 }, (_, i) => i);
   let bodies = 0;
   let cancelled = 0;
+  let fetches = 0;
   const fake = (ignore) => async (url, opts) => {
+    fetches++;
     const [a, b] = /bytes=(\d+)-(\d+)/.exec(opts.headers.Range).slice(1).map(Number);
     await new Promise((r) => setTimeout(r, 5));
     const part = ignore ? file : file.slice(a, b + 1);
+    const sig = opts.signal;
     return {
       status: ignore ? 200 : 206, ok: true,
       body: { cancel: async () => { cancelled++; } },
-      arrayBuffer: async () => { bodies++; return part.slice().buffer; },
+      arrayBuffer: () => new Promise((res, rej) => {
+        bodies++;
+        const t = setTimeout(() => res(part.slice().buffer), 20);
+        if (sig) sig.addEventListener("abort", () => { clearTimeout(t); rej(sig.reason); });
+      }),
     };
   };
   const partial = rangeReader(fake(false));
-  assert.deepEqual([...await partial("u", 10, 3)], [10, 11, 12]);
+  assert.deepEqual(await Promise.all([partial("u", 10, 3), partial("u", 0, 1)]).then((r) => r.map((x) => [...x])), [[10, 11, 12], [0]]);
   bodies = 0;
+  fetches = 0;
   const whole = rangeReader(fake(true));
   const got = await Promise.all([whole("u", 0, 2), whole("u", 50, 2), whole("u", 98, 2)]);
   assert.deepEqual(got.map((x) => [...x]), [[0, 1], [50, 51], [98, 99]]);
   assert.deepEqual([...await whole("u", 20, 1)], [20]);
+  assert.equal(fetches, 1, "requests sent together wait for the first answer");
   assert.equal(bodies, 1, "the whole file is read once");
-  assert.equal(cancelled, 2, "the other whole-file bodies are cancelled");
+  assert.equal(cancelled, 0);
   await assert.rejects(whole("u", 99, 5), /has 100 bytes/);
+  // The whole file is read under the first tile's signal. When that tile
+  // is aborted, a tile still wanted fetches again instead of failing.
+  const race = rangeReader(fake(true));
+  const a = new AbortController();
+  const b = new AbortController();
+  const pa = race("v", 0, 2, a.signal);
+  const pb = race("v", 50, 2, b.signal);
+  setTimeout(() => a.abort(), 12);
+  const [ra, rb] = await Promise.allSettled([pa, pb]);
+  assert.equal(ra.status, "rejected");
+  assert.equal(rb.status, "fulfilled", String(rb.reason));
+  assert.deepEqual([...rb.value], [50, 51]);
   console.log("ok   range reader keeps a whole-file response");
 }
 {
@@ -164,6 +185,7 @@ try {
 const { createServer } = await import("node:http");
 const tiff = readFileSync(join(here, "..", "..", "inst", "extdata", "polar_3031.tif"));
 const tiled = JSON.parse(readFileSync(join(here, "tiled-scene.json"), "utf8"));
+const fine = JSON.parse(readFileSync(join(here, "tiled-scene-fine.json"), "utf8"));
 const pageFor = (sc, bl) => `<!DOCTYPE html><html><head><meta charset="utf-8"></head><body style="margin:0;height:100vh">
 <div data-aob-scene="s" style="height:100%"></div>
 <script type="application/json" id="s">${JSON.stringify(sc)}</script>
@@ -176,7 +198,7 @@ bad.layers.push({ id: "values", kind: "raster", grid: { crs: "EPSG:3031", extent
 bad.data.values = { format: "arrow-ipc-stream", blob: "values" };
 const pages = {
   "/tiled.html": pageFor(tiled.scene, tiled.blobs),
-  "/norange/tiled.html": pageFor(tiled.scene, tiled.blobs),
+  "/norange/tiled.html": pageFor(fine.scene, fine.blobs),
   "/bad.html": pageFor(bad, { ...tiled.blobs, values: blobs.values }),
 };
 const ranges = [];
@@ -244,13 +266,11 @@ try {
   const nr = await state("/norange/tiled.html");
   assert.equal(nr.status, "ready");
   assert.equal(nr.errors, undefined, nr.line);
-  assert.match(nr.tiles, /^sst: level [23], \d+ tiles?$/);
-  assert.ok(wholeFile >= 1, "the file was fetched");
-  const nTiles = Number(/(\d+) tiles?$/.exec(nr.tiles)[1]);
-  // Requests sent together each get a 200; the reader keeps one body and
-  // cancels the rest (the Node test above checks it reads one body).
-  assert.ok(wholeFile <= nTiles, `whole file sent ${wholeFile} times for ${nTiles} tiles`);
-  console.log(`ok   a server that ignores Range sends the file ${wholeFile} time(s) for ${nTiles} tile(s)`);
+  assert.equal(nr.tiles, "sst: level 0, 16 tiles");
+  // Requests sent together would each get a 200, so the renderer's first
+  // tiles must share one download: the server sends the whole file once.
+  assert.equal(wholeFile, 1, `whole file sent ${wholeFile} times for 16 tiles`);
+  console.log("ok   a server that ignores Range sends the file once for 16 tiles");
 
   const b = await state("/bad.html");
   assert.equal(b.status, "ready", "the rest of the scene still draws");

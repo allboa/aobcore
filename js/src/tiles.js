@@ -59,22 +59,49 @@ const meets = (fp, v) => !(fp[1] < v[0] || fp[0] > v[1] || fp[3] < v[2] || fp[2]
 // A range reader: fetchRange(url, offset, length, signal) resolves to the
 // bytes. A server that ignores Range answers 200 with the whole file; that
 // body is kept (per URL) and later tiles are cut from it, rather than
-// downloading the whole file again for every tile. fetchFn is for tests.
+// downloading the whole file again for every tile. Until the first response
+// for a URL shows whether the server honours Range, other requests to it
+// wait, so tiles asked for together do not each get the whole file.
+// fetchFn is for tests.
 export function rangeReader(fetchFn = (u, o) => fetch(u, o)) {
   const whole = new Map();
+  const probes = new Map();
   return async function fetchRange(url, offset, length, signal) {
     const cut = (all) => {
       if (offset + length > all.length) throw new Error(`${url} has ${all.length} bytes; tile needs ${offset + length}`);
       return all.subarray(offset, offset + length);
     };
-    if (whole.has(url)) return cut(await whole.get(url));
-    const res = await fetchFn(url, { headers: { Range: `bytes=${offset}-${offset + length - 1}` }, signal });
+    // Wait for a whole-file body another tile's request is reading. That
+    // read runs under the other tile's signal; if it fails or is aborted
+    // while this caller still wants its tile, start again.
+    const shared = async (p) => {
+      try {
+        return cut(await p);
+      } catch (err) {
+        if (signal && signal.aborted) throw err;
+        if (whole.get(url) === p) {
+          whole.delete(url);
+          probes.delete(url);
+        }
+        return fetchRange(url, offset, length, signal);
+      }
+    };
+    if (!whole.has(url) && probes.has(url)) await probes.get(url);
+    if (whole.has(url)) return shared(whole.get(url));
+    let answered = null;
+    if (!probes.has(url)) probes.set(url, new Promise((r) => { answered = r; }));
+    let res;
+    try {
+      res = await fetchFn(url, { headers: { Range: `bytes=${offset}-${offset + length - 1}` }, signal });
+    } finally {
+      if (answered) answered(); // waiters resume after whole is set below
+    }
     if (res.status === 206) return new Uint8Array(await res.arrayBuffer());
     if (res.ok) {
       if (whole.has(url)) {
         // Another tile's request is already reading the whole file.
         if (res.body && res.body.cancel) res.body.cancel().catch(() => {});
-        return cut(await whole.get(url));
+        return shared(whole.get(url));
       }
       const body = res.arrayBuffer().then((b) => new Uint8Array(b));
       whole.set(url, body);

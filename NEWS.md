@@ -15,8 +15,10 @@
 * The renderer keeps at most 256 idle decoded tiles, dropping the least
   recently drawn, aborts tile fetches the view no longer needs, chooses the
   level and tiles again when the page is resized, and, when a server
-  ignores `Range` and sends the whole COG, keeps that one response and cuts
-  later tiles from it rather than downloading the file per tile (#11).
+  ignores `Range` and sends the whole COG, downloads it once and cuts every
+  tile from it rather than downloading the file per tile (#11). Rendering
+  again into the same element stops the previous scene, and the handle
+  `aob.render()` returns has `finalize()`.
 * CI runs the scenespec validator on the scenes `tools/write-scenes.R`
   writes, including `cog_scene()` output (#11).
 * `gdal_vector_stream()`: `-nlt` in `options` counts as a native type only

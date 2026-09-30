@@ -91,8 +91,13 @@ function fmt(v, span) {
   return v.toLocaleString("en-US", { minimumFractionDigits: digits, maximumFractionDigits: digits });
 }
 
+// Teardown of the scene last rendered into each container.
+const teardowns = new WeakMap();
+
 export async function render(container, scene, options = {}) {
   injectStyle();
+  // Rendering again into a container replaces its scene: stop the old one.
+  if (teardowns.has(container)) teardowns.get(container)();
   const blobs = options.blobs || {};
   const warnings = [];
   const errors = [];
@@ -243,6 +248,7 @@ export async function render(container, scene, options = {}) {
     let ready = false;
     let frames = 0;
     let deck = null;
+    let finalized = false;
     const deckProps = {
       parent: canvasHost,
       views: deckView,
@@ -266,7 +272,7 @@ export async function render(container, scene, options = {}) {
       },
     };
     function update() {
-      if (!deck) return;
+      if (!deck || finalized) return;
       const layers = [];
       const view = globe ? null : currentView();
       built.forEach((B, i) => {
@@ -283,8 +289,23 @@ export async function render(container, scene, options = {}) {
     update();
     // The view's extent and pixel size change with the element's size, so
     // tiled rasters choose their level and tiles again on resize.
-    if (typeof ResizeObserver !== "undefined") new ResizeObserver(() => update()).observe(canvasHost);
-    else window.addEventListener("resize", () => update());
+    const onResize = () => update();
+    let observer = null;
+    if (typeof ResizeObserver !== "undefined") {
+      observer = new ResizeObserver(onResize);
+      observer.observe(canvasHost);
+    } else {
+      window.addEventListener("resize", onResize);
+    }
+    const finalize = () => {
+      if (finalized) return;
+      finalized = true;
+      if (observer) observer.disconnect();
+      else window.removeEventListener("resize", onResize);
+      deck.finalize();
+      if (teardowns.get(container) === finalize) teardowns.delete(container);
+    };
+    teardowns.set(container, finalize);
     const kib = (total / 1024).toFixed(0);
     showNotes = () => {
       const notes = errors.map((m) => `error: ${m}`).concat(warnings);
@@ -292,7 +313,8 @@ export async function render(container, scene, options = {}) {
       if (errors.length) container.dataset.aobErrors = String(errors.length);
     };
     showNotes();
-    const handle = { deck, scene, tables, decodeMs, bytes: total, warnings, errors };
+    // handle.finalize() stops the scene: resize tracking and the deck.
+    const handle = { deck, scene, tables, decodeMs, bytes: total, warnings, errors, finalize };
     container.dataset.aobInfo = `${kib} KiB Arrow decoded in ${decodeMs.toFixed(1)} ms`;
     return handle;
   } catch (err) {
