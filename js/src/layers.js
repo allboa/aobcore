@@ -246,10 +246,12 @@ function highlighter(id, kind, g, parts, rowOffset, numRows, L, coordinateSystem
     if (!any) return [];
     const on = (p) => rows.has(rowOffset + parts.feature[p]);
     const lines = (paths, key) => [
+      // Rounded joints and caps: mitred ones spike at sharp turns (a
+      // detailed coastline).
       new PathLayer({ ...base, id: `${id}-${key}-halo`, data: paths, getPath: (d) => d, positionFormat, _pathType: "open",
-                      getColor: colors.halo, getWidth: lineW + 3, widthUnits: "pixels" }),
+                      getColor: colors.halo, getWidth: lineW + 3, widthUnits: "pixels", jointRounded: true, capRounded: true }),
       new PathLayer({ ...base, id: `${id}-${key}`, data: paths, getPath: (d) => d, positionFormat, _pathType: "open",
-                      getColor: colors.line, getWidth: lineW, widthUnits: "pixels" }),
+                      getColor: colors.line, getWidth: lineW, widthUnits: "pixels", jointRounded: true, capRounded: true }),
     ];
     if (kind === "path") {
       const paths = [];

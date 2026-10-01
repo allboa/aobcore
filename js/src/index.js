@@ -27,8 +27,9 @@
 // data-aob-scene-serial (an integer) opens a websocket to R once the scene
 // is drawn (options.socket and options.serial; see link.js for protocol 1).
 // The layers R names in its hello become selectable: a click selects a
-// feature, Shift or Cmd click adds or removes one, a click on nothing or
-// Escape clears, and every change sends the whole selection; the settled
+// feature, Shift or Cmd click adds or removes one (and closes the popup),
+// a click on nothing or Escape clears (with Shift or Cmd held a click on
+// nothing keeps the selection), and every change sends the whole selection; the settled
 // camera is sent as a view message. R's reload reloads the page with its
 // camera kept (sessionStorage, under the page's path). A page without
 // options.socket (every embedded page) opens no socket and has no
@@ -174,8 +175,21 @@ function tokenColor(node, name, fallback) {
   return fallback;
 }
 
-// Where a served page keeps its camera across a reload from R.
-const cameraKey = () => `aob-camera:${new URL(".", location.href).pathname}`;
+// Where a served page keeps its camera across a reload from R: under a
+// hash of the page's path (which holds the server's token), not the path.
+function hashText(s) {
+  let h1 = 0xdeadbeef;
+  let h2 = 0x41c6ce57;
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    h1 = Math.imul(h1 ^ c, 2654435761);
+    h2 = Math.imul(h2 ^ c, 1597334677);
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  return (h2 >>> 0).toString(16).padStart(8, "0") + (h1 >>> 0).toString(16).padStart(8, "0");
+}
+const cameraKey = () => `aob-camera:${hashText(new URL(".", location.href).pathname)}`;
 function readCamera() {
   try {
     const s = sessionStorage.getItem(cameraKey());
@@ -603,11 +617,14 @@ export async function render(container, scene, options = {}) {
       const y = cy - r.top;
       const info = deck.pickObject({ x, y, radius: deck.props.pickingRadius || 0 });
       const f = featureAt(info);
-      if (f && triggerOf(f.layer, { srcEvent }) === "select") showFeature(f, x, y, "select", true);
+      const multi = selectable.size > 0 && !!(srcEvent && (srcEvent.shiftKey || srcEvent.metaKey));
+      // A Shift or Cmd click edits the selection: no popup over the next
+      // feature to pick.
+      if (multi) popup.hide();
+      else if (f && triggerOf(f.layer, { srcEvent }) === "select") showFeature(f, x, y, "select", true);
       else if (!f) popup.hide();
       if (selectable.size) {
         const hit = f && selectable.has(f.layer.id) ? { layer: f.layer.id, row: f.row } : null;
-        const multi = !!(srcEvent && (srcEvent.shiftKey || srcEvent.metaKey));
         selectionChanged(clickSelection(selection, hit, multi), pointAt(x, y));
       }
     };

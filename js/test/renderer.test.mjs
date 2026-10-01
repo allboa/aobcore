@@ -59,8 +59,8 @@ import { decodeTile, decodeSamples, jpegStream, samplesFromRGBA, colorizeRGB, en
 import { selectLevel, rangeReader, tilesToEvict } from "../src/tiles.js";
 import { cellText } from "../src/popup.js";
 import { stopsGradient, rangeLabel, rgbaCss } from "../src/legend.js";
-import { socketChannel, socketUrl, RETRY_MAX_MS } from "../src/channel.js";
-import { linkToR, utf8Length, NOT_CONNECTED } from "../src/link.js";
+import { socketChannel, socketUrl, RETRY_MAX_MS, STABLE_MS } from "../src/channel.js";
+import { linkToR, utf8Length, NOT_CONNECTED, TOO_MANY } from "../src/link.js";
 import { selectionState, clickSelection, selectionText } from "../src/selection.js";
 import { rStandIn } from "./ws-server.mjs";
 
@@ -305,9 +305,57 @@ console.log("ok   level selection");
     w.onmessage({ data: "[1]" });
     w.onmessage({ data: JSON.stringify({ type: "reload", scene: 2 }) });
     assert.deepEqual(got, [{ type: "reload", scene: 2 }], "only objects with a type reach listeners");
+    // An open alone does not shorten the delay: R may accept and close at
+    // once (1013 too many pages, 1011 an error after hello).
     w.onclose({ code: 1001 });
-    assert.deepEqual(timers.delays(), [1000], "an open resets the backoff");
-    timers.advance(1000);
+    assert.deepEqual(timers.delays(), [RETRY_MAX_MS], "an open alone does not reset the backoff");
+    ch.close();
+    assert.deepEqual(timers.delays(), []);
+    const fresh = () => {
+      const m0 = made.length;
+      const c = socketChannel("ws://h/t/ws", { WebSocket: FakeWS, timers, onState: () => {} });
+      return [c, () => made[made.length - 1], m0];
+    };
+    {
+      const [c, cur] = fresh();
+      for (const code of [1013, 1011]) {
+        const seen = [];
+        for (let i = 0; i < 7; i++) {
+          cur().onopen();
+          if (code === 1011) {
+            c.resetBackoff(); // R said hello, then closed within STABLE_MS
+            timers.advance(STABLE_MS - 1);
+          }
+          cur().onclose({ code });
+          seen.push(timers.delays().filter((d) => d !== STABLE_MS)[0]);
+          timers.advance(seen[seen.length - 1]);
+        }
+        if (code === 1013) assert.deepEqual(seen, [1000, 2000, 4000, 8000, 16000, RETRY_MAX_MS, RETRY_MAX_MS], "1013 backs off");
+        else assert.deepEqual(seen, [RETRY_MAX_MS, RETRY_MAX_MS, RETRY_MAX_MS, RETRY_MAX_MS, RETRY_MAX_MS, RETRY_MAX_MS, RETRY_MAX_MS], "1011 after hello keeps backing off");
+      }
+      // Open, R's hello, and STABLE_MS open: the next retry is 1 s again.
+      cur().onopen();
+      c.resetBackoff();
+      timers.advance(STABLE_MS);
+      cur().onclose({ code: 1001 });
+      assert.deepEqual(timers.delays(), [1000]);
+      c.close();
+    }
+    {
+      const [c, cur] = fresh();
+      const seen = [];
+      for (let i = 0; i < 4; i++) {
+        cur().onopen();
+        c.resetBackoff();
+        timers.advance(100);
+        cur().onclose({ code: 1011 });
+        seen.push(timers.delays()[0]);
+        timers.advance(seen[seen.length - 1]);
+      }
+      assert.deepEqual(seen, [1000, 2000, 4000, 8000], "1011 right after hello backs off");
+      c.close();
+    }
+    socketChannel("ws://h/t/ws", { WebSocket: FakeWS, timers, onState: (s, i) => states.push([s, i.delay || i.code || null]) });
     for (const code of [1003, 1007, 1008, 4000]) {
       const before = made.length;
       made[made.length - 1].onclose({ code, reason: "r" });
@@ -319,8 +367,7 @@ console.log("ok   level selection");
         assert.equal(made.length, before + 1);
       }
     }
-    ch.close();
-    console.log("ok   socket channel: backoff 1 s doubling to 30 s, reset on open; 1003, 1007, 1008 and 4000 are final");
+    console.log("ok   socket channel: backoff 1 s doubling to 30 s, reset only after R's hello and 5 s open; 1003, 1007, 1008 and 4000 are final");
   }
 
   // Protocol 1 from the page's side.
@@ -389,8 +436,12 @@ console.log("ok   level selection");
     assert.equal(sent.shift().type, "view");
     link.lost("refused", { code: 4000, reason: "protocol" });
     assert.equal(page.notes[page.notes.length - 1], "Not connected to R (this page needs a newer aobcore): selections stay in this page");
+    listener({ type: "reload", scene: 3 });
+    assert.equal(page.reloaded, null, "no reload at the page's own serial");
     listener({ type: "reload", scene: 4 });
     assert.equal(page.reloaded, 4);
+    link.lost("closed", { code: 1013, delay: 1000 });
+    assert.equal(page.notes[page.notes.length - 1], TOO_MANY);
     assert.equal(utf8Length("a\u00e9\u20ac\ud83d\ude00"), 1 + 2 + 3 + 4);
     console.log("ok   protocol 1: hello first, whole selections, settled views, the size cap, notes and reload");
   }
@@ -412,7 +463,9 @@ console.log("ok   level selection");
     sel.add("b", 5);
     sel.keepLayers(new Set(["b"]));
     assert.deepEqual(sel.items(), [{ layer: "b", rows: [5] }]);
-    assert.equal(clickSelection(sel, null, true), "click");
+    assert.equal(clickSelection(sel, null, true), "toggle", "Shift or Cmd on nothing keeps the selection");
+    assert.deepEqual(sel.items(), [{ layer: "b", rows: [5] }]);
+    assert.equal(clickSelection(sel, null, false), "click");
     assert.equal(sel.size, 0);
     assert.equal(sel.clear(), false);
     console.log("ok   selection: click selects one, Shift or Cmd adds and removes, a click on nothing clears");
@@ -1280,6 +1333,11 @@ ${keys === null ? "" : `<script type="application/json" data-aob-blob-keys data-
     assert.ok(hlIds.some((id) => id.startsWith("stations--0-sel")) && hlIds.some((id) => id.startsWith("zones--0-sel")), `highlight layers: ${hlIds}`);
     s = await click(x0, y0, "Shift");
     assert.deepEqual([s.trigger, s.items], ["toggle", [{ layer: "stations", rows: [2] }, { layer: "zones", rows: [0] }]], "Shift removes");
+    assert.ok(await page.evaluate(() => document.querySelector(".aob-popup").hidden), "a Shift click opens no popup");
+    s = await click(xe, ye, "Shift");
+    assert.deepEqual([s.trigger, s.items], ["toggle", [{ layer: "stations", rows: [2] }, { layer: "zones", rows: [0] }]],
+      "a Shift click on nothing keeps the selection");
+    assert.ok(Array.isArray(s.at), "and says where");
     s = await click(xe, ye);
     assert.deepEqual([s.trigger, s.items], ["click", []], "a click on nothing clears");
     assert.ok(Array.isArray(s.at), "a click on nothing still says where");
@@ -1292,7 +1350,7 @@ ${keys === null ? "" : `<script type="application/json" data-aob-blob-keys data-
     assert.equal(await page.evaluate(() => document.querySelector("div[data-aob-scene]").dataset.aobSelection), undefined);
     const seqs = r.messages.map((m) => m.msg.seq).filter((q) => q !== undefined);
     assert.deepEqual(seqs, [...seqs].sort((a, b) => a - b), "seq counts up");
-    console.log("ok   selection mode in EPSG:3031: click, Shift and Cmd toggle, a click on nothing and Escape clear");
+    console.log("ok   selection mode in EPSG:3031: click, Shift and Cmd toggle (no popup), a click on nothing and Escape clear, Shift on nothing keeps");
 
     // A pan sends one view, after it settles.
     await page.waitForTimeout(600);

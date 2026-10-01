@@ -64,9 +64,13 @@ export function selectionState() {
 // sends (every click sends one, so R also hears where a click on nothing
 // was). `hit` is {layer, row} or null; `multi`
 // is Shift or Cmd held. A click on a feature selects it and only it; with
-// Shift or Cmd it adds or removes it; a click on nothing clears.
+// Shift or Cmd it adds or removes it; a click on nothing clears, except
+// with Shift or Cmd, when the selection is kept (a slipped Shift click
+// does not lose a multiple selection) and the message is a "toggle" that
+// changed nothing.
 export function clickSelection(sel, hit, multi) {
   if (!hit) {
+    if (multi) return "toggle";
     sel.clear();
     return "click";
   }

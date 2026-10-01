@@ -5,7 +5,11 @@
 // socketChannel(url, opts) opens the socket and keeps it open: when it
 // closes it retries after a delay that starts at 1 s and doubles to 30 s,
 // for as long as the page is open, except after a close code that says
-// retrying cannot help (FINAL_CODES). opts.onState(state, info) hears
+// retrying cannot help (FINAL_CODES). Opening alone does not shorten the
+// delay again, since R can accept a socket and close it at once (too many
+// pages, 1013; an error, 1011): the user of the channel calls
+// resetBackoff() once R has answered, and the delay goes back to 1 s only
+// if the socket then stays open STABLE_MS. opts.onState(state, info) hears
 // "connecting", "open", "closed" (will retry; info.delay in ms) and
 // "refused" (will not; info.code and info.reason). opts.WebSocket and
 // opts.timers ({setTimeout, clearTimeout}) are for tests.
@@ -15,6 +19,7 @@
 export const FINAL_CODES = [1003, 1007, 1008, 4000];
 export const RETRY_FIRST_MS = 1000;
 export const RETRY_MAX_MS = 30000;
+export const STABLE_MS = 5000;
 
 // The websocket URL of `rel` (for example "ws") relative to a page URL:
 // ws: for http:, wss: for https:.
@@ -35,6 +40,11 @@ export function socketChannel(url, opts = {}) {
   let stopped = false;
   let delay = RETRY_FIRST_MS;
   let retry = null;
+  let stable = null;
+  const clearStable = () => {
+    if (stable !== null) timers.clearTimeout(stable);
+    stable = null;
+  };
 
   const connect = () => {
     retry = null;
@@ -52,7 +62,6 @@ export function socketChannel(url, opts = {}) {
     sock.onopen = () => {
       if (ws !== sock) return;
       open = true;
-      delay = RETRY_FIRST_MS;
       onState("open", {});
     };
     sock.onmessage = (e) => {
@@ -70,6 +79,7 @@ export function socketChannel(url, opts = {}) {
       if (ws !== sock) return;
       ws = null;
       open = false;
+      clearStable();
       if (stopped) return;
       const code = e && e.code;
       const reason = (e && e.reason) || "";
@@ -96,6 +106,17 @@ export function socketChannel(url, opts = {}) {
       ws.send(typeof msg === "string" ? msg : JSON.stringify(msg));
       return true;
     },
+    // R answered: if the socket is still open STABLE_MS from now, the next
+    // retry starts again from 1 s.
+    resetBackoff() {
+      clearStable();
+      if (!open || !ws) return;
+      const s = ws;
+      stable = timers.setTimeout(() => {
+        stable = null;
+        if (ws === s && open) delay = RETRY_FIRST_MS;
+      }, STABLE_MS);
+    },
     // Calls f(message) for each message; returns a function that removes it.
     onMessage(f) {
       listeners.push(f);
@@ -106,6 +127,7 @@ export function socketChannel(url, opts = {}) {
     },
     close() {
       stopped = true;
+      clearStable();
       if (retry !== null) timers.clearTimeout(retry);
       retry = null;
       if (ws) {

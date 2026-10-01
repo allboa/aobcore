@@ -23,6 +23,7 @@ export const VIEW_MIN_GAP_MS = 250; // at most four a second
 export const DEFAULT_MAX_MESSAGE = 1048576;
 
 export const NOT_CONNECTED = "Not connected to R: selections stay in this page";
+export const TOO_MANY = "Not connected to R (too many pages are connected to R; retrying): selections stay in this page";
 
 // Why a close that will not be retried happened, for the note.
 const REFUSED = {
@@ -109,6 +110,7 @@ export function linkToR(channel, page, opts = {}) {
       if (typeof msg.max_message === "number" && msg.max_message > 0) maxMessage = msg.max_message;
       page.setSelectable(Array.isArray(msg.select) ? msg.select.filter((s) => typeof s === "string") : []);
       page.state("ready");
+      if (channel.resetBackoff) channel.resetBackoff();
       // On reconnecting, the whole selection again (R may have lost it);
       // on the first hello only when the viewer selected before it came.
       const items = page.selection();
@@ -117,7 +119,9 @@ export function linkToR(channel, page, opts = {}) {
       if (viewTimer !== null) timers.clearTimeout(viewTimer);
       sendView();
     } else if (msg.type === "reload") {
-      page.reload(msg.scene);
+      // Only for a newer scene: a reload at this page's own serial would
+      // reload it for ever.
+      if (Number.isInteger(msg.scene) && msg.scene > page.serial) page.reload(msg.scene);
     }
   });
 
@@ -133,7 +137,7 @@ export function linkToR(channel, page, opts = {}) {
       ready = false;
       if (viewTimer !== null) timers.clearTimeout(viewTimer);
       viewTimer = null;
-      linkNote = state === "refused" ? refusedNote(info.code, info.reason) : NOT_CONNECTED;
+      linkNote = state === "refused" ? refusedNote(info.code, info.reason) : info && info.code === 1013 ? TOO_MANY : NOT_CONNECTED;
       showNote();
       page.state(state);
     },
