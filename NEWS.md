@@ -5,6 +5,13 @@
   allboa/design decision 0004 names as the default for in-memory data.
   aobview uses it before reprojecting with PROJ.
 
+* `write_scene_html()` encodes blobs as base64 about five times faster and
+with about a third of the peak memory: a 32 MB blob took 8.2 s and 1.2 GB
+(process high-water mark) and now takes 1.6 s and 0.4 GB. The text is
+built a chunk at a time through raw bytes instead of one R string per
+character. This was most of the time and memory of an embedded view of
+a few million vertices.
+
 * An R session that ended with a page's websocket connected crashed (exit
   status 139), at the end of a script or on an error: the exit finalizer
   that stops the servers closed each socket, and httpuv 1.6.17 may already
