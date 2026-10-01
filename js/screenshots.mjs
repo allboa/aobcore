@@ -20,6 +20,14 @@
 // each page is opened at http://127.0.0.1:<port>/<name>/ and written as
 // <name>-light.png and <name>-dark.png, and the requests and response sizes
 // are printed.
+//
+//   node screenshots.mjs --url <name> <url> [outdir]
+//
+// One page already being served (for example by aobcore's serve_scene(),
+// as tools/serve-screenshots.R does), written as <name>-light.png and
+// <name>-dark.png. Every response is printed as "response <status> <bytes>
+// <range> <path>", so a caller can check what was fetched. "done" is
+// printed last.
 import { chromium } from "playwright-core";
 import { readdirSync, mkdirSync, existsSync, statSync, openSync, readSync, closeSync, createReadStream } from "node:fs";
 import { createServer } from "node:http";
@@ -29,9 +37,11 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 const here = dirname(fileURLToPath(import.meta.url));
 const argv = process.argv.slice(2);
 const serve = argv[0] === "--serve";
-const [inDir, outArg] = serve ? argv.slice(1) : argv;
-if (!inDir) {
-  console.error("usage: node screenshots.mjs [--serve] <dir-with-html> [outdir]");
+const urlMode = argv[0] === "--url";
+const [inDir, outArg] = serve ? argv.slice(1) : urlMode ? [argv[2], argv[3]] : argv;
+if (!inDir || (urlMode && !argv[1])) {
+  console.error("usage: node screenshots.mjs [--serve] <dir-with-html> [outdir]\n" +
+    "       node screenshots.mjs --url <name> <url> [outdir]");
   process.exit(2);
 }
 const outDir = resolve(outArg || join(here, "..", "tools", "screenshots"));
@@ -45,8 +55,12 @@ let failed = 0;
 let server = null;
 let pageUrl = (f) => pathToFileURL(resolve(inDir, f)).href;
 let pageName = (f) => basename(f, ".html");
-let pages = readdirSync(inDir).filter((f) => f.endsWith(".html")).sort();
+let pages = urlMode ? [argv[1]] : readdirSync(inDir).filter((f) => f.endsWith(".html")).sort();
 const served = [];
+if (urlMode) {
+  pageUrl = () => inDir;
+  pageName = (n) => n;
+}
 if (serve) {
   const root = resolve(inDir);
   pages = readdirSync(root).filter((d) => existsSync(join(root, d, "index.html"))).sort();
@@ -95,6 +109,14 @@ for (const f of pages) {
     page.on("console", (m) => logs.push(`${m.type()}: ${m.text()}`));
     page.on("pageerror", (e) => logs.push(`pageerror: ${e.message}`));
     served.length = 0;
+    const responses = [];
+    if (urlMode) {
+      page.on("requestfinished", async (rq) => {
+        const r = await rq.response();
+        const n = r ? (await r.body().catch(() => Buffer.alloc(0))).length : 0;
+        responses.push(`${r ? r.status() : "-"} ${n} ${rq.headers().range || "-"} ${new URL(rq.url()).pathname}`);
+      });
+    }
     await page.goto(pageUrl(f));
     const status = await page
       .waitForFunction(() => {
@@ -130,12 +152,17 @@ for (const f of pages) {
     console.log(`${status === "ready" ? "ok  " : "FAIL"} ${out} (${status}; ${info})`);
     logs.forEach((l) => console.log(`     ${l}`));
     if (serve) served.forEach((l) => console.log(`     served ${l}`));
+    if (urlMode) {
+      await page.waitForTimeout(200);
+      responses.forEach((l) => console.log(`     response ${l}`));
+    }
     if (status !== "ready" || errors.length) failed++;
     await ctx.close();
   }
 }
 await browser.close();
 if (server) server.close();
+console.log("done");
 process.exit(failed ? 1 : 0);
 
 // In the page: the screen position of the first feature of the first point

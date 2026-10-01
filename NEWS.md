@@ -1,5 +1,42 @@
 # aobcore 0.0.0.9000
 
+* `serve_scene()` serves a scene from a local HTTP server (decision 0006 in
+  allboa/design; #33, #34, #35), with httpuv in Suggests. The browser
+  reads a local COG added with `scene_add_tiled_raster(embed = FALSE)` by
+  HTTP range requests instead of carrying its bytes in the page.
+  - Routes under `http://127.0.0.1:<port>/<token>/`: the linked page, the
+    renderer, `blob/<encoded key>` (content type by the data reference's
+    format) and `files/<data id>/<base name>` for registered files only.
+    `/<token>` redirects to `/<token>/`; anything else is 404, methods
+    other than `GET` and `HEAD` are 405, and there are no CORS headers.
+  - Files answer one `bytes=` range with 206 (`a-b`, `a-`, `-n`); past the
+    end, several ranges, malformed or longer than
+    `getOption("aobcore.serve_range_max", 64 * 2^20)` is 416. A file
+    changed since registration answers 409 and a missing one 404, each
+    with a warning; `serve_scene()` on such a file is an error.
+  - The served copy of the scene gives each registered file whose `url`
+    was defaulted the relative URL `files/<data id>/<base name>`, so a
+    served page never holds the local path. A cog with a relative `url`
+    and neither a registered file nor embedded tiles is an error, as are
+    the blob keys `"."` and `".."`.
+  - Loopback only, a random 128-bit path token from `/dev/urandom` (with a
+    weaker fallback, announced by a message, where it is missing) and a
+    random port from separate bytes; neither touches `.Random.seed`. A
+    `Host` other than `127.0.0.1:<port>` or `localhost:<port>` is refused
+    (403, with a warning naming the option) unless listed in
+    `getOption("aobcore.serve_hosts")`.
+  - The `"aob_server"` handle has `url`, `port`, `token` and an idempotent
+    `stop()`, which also deletes files given in `own`. `serve_scene(scene,
+    server = srv)` replaces the scene on a running server with the same
+    URL. `scene_servers()` lists running servers and
+    `stop_scene_servers()` stops them; all stop at session end and when
+    aobcore is unloaded. A non-interactive call warns that the server only
+    answers while R is idle.
+  - `write_scene_html()`'s warning for a registered file now names
+    `serve_scene()`. The renderer stops a render that was replaced while
+    its data loaded. `tools/serve-screenshots.R` draws the polar 3031 COG
+    through `serve_scene()` and checks that every tile came as a 206 range.
+
 * First steps of the local server transport (decision 0006 in
   allboa/design; #30, #31, #32). Nothing is served yet; embedded pages are
   byte-identical to before, blob order included.

@@ -50,7 +50,7 @@ R (see the allboa/scenespec validator).
 A tiled raster added with \code{embed = FALSE} from a local COG (see
 \code{\link[=scene_add_tiled_raster]{scene_add_tiled_raster()}}) has no tile bytes in the page and a \verb{file://}
 URL a page opened from disk cannot range-request, so writing it warns
-(unless its \code{url} was given explicitly); serve the page over HTTP or
+(unless its \code{url} was given explicitly); serve it with \code{\link[=serve_scene]{serve_scene()}} or
 embed the layer.
 }
 \examples{

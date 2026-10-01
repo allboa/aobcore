@@ -208,6 +208,8 @@ export async function render(container, scene, options = {}) {
     // Arrow tables are read whole; a cog is read tile by tile by its layers.
     const ids = Object.keys(scene.data).filter((id) => scene.data[id].format !== "cog");
     const bytes = await Promise.all(ids.map((id) => loadBytes(scene.data[id], id, blobs, blobBase, loading.signal)));
+    // Rendered again while loading: this render stops here.
+    if (loading.signal.aborted) throw loading.signal.reason;
     let total = 0;
     ids.forEach((id, i) => {
       total += bytes[i].length;

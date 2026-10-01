@@ -451,7 +451,7 @@ test_that("embed = FALSE registers a local COG for serving", {
   ## file:// URL as today.
   out <- tempfile(fileext = ".html")
   on.exit(unlink(out))
-  expect_warning(write_scene_html(s, file = out), "cannot read the local COG of `sst`.*file:///.*embed = TRUE")
+  expect_warning(write_scene_html(s, file = out), "cannot read the local COG of `sst`.*file:///.*serve_scene\\(\\).*embed = TRUE")
   page <- readChar(out, file.size(out), useBytes = TRUE)
   expect_match(page, "\"url\":\"file:///", fixed = TRUE)
   expect_false(grepl("data-aob-blob=\"sst@", page, fixed = TRUE))
