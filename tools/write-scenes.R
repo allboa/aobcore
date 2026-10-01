@@ -250,6 +250,8 @@ writeLines(scene_json(lp), file.path(out, "polar-legends-popups.json"))
 # js/screenshots.mjs --serve can draw it over loopback HTTP:
 # served/<name>/index.html, aob-renderer.min.js, blob/<encoded key> and
 # files/<data id>/<base name>. The scene document is the same as embedded.
+# Blob file names are encoded as the renderer's encodeURIComponent() does
+# (aobcore:::url_component()), since the stand-in matches paths raw.
 #   served-polar-cog-3031        the 3031 COG not embedded (embed = FALSE),
 #                                its tiles read by range from files/cog/
 #   served-polar-cog-3031-blobs  the polar-cog-3031 scene with embedded tile
@@ -263,7 +265,7 @@ write_served <- function(s, name, title) {
   writeLines(c("<!DOCTYPE html>", page), con, useBytes = TRUE)
   close(con)
   file.copy(system.file("renderer", "aob-renderer.min.js", package = "aobcore"), d, overwrite = TRUE)
-  for (k in names(blobs)) writeBin(blobs[[k]], file.path(d, "blob", utils::URLencode(k, reserved = TRUE)))
+  for (k in names(blobs)) writeBin(blobs[[k]], file.path(d, "blob", aobcore:::url_component(k)))
   for (id in names(attr(s, "files"))) {
     dir.create(file.path(d, "files", id), recursive = TRUE, showWarnings = FALSE)
     file.copy(attr(s, "files")[[id]]$path, file.path(d, "files", id), overwrite = TRUE)

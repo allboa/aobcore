@@ -34,7 +34,8 @@
 //    range, an unlisted tile is read by range as before, and a missing blob
 //    with no base is still an error (with a base, one that names the 404,
 //    and a network failure names the key and URL); rendering again into
-//    the same element aborts the first render's blob fetches.
+//    the same element aborts the first render's blob fetches. A listed tile
+//    blob that answers 404 or has the wrong length is a layer error.
 // Also in Node: the range reader keeps a whole-file (200) response, and the
 // tile cache evicts least recently used idle tiles.
 // Set CHROMIUM_PATH to pick a browser; SKIP_BROWSER=1 runs only part 1.
@@ -782,6 +783,10 @@ ${keys === null ? "" : `<script type="application/json" data-aob-blob-keys data-
     ranged: [linked(tiled.scene, Object.keys(meshBlobs)), meshBlobs],
     nobase: [linked(rasterScene, null, null), {}],
     gone: [linked(rasterScene, []), {}],
+    // Listed tile blobs the server does not have, or has with the wrong length.
+    tilegone: [linked(tiled.scene, [...Object.keys(meshBlobs), ...Object.keys(tileBlobs)]), meshBlobs],
+    tileshort: [linked(tiled.scene, [...Object.keys(meshBlobs), ...Object.keys(tileBlobs)]),
+      { ...meshBlobs, ...Object.fromEntries(Object.entries(tileBlobs).map(([k, v]) => [k, v.subarray(0, v.length - 1)])) }],
     // A blob base no server answers: a network failure, not a status.
     netfail: [linked(rasterScene, [odd], "http://127.0.0.1:1/blob/"), {}],
   };
@@ -916,6 +921,16 @@ ${keys === null ? "" : `<script type="application/json" data-aob-blob-keys data-
     assert.equal(x.status, "error");
     assert.match(x.line, /data values: blob "v\/a@b\+c d" was not delivered \(blob\/v%2Fa%40b%2Bc%20d returned 404\)/);
     console.log("ok   a blob the server does not have is an error naming the 404");
+
+    for (const [site, msg] of [["tilegone", /blob "sst@\d+\+\d+" was not delivered \(blob\/sst%40\d+%2B\d+ returned 404\)/],
+      ["tileshort", /got (\d+) bytes, expected \d+/]]) {
+      const tg = await state(`/${site}/`);
+      assert.equal(tg.status, "ready", `${site}: the rest of the scene still draws`);
+      assert.equal(tg.errors, "1", tg.line);
+      assert.match(tg.line, new RegExp(`error: layer sst: tile \\d+/\\d+/\\d+: .*${msg.source}`));
+      assert.equal(seen.range.filter((x) => x.startsWith(`${site}:`)).length, 0, `${site}: no range fallback`);
+    }
+    console.log("ok   a listed tile blob that is missing (404) or the wrong length is a layer error");
 
     const nf = await state("/netfail/");
     assert.equal(nf.status, "error");

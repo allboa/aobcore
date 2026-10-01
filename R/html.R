@@ -15,7 +15,7 @@
 #' A tiled raster added with `embed = FALSE` from a local COG (see
 #' [scene_add_tiled_raster()]) has no tile bytes in the page and a `file://`
 #' URL a page opened from disk cannot range-request, so writing it warns
-#' (unless its `url` was given explicitly); serve the page over HTTP or
+#' (unless its `url` was given explicitly); serve it with [serve_scene()] or
 #' embed the layer.
 #'
 #' @param scene A scene from [scene()] and [scene_add_data()] or
@@ -115,6 +115,11 @@ scene_page <- function(scene, blobs, title, theme, mode = c("inline", "linked"))
       htmltools::tags$meta(charset = "utf-8"),
       htmltools::tags$meta(name = "viewport", content = "width=device-width, initial-scale=1"),
       htmltools::tags$title(title),
+      ## A served page asks the server for no favicon (it would be a 404
+      ## outside the token).
+      if (linked) htmltools::tags$link(rel = "icon", href = "data:,"),
+      ## Nor does it send the token in a Referer to anything it links to.
+      if (linked) htmltools::tags$meta(name = "referrer", content = "no-referrer"),
       htmltools::tags$style(htmltools::HTML(page_css))
     ),
     htmltools::tags$body(
@@ -140,7 +145,7 @@ warn_unfetchable_files <- function(scene) {
     warning("The page cannot read the local COG of ",
             paste0("`", ids, "`", collapse = ", "), " from disk (",
             paste0("\"", vapply(ids, function(id) scene$data[[id]]$url, ""), "\"", collapse = ", "),
-            "): serve the page over HTTP or add the layer with `embed = TRUE`.",
+            "): serve the scene with serve_scene() or add the layer with `embed = TRUE`.",
             call. = FALSE)
   }
   invisible()
