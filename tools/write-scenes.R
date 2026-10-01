@@ -30,6 +30,9 @@
 #                popups (stations on select, showing text, ISO dates and
 #                numbers; sectors on point). js/screenshots.mjs also takes
 #                it with the first station's popup open.
+#   served/*     served pages (decision 0006) in the server's route layout,
+#                for js/screenshots.mjs --serve; their scenes are written
+#                as served-*.json beside the others.
 library(aobcore)
 library(nanoarrow)
 
@@ -240,5 +243,43 @@ lp <- scene_add_legend(lp, "stations", "Station elevation (m)",
 stopifnot(identical(lp$version, "0.5"))
 write_scene_html(lp, file = file.path(out, "polar-legends-popups.html"), title = "Legends and popups")
 writeLines(scene_json(lp), file.path(out, "polar-legends-popups.json"))
+
+# ---- served pages (decision 0006) ------------------------------------------
+# The linked page a local server answers (no blob scripts, the renderer by
+# src, a blob base), written out in the server's route layout so that
+# js/screenshots.mjs --serve can draw it over loopback HTTP:
+# served/<name>/index.html, aob-renderer.min.js, blob/<encoded key> and
+# files/<data id>/<base name>. The scene document is the same as embedded.
+#   served-polar-cog-3031        the 3031 COG not embedded (embed = FALSE),
+#                                its tiles read by range from files/cog/
+#   served-polar-cog-3031-blobs  the polar-cog-3031 scene with embedded tile
+#                                bytes, each tile fetched from blob/<key>
+write_served <- function(s, name, title) {
+  d <- file.path(out, "served", name)
+  dir.create(file.path(d, "blob"), recursive = TRUE, showWarnings = FALSE)
+  blobs <- scene_blobs(s)
+  page <- aobcore:::scene_page(s, blobs, title = title, theme = "auto", mode = "linked")
+  con <- file(file.path(d, "index.html"), open = "wb")
+  writeLines(c("<!DOCTYPE html>", page), con, useBytes = TRUE)
+  close(con)
+  file.copy(system.file("renderer", "aob-renderer.min.js", package = "aobcore"), d, overwrite = TRUE)
+  for (k in names(blobs)) writeBin(blobs[[k]], file.path(d, "blob", utils::URLencode(k, reserved = TRUE)))
+  for (id in names(attr(s, "files"))) {
+    dir.create(file.path(d, "files", id), recursive = TRUE, showWarnings = FALSE)
+    file.copy(attr(s, "files")[[id]]$path, file.path(d, "files", id), overwrite = TRUE)
+  }
+  writeLines(scene_json(s), file.path(out, paste0(name, ".json")))
+}
+f3031 <- system.file("extdata", "polar_3031.tif", package = "aobcore")
+sv <- scene("EPSG:3031")
+sv <- scene_add_tiled_raster(sv, "cog", cog_plan(f3031, "EPSG:3031"), palette = "ocean",
+                             embed = FALSE, url = "files/cog/polar_3031.tif", label = "polar_3031.tif")
+sv <- scene_add_vector(sv, "coast", gdal_vector_stream(
+  system.file("extdata", "coastline_south_40s.geojson", package = "aobcore"), "EPSG:3031",
+  densify = 0.25), stroke = c(60, 66, 72, 255), stroke_width_px = 1, label = "Coastline (50m)")
+stopifnot(length(attr(sv, "files")) == 1L, !any(grepl("@", names(scene_blobs(sv)))))
+write_served(sv, "served-polar-cog-3031", "polar_3031.tif")
+write_served(cog_scene(f3031, "EPSG:3031", palette = "ocean"), "served-polar-cog-3031-blobs",
+             "polar_3031.tif")
 
 cat("wrote", out, "\n")

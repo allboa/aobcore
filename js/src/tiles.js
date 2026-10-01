@@ -5,8 +5,9 @@
 // the view CRS. Here the renderer picks a level for the current zoom (the
 // plan's selection rule), keeps the tiles whose footprint meets the
 // viewport, gets each tile's bytes (an embedded blob keyed
-// "<source>@<offset>+<length>" when the page carries one, else an HTTP range
-// request to the cog URL), decodes them and draws each tile's mesh slice
+// "<source>@<offset>+<length>" when the page carries one, the same blob
+// from the server's blob base when a served page lists that key, else an
+// HTTP range request to the cog URL), decodes them and draws each tile's mesh slice
 // with the tile as its texture. A layer colours one band through a palette,
 // or (0.3) draws three bands as red, green and blue, with an optional alpha
 // band (rgb). jpeg tiles (0.3) are decoded by the browser (jpeg.js).
@@ -216,7 +217,9 @@ export function buildTiledRaster(L, ctx) {
       const b = blobs[key];
       bytes = typeof b === "string" ? decodeBase64(b.trim()) : b instanceof Uint8Array ? b : new Uint8Array(b);
     } else {
-      bytes = await fetchRange(url, t.byte_offset, t.byte_length, signal);
+      // A tile blob the server has (a served page), else a range request.
+      const served = ctx.servedBlob ? ctx.servedBlob(key, `tile ${tile.key}`, signal) : null;
+      bytes = served ? await served : await fetchRange(url, t.byte_offset, t.byte_length, signal);
     }
     if (signal.aborted) throw signal.reason;
     if (bytes.length !== t.byte_length) throw new Error(`tile ${tile.key}: got ${bytes.length} bytes, expected ${t.byte_length}`);

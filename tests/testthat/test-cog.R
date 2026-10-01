@@ -288,7 +288,7 @@ test_that("a COG the browser cannot fetch is refused unless embedded", {
   expect_identical(cog$url, m)
   plan <- cog_plan(cog, "EPSG:3031", levels = 3)
   expect_error(scene_add_tiled_raster(scene("EPSG:3031"), "sst", plan, embed = FALSE),
-               "cannot fetch.*or embed it")
+               "/vsimem/ COG can only be embedded.*cannot fetch")
   s <- scene_add_tiled_raster(scene("EPSG:3031"), "sst", plan)
   expect_true(any(startsWith(names(scene_blobs(s)), "sst@")))
 })
@@ -407,4 +407,103 @@ test_that("plan_extent() gives the finest level's footprint", {
   expect_true(e[1] < e[2] && e[3] < e[4])
   expect_identical(plan_extent(plan$plan), e)
   expect_error(plan_extent(list()), "tile plan")
+})
+
+test_that("embed = TRUE keeps the polar 3031 page byte-identical", {
+  skip_if_no_gdal()
+  f <- fixture("polar_3031.tif")
+  s <- cog_scene(f, coastline = FALSE)
+  expect_null(attr(s, "files"))
+  out <- write_scene_html(s, file = tempfile(fileext = ".html"), title = "polar_3031.tif")
+  on.exit(unlink(out))
+  expect_identical(page_bytes(out), legacy_page(s, title = "polar_3031.tif"))
+  ## Tile blobs come after the mesh blobs, in plan order (coarse level first).
+  keys <- names(scene_blobs(s))
+  expect_identical(keys[1:2], c("cog_vertices", "cog_indices"))
+  tiles <- unlist(lapply(s$layers[[1]]$plan$levels, `[[`, "tiles"), recursive = FALSE)
+  want <- unique(sprintf("cog@%.0f+%.0f", vapply(tiles, `[[`, 0, "byte_offset"),
+                         vapply(tiles, `[[`, 0, "byte_length")))
+  expect_identical(keys[-(1:2)], want)
+})
+
+test_that("embed = FALSE registers a local COG for serving", {
+  skip_if_no_gdal()
+  f <- fixture("polar_3031.tif")
+  s <- scene_add_tiled_raster(scene("EPSG:3031"), "sst", f, embed = FALSE, range = c(0, 1))
+  ## No tile blobs, one registered file.
+  expect_named(scene_blobs(s), c("sst_vertices", "sst_indices"))
+  files <- attr(s, "files")
+  expect_named(files, "sst")
+  rec <- files$sst
+  expect_named(rec, c("path", "size", "mtime", "url_explicit"))
+  expect_identical(rec$path, normalizePath(f, winslash = "/"))
+  expect_identical(rec$size, file.size(f))
+  expect_identical(rec$mtime, file.mtime(f))
+  expect_false(rec$url_explicit)
+  ## The JSON keeps the file:// URL as before and holds no other trace of
+  ## the registry.
+  json <- scene_json(s)
+  expect_match(s$data$sst$url, "^file:///.*polar_3031[.]tif$")
+  expect_false(grepl("\"files\"", json, fixed = TRUE))
+  expect_false(grepl("url_explicit", json, fixed = TRUE))
+  expect_valid_tiled_scene(s)
+  ## A page on disk cannot read it: write_scene_html() warns and writes the
+  ## file:// URL as today.
+  out <- tempfile(fileext = ".html")
+  on.exit(unlink(out))
+  expect_warning(write_scene_html(s, file = out), "cannot read the local COG of `sst`.*file:///.*embed = TRUE")
+  page <- readChar(out, file.size(out), useBytes = TRUE)
+  expect_match(page, "\"url\":\"file:///", fixed = TRUE)
+  expect_false(grepl("data-aob-blob=\"sst@", page, fixed = TRUE))
+  ## An explicit url is recorded as such, and a page with it does not warn.
+  s2 <- scene_add_tiled_raster(scene("EPSG:3031"), "sst", f, embed = FALSE, range = c(0, 1),
+                               url = "https://example.org/sst.tif")
+  expect_true(attr(s2, "files")$sst$url_explicit)
+  expect_identical(s2$data$sst$url, "https://example.org/sst.tif")
+  expect_no_warning(write_scene_html(s2, file = out))
+  ## Two layers, two records; an embedded layer adds none.
+  s3 <- scene_add_tiled_raster(s, "b", f, embed = FALSE, range = c(0, 1))
+  s3 <- scene_add_tiled_raster(s3, "c", f, range = c(0, 1))
+  expect_named(attr(s3, "files"), c("sst", "b"))
+  expect_true(any(startsWith(names(scene_blobs(s3)), "c@")))
+  expect_false(any(startsWith(names(scene_blobs(s3)), "b@")))
+})
+
+test_that("embed = FALSE on a /vsimem/ COG is an error", {
+  skip_if_no_gdal()
+  m <- "/vsimem/aob-test-serve.tif"
+  gdalraster::vsi_copy_file(fixture("polar_3031.tif"), m)
+  on.exit(gdalraster::vsi_unlink(m))
+  plan <- cog_plan(cog_info(m), "EPSG:3031", levels = 3)
+  expect_error(scene_add_tiled_raster(scene("EPSG:3031"), "sst", plan, embed = FALSE),
+               "/vsimem/ COG can only be embedded.*embed = TRUE.*write the COG to a file")
+  s <- scene_add_tiled_raster(scene("EPSG:3031"), "sst", plan)
+  expect_null(attr(s, "files"))
+})
+
+test_that("a local COG rewritten after cog_info() is refused", {
+  skip_if_no_gdal()
+  f <- tempfile(fileext = ".tif")
+  on.exit(unlink(f))
+  file.copy(fixture("polar_3031.tif"), f)
+  cog <- cog_info(f)
+  expect_identical(cog$size, file.size(f))
+  expect_identical(cog$mtime, file.mtime(f))
+  plan <- cog_plan(cog, "EPSG:3031", levels = 3)
+  s <- scene_add_tiled_raster(scene("EPSG:3031"), "sst", plan, embed = FALSE, range = c(0, 1))
+  expect_identical(attr(s, "files")$sst[c("size", "mtime")], list(size = cog$size, mtime = cog$mtime))
+  ## A new modification time, then new bytes: refused embedded or not.
+  Sys.setFileTime(f, cog$mtime + 60)
+  expect_error(scene_add_tiled_raster(scene("EPSG:3031"), "sst", plan, embed = FALSE, range = c(0, 1)),
+               "has changed since cog_info\\(\\).*plan it again")
+  expect_error(scene_add_tiled_raster(scene("EPSG:3031"), "sst", plan, range = c(0, 1)),
+               "has changed since cog_info\\(\\)")
+  unlink(f)
+  expect_error(scene_add_tiled_raster(scene("EPSG:3031"), "sst", plan, range = c(0, 1)),
+               "is gone since cog_info\\(\\)")
+  ## A remote or /vsimem/ COG carries no size or time.
+  m <- "/vsimem/aob-test-mtime.tif"
+  gdalraster::vsi_copy_file(fixture("polar_3031.tif"), m)
+  on.exit(gdalraster::vsi_unlink(m), add = TRUE)
+  expect_null(cog_info(m)$size)
 })

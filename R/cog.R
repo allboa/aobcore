@@ -43,7 +43,9 @@
 #'   resolution), `dim`, `geotransform`, `extent` (`c(xmin, xmax, ymin,
 #'   ymax)`), `tile_size`, `photometric`, `encoding` and `tiles` (a data
 #'   frame of `col`, `row`, `byte_offset`, `byte_length`; sparse tiles with
-#'   no bytes are left out).
+#'   no bytes are left out). A local file also has `size` and `mtime`, its
+#'   size and modification time when read, which [scene_add_tiled_raster()]
+#'   checks before it reads tiles or registers the file.
 #' @seealso [cog_plan()] to plan tiles for a view, [view_cog()] for the one
 #'   call.
 #' @export
@@ -64,6 +66,10 @@ cog_info <- function(dsn, band = 1L) {
     dsn <- normalizePath(dsn, winslash = "/")
   }
   gdal_dsn <- ref$gdal
+  ## A local file's size and time before reading its structure, so a file
+  ## rewritten after this (and before its tiles are read or it is
+  ## registered for serving) is detected.
+  file_info <- if (local) file.info(dsn, extra_cols = FALSE)
 
   ds <- open_raster(gdal_dsn)
   on.exit(ds$close(), add = TRUE)
@@ -138,7 +144,9 @@ cog_info <- function(dsn, band = 1L) {
     scale = scale,
     offset = offset,
     nodata = if (length(nodata) && !is.na(nodata)) nodata else if (is.nan(nodata)) NaN else NULL,
-    levels = levels
+    levels = levels,
+    size = if (local) file_info$size,
+    mtime = if (local) file_info$mtime
   ), class = "aob_cog")
 }
 
@@ -436,6 +444,16 @@ print.aob_tile_plan <- function(x, ...) {
 #' compressed bytes, so a page for a large local COG is large; plan fewer
 #' levels or serve the COG over HTTP instead.
 #'
+#' With `embed = FALSE`, a local COG's tile bytes are not read. The file is
+#' registered in the scene's `"files"` attribute instead, keyed by the
+#' layer's source data id, with its normalized path, size, modification time
+#' and whether `url` was given (`url_explicit`), for a server to deliver.
+#' That registry is never written to the scene JSON, but the layer's `url`
+#' stays the file's `file://` URL (which holds the full path) until a server
+#' replaces it, unless `url` was given. A page written to disk cannot read
+#' it, so [write_scene_html()] warns. A `/vsimem/` COG cannot be served and
+#' must be embedded.
+#'
 #' @param scene A scene from [scene()].
 #' @param id The layer id; the data ids are `id`, `<id>_vertices` and
 #'   `<id>_indices`.
@@ -496,12 +514,17 @@ scene_add_tiled_raster <- function(scene, id, plan, palette = "viridis", range =
   if (isTRUE(embed) && !cog$local) {
     stop("Only a local COG can be embedded; this one is a URL.", call. = FALSE)
   }
-  if (!is.null(url)) {
+  url_explicit <- !is.null(url)
+  if (url_explicit) {
     if (!is.character(url) || length(url) != 1L || is.na(url) || !nzchar(url)) {
       stop("`url` must be a single URL.", call. = FALSE)
     }
   } else if (isTRUE(embed)) {
     url <- utils::URLencode(basename(cog$dsn), reserved = TRUE)
+  } else if (startsWith(cog$dsn, "/vsimem/")) {
+    stop("A /vsimem/ COG can only be embedded: the renderer cannot fetch \"", cog$dsn,
+         "\" and a served file must be on disk. Use `embed = TRUE`, or write the COG to ",
+         "a file.", call. = FALSE)
   } else if (grepl("^(https?|file)://", cog$url)) {
     url <- cog$url
   } else {
@@ -555,9 +578,44 @@ scene_add_tiled_raster <- function(scene, id, plan, palette = "viridis", range =
   blobs <- attr(scene, "blobs") %||% list()
   blobs[[ids[2]]] <- plan$vertices
   blobs[[ids[3]]] <- plan$indices
+  check_cog_unchanged(cog)
   if (isTRUE(embed)) blobs <- c(blobs, tile_blobs(cog, p, ids[1]))
   attr(scene, "blobs") <- blobs
+  ## A local COG that is not embedded is registered for a server to deliver
+  ## (decision 0006). The registry is never written to the scene JSON; the
+  ## layer's url stays the file:// URL (the full path) until a server
+  ## replaces it, unless `url` was given.
+  if (!isTRUE(embed) && cog$local && !startsWith(cog$dsn, "/vsi")) {
+    files <- attr(scene, "files") %||% list()
+    files[[ids[1]]] <- file_record(cog, url_explicit)
+    attr(scene, "files") <- files
+  }
   scene
+}
+
+## A local file registered for serving: the normalized path, its size and
+## modification time when cog_info() read it (a tile plan holds byte
+## offsets, so a server must refuse a file that changed), and whether the
+## scene's `url` for it was given by the caller (left alone by a server) or
+## defaulted to the file:// URL (replaced by the server's own route).
+file_record <- function(cog, url_explicit) {
+  path <- normalizePath(cog$dsn, winslash = "/", mustWork = TRUE)
+  list(path = path, size = cog$size, mtime = cog$mtime, url_explicit = isTRUE(url_explicit))
+}
+
+## A local COG's tile offsets are only good for the file cog_info() read:
+## refuse one whose size or modification time has changed since.
+check_cog_unchanged <- function(cog) {
+  if (is.null(cog$size) || is.null(cog$mtime)) return(invisible())
+  if (!file.exists(cog$dsn)) {
+    stop("\"", cog$dsn, "\" is gone since cog_info() read it.", call. = FALSE)
+  }
+  info <- file.info(cog$dsn, extra_cols = FALSE)
+  if (!identical(info$size, cog$size) || !identical(info$mtime, cog$mtime)) {
+    stop("\"", cog$dsn, "\" has changed since cog_info() read it, so its tile plan ",
+         "is out of date; plan it again.", call. = FALSE)
+  }
+  invisible()
 }
 
 #' Draw a COG in its own view, in one call

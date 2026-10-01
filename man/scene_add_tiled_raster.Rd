@@ -96,6 +96,16 @@ local directory (and works when the COG is served beside it). Give \code{url}
 to write another reference. Embedding copies the planned tiles'
 compressed bytes, so a page for a large local COG is large; plan fewer
 levels or serve the COG over HTTP instead.
+
+With \code{embed = FALSE}, a local COG's tile bytes are not read. The file is
+registered in the scene's \code{"files"} attribute instead, keyed by the
+layer's source data id, with its normalized path, size, modification time
+and whether \code{url} was given (\code{url_explicit}), for a server to deliver.
+That registry is never written to the scene JSON, but the layer's \code{url}
+stays the file's \verb{file://} URL (which holds the full path) until a server
+replaces it, unless \code{url} was given. A page written to disk cannot read
+it, so \code{\link[=write_scene_html]{write_scene_html()}} warns. A \verb{/vsimem/} COG cannot be served and
+must be embedded.
 }
 \examples{
 \dontshow{if (requireNamespace("gdalraster", quietly = TRUE) && !inherits(try(gdalraster::srs_to_wkt("EPSG:3031"), silent = TRUE), "try-error")) withAutoprint(\{ # examplesIf}

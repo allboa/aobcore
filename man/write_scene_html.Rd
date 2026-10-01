@@ -46,6 +46,12 @@ layer uses is defined in \code{scene$data}, that every \code{blob} key has a
 blob, and that legends name layers in the scene and popups are on vector
 layers. Full validation against the scene spec JSON Schema happens outside
 R (see the allboa/scenespec validator).
+
+A tiled raster added with \code{embed = FALSE} from a local COG (see
+\code{\link[=scene_add_tiled_raster]{scene_add_tiled_raster()}}) has no tile bytes in the page and a \verb{file://}
+URL a page opened from disk cannot range-request, so writing it warns
+(unless its \code{url} was given explicitly); serve the page over HTTP or
+embed the layer.
 }
 \examples{
 f <- write_scene_html(probe_scene(), file = tempfile(fileext = ".html"))

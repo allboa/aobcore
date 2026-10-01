@@ -27,6 +27,14 @@
 //    is a layer error. A click still selects when its press is held 1.5 s
 //    or every pick takes 1.5 s, and a drag or a double click (which zooms)
 //    does not select. In Node, cell text and legend helpers.
+// 7. Served pages (decision 0006) in the browser: a page whose element
+//    names a blob base fetches a blob it does not carry from the base plus
+//    encodeURIComponent(key) (a key with "/", "@" and "+" round-trips),
+//    a tiled raster takes listed tile blobs from the base and nothing by
+//    range, an unlisted tile is read by range as before, and a missing blob
+//    with no base is still an error (with a base, one that names the 404,
+//    and a network failure names the key and URL); rendering again into
+//    the same element aborts the first render's blob fetches.
 // Also in Node: the range reader keeps a whole-file (200) response, and the
 // tile cache evicts least recently used idle tiles.
 // Set CHROMIUM_PATH to pick a browser; SKIP_BROWSER=1 runs only part 1.
@@ -734,5 +742,209 @@ try {
     console.log("ok   0.5 hiding a layer hides its legend and popup");
   } finally {
     await browser4.close();
+  }
+}
+
+// ---- 7. served pages: blobs fetched from a blob base --------------------------
+{
+  const { createServer } = await import("node:http");
+  const tiff = readFileSync(join(here, "..", "..", "inst", "extdata", "polar_3031.tif"));
+  const tiled = JSON.parse(readFileSync(join(here, "tiled-scene.json"), "utf8"));
+  const bytesOf = (b64) => Buffer.from(b64, "base64");
+  const odd = "v/a@b+c d";
+  const values = tableToIPC(tableFromArrays({ value: new Float64Array([0, 1, 2, 3]) }), "stream");
+  const rasterScene = {
+    version: "0.1",
+    view: { type: "cartesian", extent: [0, 1, 0, 1] },
+    data: { values: { format: "arrow-ipc-stream", blob: odd } },
+    layers: [{ id: "good", kind: "raster", grid: { crs: "EPSG:3031", extent: [0, 1, 0, 1], dim: [2, 2] },
+      values: "values", palette: { name: "viridis", range: [0, 3] } }],
+  };
+  // Every planned tile of the tiled fixture, as the server's blobs.
+  const tileBlobs = {};
+  for (const lv of tiled.scene.layers[0].plan.levels) {
+    for (const t of lv.tiles) {
+      tileBlobs[`sst@${t.byte_offset}+${t.byte_length}`] = tiff.subarray(t.byte_offset, t.byte_offset + t.byte_length);
+    }
+  }
+  const meshBlobs = Object.fromEntries(Object.entries(tiled.blobs).map(([k, v]) => [k, bytesOf(v)]));
+  // A linked page as aobcore's page builder writes it: no blob scripts, a
+  // blob base on the element and the served keys in a JSON script.
+  const linked = (sc, keys, base = "blob/") => `<!DOCTYPE html><html><head><meta charset="utf-8"></head><body style="margin:0;height:100vh">
+<div class="aob-page" data-aob-scene="aob-scene"${base === null ? "" : ` data-aob-blob-base="${base}"`} style="height:100%"></div>
+<script type="application/json" id="aob-scene">${JSON.stringify(sc)}</script>
+${keys === null ? "" : `<script type="application/json" data-aob-blob-keys data-aob-scene="aob-scene">${JSON.stringify(keys)}</script>`}
+<script src="aob-renderer.min.js"></script></body></html>`;
+  const sites = {
+    // name: [page, blobs served under <name>/blob/]
+    raster: [linked(rasterScene, [odd]), { [odd]: values }],
+    tiles: [linked(tiled.scene, [...Object.keys(meshBlobs), ...Object.keys(tileBlobs)]), { ...meshBlobs, ...tileBlobs }],
+    ranged: [linked(tiled.scene, Object.keys(meshBlobs)), meshBlobs],
+    nobase: [linked(rasterScene, null, null), {}],
+    gone: [linked(rasterScene, []), {}],
+    // A blob base no server answers: a network failure, not a status.
+    netfail: [linked(rasterScene, [odd], "http://127.0.0.1:1/blob/"), {}],
+  };
+  let slowAborted = null;
+  const seen = { blob: [], range: [], whole: 0, other: [] };
+  const server = createServer((req, res) => {
+    const m = /^\/([a-z]+)\/(.*)$/.exec(req.url);
+    const site = m && (sites[m[1]] || (m[1] === "slow" ? [] : null));
+    if (!site) {
+      res.writeHead(404);
+      return res.end();
+    }
+    const rest = m && m[2];
+    if (m && m[1] === "slow") {
+      // Answers after 3 s, unless the request is aborted first.
+      slowAborted = false;
+      const timer = setTimeout(() => {
+        res.writeHead(200, { "content-type": "application/vnd.apache.arrow.stream" });
+        res.end(values);
+      }, 3000);
+      res.on("close", () => {
+        if (!res.writableEnded) {
+          slowAborted = true;
+          clearTimeout(timer);
+        }
+      });
+      return;
+    }
+    if (rest === "") {
+      res.writeHead(200, { "content-type": "text/html" });
+      return res.end(site[0]);
+    }
+    if (rest === "aob-renderer.min.js") {
+      res.writeHead(200, { "content-type": "text/javascript" });
+      return res.end(bundle);
+    }
+    if (rest.startsWith("blob/")) {
+      // One path segment, decoded once, matched exactly.
+      const seg = rest.slice(5);
+      const key = seg.includes("/") ? null : decodeURIComponent(seg);
+      seen.blob.push(`${m[1]}:${seg}`);
+      if (key === null || !(key in site[1])) {
+        res.writeHead(404);
+        return res.end();
+      }
+      res.writeHead(200, { "content-type": "application/vnd.apache.arrow.stream" });
+      return res.end(site[1][key]);
+    }
+    if (rest === "polar_3031.tif") {
+      const r = /^bytes=(\d+)-(\d+)$/.exec(req.headers.range || "");
+      if (!r) {
+        seen.whole++;
+        res.writeHead(200, { "content-type": "image/tiff" });
+        return res.end(tiff);
+      }
+      seen.range.push(`${m[1]}:${req.headers.range}`);
+      const a = Number(r[1]);
+      const b = Number(r[2]);
+      res.writeHead(206, { "content-type": "image/tiff", "content-range": `bytes ${a}-${b}/${tiff.length}` });
+      return res.end(tiff.subarray(a, b + 1));
+    }
+    seen.other.push(req.url);
+    res.writeHead(404);
+    res.end();
+  });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const browser7 = await chromium.launch({
+    executablePath: process.env.CHROMIUM_PATH || undefined,
+    args: ["--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--ignore-gpu-blocklist"],
+  });
+  try {
+    const state = async (path) => {
+      const page = await browser7.newPage({ viewport: { width: 900, height: 700 } });
+      await page.goto(base + path);
+      await page.waitForFunction(() => {
+        const s = document.querySelector("div[data-aob-scene]").dataset.aobStatus;
+        return s === "ready" || s === "error";
+      }, null, { timeout: 60000 });
+      const r = await page.evaluate(() => {
+        const c = document.querySelector("div[data-aob-scene]");
+        const p = aob.fromPage("aob-scene");
+        return { status: c.dataset.aobStatus, errors: c.dataset.aobErrors, tiles: c.dataset.aobTiles,
+          pending: c.dataset.aobPending, line: c.querySelector(".aob-status").textContent,
+          blobBase: p.blobBase, blobKeys: p.blobKeys, nBlobs: Object.keys(p.blobs).length };
+      });
+      await page.close();
+      return r;
+    };
+
+    const enc = encodeURIComponent(odd);
+    assert.equal(enc, "v%2Fa%40b%2Bc%20d");
+    const r = await state("/raster/");
+    assert.equal(r.status, "ready");
+    assert.equal(r.errors, undefined, r.line);
+    assert.equal(r.blobBase, "blob/");
+    assert.deepEqual(r.blobKeys, [odd]);
+    assert.equal(r.nBlobs, 0);
+    assert.deepEqual(seen.blob, [`raster:${enc}`], "the key is one encoded path segment");
+    console.log(`ok   served page: a blob is fetched from the blob base (key ${JSON.stringify(odd)} as ${enc})`);
+
+    const t = await state("/tiles/");
+    assert.equal(t.status, "ready");
+    assert.equal(t.errors, undefined, t.line);
+    assert.equal(t.pending, "0");
+    assert.match(t.tiles, /^sst: level [23], \d+ tiles?$/);
+    const tileFetches = seen.blob.filter((b) => b.startsWith("tiles:sst%40"));
+    assert.ok(tileFetches.length > 0, "tiles were fetched from the blob base");
+    for (const b of tileFetches) assert.ok(decodeURIComponent(b.slice(6)) in tileBlobs, `${b} is a planned tile`);
+    assert.equal(seen.range.filter((x) => x.startsWith("tiles:")).length, 0, "no range requests");
+    assert.equal(seen.whole, 0);
+    console.log(`ok   served page: listed tile blobs come from the blob base (${t.tiles}; ${tileFetches.length} tiles)`);
+
+    const g = await state("/ranged/");
+    assert.equal(g.status, "ready");
+    assert.equal(g.errors, undefined, g.line);
+    assert.equal(g.pending, "0");
+    assert.ok(seen.range.filter((x) => x.startsWith("ranged:")).length > 0, "unlisted tiles are read by range");
+    assert.equal(seen.blob.filter((b) => b.startsWith("ranged:sst%40")).length, 0, "no tile blob fetched");
+    assert.equal(seen.whole, 0);
+    console.log("ok   served page: unlisted tiles are read by range requests as before");
+
+    const n = await state("/nobase/");
+    assert.equal(n.status, "error");
+    assert.equal(n.blobBase, undefined);
+    assert.equal(n.blobKeys, undefined);
+    assert.match(n.line, /data values: blob "v\/a@b\+c d" was not delivered$/);
+    assert.equal(seen.blob.filter((b) => b.startsWith("nobase:")).length, 0, "nothing fetched without a base");
+    console.log("ok   a missing blob with no blob base is an error as before");
+
+    const x = await state("/gone/");
+    assert.equal(x.status, "error");
+    assert.match(x.line, /data values: blob "v\/a@b\+c d" was not delivered \(blob\/v%2Fa%40b%2Bc%20d returned 404\)/);
+    console.log("ok   a blob the server does not have is an error naming the 404");
+
+    const nf = await state("/netfail/");
+    assert.equal(nf.status, "error");
+    assert.match(nf.line, /data values: blob "v\/a@b\+c d" could not be fetched from http:\/\/127\.0\.0\.1:1\/blob\/v%2Fa%40b%2Bc%20d: /);
+    console.log("ok   a network failure fetching a blob is an error naming the key and URL");
+
+    // Rendering again into the container aborts the first render's fetches,
+    // and the first render leaves the container to the second.
+    const page = await browser7.newPage({ viewport: { width: 900, height: 700 } });
+    await page.goto(base + "/raster/");
+    await page.waitForFunction(() => document.querySelector("div[data-aob-scene]").dataset.aobStatus === "ready", null, { timeout: 60000 });
+    const ab = await page.evaluate(async (sc) => {
+      const c = document.querySelector("div[data-aob-scene]");
+      const first = aob.render(c, sc, { blobBase: "/slow/blob/" }).then(() => "resolved", (e) => e.name);
+      await new Promise((r) => setTimeout(r, 300));
+      const second = await aob.render(c, sc, { blobBase: "blob/" });
+      const r1 = await first;
+      await new Promise((r) => setTimeout(r, 300));
+      return { r1, status: c.dataset.aobStatus, errors: second.errors.length, line: c.querySelector(".aob-status").textContent };
+    }, rasterScene);
+    await page.close();
+    assert.equal(ab.r1, "AbortError");
+    assert.equal(ab.errors, 0);
+    assert.equal(ab.line, "");
+    assert.equal(slowAborted, true, "the slow blob request was aborted");
+    console.log("ok   rendering again aborts the first render's blob fetches");
+    assert.deepEqual(seen.other, []);
+  } finally {
+    await browser7.close();
+    server.close();
   }
 }

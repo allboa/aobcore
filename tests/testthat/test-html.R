@@ -166,3 +166,61 @@ test_that("strings cannot close the script element", {
   expect_false(grepl("<", json, fixed = TRUE))
   expect_match(json, "\\u003c/script>\\u003cb>", fixed = TRUE)
 })
+
+test_that("write_scene_html() pages are byte-identical to the pre-builder page", {
+  p <- probe_scene()
+  f <- write_scene_html(p, file = tempfile(fileext = ".html"), title = "Polar probe")
+  on.exit(unlink(f))
+  expect_identical(page_bytes(f), legacy_page(p, title = "Polar probe"))
+  ## Blob order is the order of `blobs`, also when it differs from the scene's.
+  blobs <- rev(scene_blobs(p))
+  f2 <- write_scene_html(p, blobs, file = tempfile(fileext = ".html"), theme = "dark")
+  on.exit(unlink(f2), add = TRUE)
+  expect_identical(page_bytes(f2), legacy_page(p, blobs, theme = "dark"))
+  page <- read_page(f2)
+  at <- vapply(names(blobs), function(k) regexpr(sprintf("data-aob-blob=\"%s\"", k), page, fixed = TRUE), 0L)
+  expect_true(all(at > 0))
+  expect_false(is.unsorted(at))
+  x <- wk::wkt(c("POINT (0 0)", "POINT (1e6 1e6)"), crs = "EPSG:3031")
+  s <- scene_add_vector(scene(), "pts", x, radius_px = 4)
+  f3 <- write_scene_html(s, file = tempfile(fileext = ".html"))
+  on.exit(unlink(f3), add = TRUE)
+  expect_identical(page_bytes(f3), legacy_page(s))
+})
+
+test_that("the linked page links the renderer and names a blob base", {
+  p <- probe_scene()
+  blobs <- scene_blobs(p)
+  page <- scene_page(p, blobs, title = "Polar probe", theme = "auto", mode = "linked")
+  expect_type(page, "character")
+  expect_length(page, 1L)
+  ## The renderer by src, and no inlined renderer.
+  expect_match(page, "<script src=\"aob-renderer.min.js\"></script>", fixed = TRUE)
+  expect_false(grepl("aob-renderer.min.js\"></script>", sub("<script src=\"aob-renderer.min.js\"></script>", "", page, fixed = TRUE), fixed = TRUE))
+  expect_lt(nchar(page, "bytes"), 20000)
+  ## No blob scripts; the page div names the blob base.
+  expect_false(grepl("data-aob-blob=", page, fixed = TRUE))
+  expect_match(page, "<div class=\"aob-page\" data-aob-scene=\"aob-scene\" data-aob-blob-base=\"blob/\"></div>",
+               fixed = TRUE)
+  ## The same scene JSON as the embedded page.
+  json <- script_text(page, "<script type=\"application/json\" id=\"aob-scene\">")
+  expect_identical(json, scene_json(p))
+  ## The served blob keys, in order.
+  keys <- script_text(page, "<script type=\"application/json\" data-aob-blob-keys data-aob-scene=\"aob-scene\">")
+  expect_identical(keys, paste0("[\"", paste(names(blobs), collapse = "\",\""), "\"]"))
+  expect_false(grepl("[^\\x01-\\x7f]", page, perl = TRUE, useBytes = TRUE))
+
+  ## Keys with reserved characters stay JSON strings, "<" escaped.
+  odd <- c("a/b@c+d", "x</script>")
+  page2 <- scene_page(scene(), stats::setNames(list(raw(1), raw(1)), odd), title = "t",
+                      theme = "dark", mode = "linked")
+  expect_match(page2, "[\"a/b@c+d\",\"x\\u003c/script>\"]", fixed = TRUE)
+  expect_match(page2, "<html lang=\"en\" data-theme=\"dark\">", fixed = TRUE)
+  ## An empty scene lists no keys.
+  expect_match(scene_page(scene(), list(), title = "t", theme = "auto", mode = "linked"),
+               "data-aob-scene=\"aob-scene\">[]</script>", fixed = TRUE)
+
+  ## The inline mode is the embedded page.
+  inline <- scene_page(p, blobs, title = "Polar probe", theme = "auto", mode = "inline")
+  expect_identical(charToRaw(paste0("<!DOCTYPE html>\n", inline, "\n")), legacy_page(p, title = "Polar probe"))
+})

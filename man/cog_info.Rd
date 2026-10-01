@@ -27,7 +27,9 @@ image's TIFF photometric interpretation, such as \code{"RGB"}, \code{"YCbCr"} or
 \code{nodata}, and \code{levels}: one list per level with \code{level} (0 is full
 resolution), \code{dim}, \code{geotransform}, \code{extent} (\code{c(xmin, xmax, ymin, ymax)}), \code{tile_size}, \code{photometric}, \code{encoding} and \code{tiles} (a data
 frame of \code{col}, \code{row}, \code{byte_offset}, \code{byte_length}; sparse tiles with
-no bytes are left out).
+no bytes are left out). A local file also has \code{size} and \code{mtime}, its
+size and modification time when read, which \code{\link[=scene_add_tiled_raster]{scene_add_tiled_raster()}}
+checks before it reads tiles or registers the file.
 }
 \description{
 Reads what a tile plan needs from a COG through GDAL: the source CRS, and
