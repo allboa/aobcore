@@ -37,9 +37,12 @@ loop.
 \item \code{connections()}: how many pages are connected.
 }
 
-\code{selection()}, \code{view_state()} and \code{connections()} first run the loop
-once without blocking (\code{httpuv::service(NA)}), so a selection made just before the call is
-counted. All are errors once the server has stopped: the selection lives
+\code{selection()}, \code{view_state()} and \code{connections()} first run every
+callback that is ready, without blocking (\code{later::run_now(0, all = TRUE)}
+until none is left, at most 1000 rounds), so a selection made just
+before the call is counted, as are all the messages queued while R was
+busy. Inside an \code{on()} callback they skip that and read the state as it
+is. All are errors once the server has stopped: the selection lives
 in the server and goes with it. Selections from several pages (tabs) on
 one server are the server's: the last message wins.
 

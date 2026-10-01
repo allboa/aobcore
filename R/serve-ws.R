@@ -31,9 +31,12 @@
 #'   loop.
 #' - `connections()`: how many pages are connected.
 #'
-#' `selection()`, `view_state()` and `connections()` first run the loop
-#' once without blocking (`httpuv::service(NA)`), so a selection made just before the call is
-#' counted. All are errors once the server has stopped: the selection lives
+#' `selection()`, `view_state()` and `connections()` first run every
+#' callback that is ready, without blocking (`later::run_now(0, all = TRUE)`
+#' until none is left, at most 1000 rounds), so a selection made just
+#' before the call is counted, as are all the messages queued while R was
+#' busy. Inside an `on()` callback they skip that and read the state as it
+#' is. All are errors once the server has stopped: the selection lives
 #' in the server and goes with it. Selections from several pages (tabs) on
 #' one server are the server's: the last message wins.
 #'
