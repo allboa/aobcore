@@ -44,7 +44,8 @@
 #' `getOption("aobcore.serve_hosts")`, for an IDE proxy that forwards
 #' requests with its own `Host`. There are no CORS headers, responses carry
 #' `X-Content-Type-Options: nosniff`, the page sends no referrer, and only
-#' the registered files can be read. The token is not authentication:
+#' the registered files can be read. Websocket upgrades are refused (404)
+#' and any socket is closed at once. The token is not authentication:
 #' anyone who sees the URL can read the scene while it is served.
 #'
 #' **Lifecycle.** Each call starts its own server, unless `server` names a
@@ -134,7 +135,9 @@ serve_scene <- function(scene, blobs = attr(scene, "blobs"), files = attr(scene,
   state$warned_hosts <- character()
   state$renderer <- renderer_js()
   serve_set(state, content, own)
-  app <- list(call = function(req) serve_request(state, req))
+  app <- list(call = function(req) serve_request(state, req),
+              onHeaders = refuse_upgrade,
+              onWSOpen = close_websocket)
   ## The token's draw already said if the source is the weaker one.
   candidates <- if (is.null(port)) random_ports(20L, quiet = TRUE) else check_port(port)
   handle <- NULL
@@ -365,6 +368,28 @@ check_file_unchanged <- function(id, rec, signal) {
     return("changed")
   }
   NULL
+}
+
+## The server accepts no websockets (until decision 0007 adds one). Without
+## onWSOpen, httpuv would accept any upgrade and print "attempt to apply
+## non-function" to the console, which any web page can trigger. A refusal
+## in onHeaders alone is not enough: httpuv 1.6.17 still switches protocols
+## and calls onWSOpen afterwards, so that closes the socket at once and
+## keeps nothing. Other requests go on to `call` (NULL).
+refuse_upgrade <- function(req) {
+  if (is_upgrade(req)) not_found() else NULL
+}
+
+is_upgrade <- function(req) {
+  u <- req$HTTP_UPGRADE
+  ## The header is a comma-separated list of protocols, case-insensitive.
+  is.character(u) && length(u) == 1L &&
+    grepl("(^|,)[[:space:]]*websocket[[:space:]]*(/[^,]*)?(,|$)", tolower(u))
+}
+
+close_websocket <- function(ws) {
+  try(ws$close(), silent = TRUE)
+  invisible(NULL)
 }
 
 ## HEAD answers with the headers of the matching GET, an explicit

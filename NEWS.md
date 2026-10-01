@@ -30,6 +30,11 @@
     carry `X-Content-Type-Options: nosniff`, the page sends no referrer,
     `HEAD` sends headers only, and an undecodable path segment (such as
     `%00`) is 404.
+  - The server accepts no websockets (until decision 0007 adds one): an
+    upgrade request on any path, with or without the token, answers 404,
+    and httpuv's socket (which httpuv 1.6.17 opens even after a refusal)
+    is closed at once. Before, any page, from any origin, could open one
+    and make httpuv print "attempt to apply non-function" to the console.
   - The `"aob_server"` handle has `url`, `port`, `token` and an idempotent
     `stop()`, which also deletes files given in `own` (existing regular
     files, not symbolic links, kept by absolute path, and deleted only if
