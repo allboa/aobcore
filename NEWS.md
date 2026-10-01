@@ -42,6 +42,19 @@
   - 'later' (already a dependency of httpuv) joins Suggests. The selection
     reads run every callback that is due (`later::run_now(0, all = TRUE)`),
     so messages queued while R was busy are all counted.
+  - The renderer (0.0.5 bundle, #41) opens the socket once the scene is
+    drawn, on pages whose element has `data-aob-socket`. The layers R names
+    in its `hello` become selectable, popup or not: a click selects one
+    feature, Shift or Cmd click adds or removes one, a click on nothing or
+    Escape clears, and each change sends the whole selection; selected
+    features are drawn highlighted in light and dark. The settled camera is
+    sent as `view` (250 ms after its last change). `reload` reloads the
+    page with its camera kept. A lost socket shows "Not connected to R:
+    selections stay in this page" and retries (1 s doubling to 30 s); a
+    refusal that cannot change (1003, 1007, 1008, 4000) is not retried and
+    the note says why. A selection over R's size cap stays in the page
+    with a note. Embedded pages open no socket and behave as before.
+  - An empty selection keeps its `layer` column in `srv$selection()`.
 
 * `serve_scene()` follow-ups from the #37 review (#38): refused-`Host`
   warnings are given for the first 5 distinct values per server, then once
