@@ -18,6 +18,7 @@ scene_json <- function(scene, pretty = FALSE) {
   check_scene(scene)
   x <- unclass(scene)
   attr(x, "blobs") <- NULL
+  attr(x, "files") <- NULL
   x$version <- scene_spec_version(scene)
   json_value(x, if (isTRUE(pretty)) "" else NULL)
 }

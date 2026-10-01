@@ -436,6 +436,14 @@ print.aob_tile_plan <- function(x, ...) {
 #' compressed bytes, so a page for a large local COG is large; plan fewer
 #' levels or serve the COG over HTTP instead.
 #'
+#' With `embed = FALSE`, a local COG's tile bytes are not read. The file is
+#' registered in the scene's `"files"` attribute instead, keyed by the
+#' layer's source data id, with its normalized path, size, modification time
+#' and whether `url` was given (`url_explicit`), for a server to deliver
+#' (the scene JSON never sees the path). A page written to disk cannot read
+#' it, so [write_scene_html()] warns. A `/vsimem/` COG cannot be served and
+#' must be embedded.
+#'
 #' @param scene A scene from [scene()].
 #' @param id The layer id; the data ids are `id`, `<id>_vertices` and
 #'   `<id>_indices`.
@@ -496,12 +504,17 @@ scene_add_tiled_raster <- function(scene, id, plan, palette = "viridis", range =
   if (isTRUE(embed) && !cog$local) {
     stop("Only a local COG can be embedded; this one is a URL.", call. = FALSE)
   }
-  if (!is.null(url)) {
+  url_explicit <- !is.null(url)
+  if (url_explicit) {
     if (!is.character(url) || length(url) != 1L || is.na(url) || !nzchar(url)) {
       stop("`url` must be a single URL.", call. = FALSE)
     }
   } else if (isTRUE(embed)) {
     url <- utils::URLencode(basename(cog$dsn), reserved = TRUE)
+  } else if (startsWith(cog$dsn, "/vsimem/")) {
+    stop("A /vsimem/ COG can only be embedded: the renderer cannot fetch \"", cog$dsn,
+         "\" and a served file must be on disk. Use `embed = TRUE`, or write the COG to ",
+         "a file.", call. = FALSE)
   } else if (grepl("^(https?|file)://", cog$url)) {
     url <- cog$url
   } else {
@@ -557,7 +570,25 @@ scene_add_tiled_raster <- function(scene, id, plan, palette = "viridis", range =
   blobs[[ids[3]]] <- plan$indices
   if (isTRUE(embed)) blobs <- c(blobs, tile_blobs(cog, p, ids[1]))
   attr(scene, "blobs") <- blobs
+  ## A local COG that is not embedded is registered for a server to deliver
+  ## (decision 0006): the scene JSON keeps its url and never sees the path.
+  if (!isTRUE(embed) && cog$local && !startsWith(cog$dsn, "/vsi")) {
+    files <- attr(scene, "files") %||% list()
+    files[[ids[1]]] <- file_record(cog$dsn, url_explicit)
+    attr(scene, "files") <- files
+  }
   scene
+}
+
+## A local file registered for serving: the normalized path, its size and
+## modification time when registered (a tile plan holds byte offsets, so a
+## server must refuse a file that changed), and whether the scene's `url`
+## for it was given by the caller (left alone by a server) or defaulted to
+## the file:// URL (replaced by the server's own route).
+file_record <- function(path, url_explicit) {
+  path <- normalizePath(path, winslash = "/", mustWork = TRUE)
+  info <- file.info(path, extra_cols = FALSE)
+  list(path = path, size = info$size, mtime = info$mtime, url_explicit = isTRUE(url_explicit))
 }
 
 #' Draw a COG in its own view, in one call

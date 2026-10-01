@@ -12,6 +12,12 @@
 #' layers. Full validation against the scene spec JSON Schema happens outside
 #' R (see the allboa/scenespec validator).
 #'
+#' A tiled raster added with `embed = FALSE` from a local COG (see
+#' [scene_add_tiled_raster()]) has no tile bytes in the page and a `file://`
+#' URL a page opened from disk cannot range-request, so writing it warns
+#' (unless its `url` was given explicitly); serve the page over HTTP or
+#' embed the layer.
+#'
 #' @param scene A scene from [scene()] and [scene_add_data()] or
 #'   [scene_add_vector()], which carries its blobs; or a plain list following
 #'   scene spec 0.1 to 0.5, with `version`, `view`, `data` and `layers`. It is written
@@ -55,13 +61,53 @@ write_scene_html <- function(scene, blobs = attr(scene, "blobs"), file = tempfil
     stop("`file` must be a single path.", call. = FALSE)
   }
 
+  warn_unfetchable_files(scene)
+  html <- scene_page(scene, blobs, title = title, theme = theme, mode = "inline")
+  con <- file(file, open = "wb")
+  on.exit(close(con), add = TRUE)
+  writeLines(c("<!DOCTYPE html>", html), con, useBytes = TRUE)
+  invisible(file)
+}
+
+## The page for a scene, as one UTF-8 string without the doctype line. One
+## builder for every transport, so they cannot drift (decision 0006):
+##
+## "inline" (write_scene_html()): every blob as base64 in a
+##   <script data-aob-blob>, in the order of `blobs`, and the renderer
+##   inlined. The page needs nothing else.
+## "linked" (a served page): no blob scripts. The page <div> carries
+##   data-aob-blob-base="blob/", so the renderer fetches a blob it was not
+##   given from "blob/" plus encodeURIComponent(key), relative to the page;
+##   the keys the server delivers are listed in one JSON script
+##   (data-aob-blob-keys), which tells a tiled raster which tiles have a
+##   blob; and the renderer is loaded from "aob-renderer.min.js" beside
+##   the page.
+##
+## `blobs` has been checked (check_blobs(), check_scene_shape()) and holds
+## only the blobs the scene uses; in "linked" mode only its names are used.
+scene_page <- function(scene, blobs, title, theme, mode = c("inline", "linked")) {
+  mode <- match.arg(mode)
   sid <- "aob-scene"
-  blob_tags <- lapply(names(blobs), function(k) {
+  linked <- mode == "linked"
+  blob_tags <- if (linked) {
+    keys <- as.list(names(blobs) %||% character())
     htmltools::tags$script(
-      type = "application/octet-stream", `data-aob-blob` = k, `data-aob-scene` = sid,
-      htmltools::HTML(b64_encode(blobs[[k]]))
+      type = "application/json", `data-aob-blob-keys` = NA, `data-aob-scene` = sid,
+      htmltools::HTML(gsub("<", "\\u003c", json_value(keys), fixed = TRUE))
     )
-  })
+  } else {
+    lapply(names(blobs), function(k) {
+      htmltools::tags$script(
+        type = "application/octet-stream", `data-aob-blob` = k, `data-aob-scene` = sid,
+        htmltools::HTML(b64_encode(blobs[[k]]))
+      )
+    })
+  }
+  renderer <- if (linked) {
+    htmltools::tags$script(src = "aob-renderer.min.js")
+  } else {
+    htmltools::tags$script(htmltools::HTML(renderer_js()))
+  }
   page <- htmltools::tags$html(
     lang = "en",
     `data-theme` = if (theme != "auto") theme,
@@ -72,17 +118,32 @@ write_scene_html <- function(scene, blobs = attr(scene, "blobs"), file = tempfil
       htmltools::tags$style(htmltools::HTML(page_css))
     ),
     htmltools::tags$body(
-      htmltools::tags$div(class = "aob-page", `data-aob-scene` = sid),
+      htmltools::tags$div(class = "aob-page", `data-aob-scene` = sid,
+                          `data-aob-blob-base` = if (linked) "blob/"),
       htmltools::tags$script(type = "application/json", id = sid, htmltools::HTML(page_json(scene))),
       blob_tags,
-      htmltools::tags$script(htmltools::HTML(renderer_js()))
+      renderer
     )
   )
-  html <- enc2utf8(as.character(htmltools::doRenderTags(page)))
-  con <- file(file, open = "wb")
-  on.exit(close(con), add = TRUE)
-  writeLines(c("<!DOCTYPE html>", html), con, useBytes = TRUE)
-  invisible(file)
+  enc2utf8(as.character(htmltools::doRenderTags(page)))
+}
+
+## A page written to disk cannot range-request a local file, so a scene
+## with a registered file (scene_add_tiled_raster(embed = FALSE)) whose url
+## was not given explicitly draws nothing for that layer from file://.
+warn_unfetchable_files <- function(scene) {
+  files <- attr(scene, "files")
+  if (!length(files)) return(invisible())
+  ids <- names(files)[!vapply(files, function(f) isTRUE(f$url_explicit), logical(1))]
+  ids <- ids[ids %in% names(scene$data)]
+  if (length(ids)) {
+    warning("The page cannot read the local COG of ",
+            paste0("`", ids, "`", collapse = ", "), " from disk (",
+            paste0("\"", vapply(ids, function(id) scene$data[[id]]$url, ""), "\"", collapse = ", "),
+            "): serve the page over HTTP or add the layer with `embed = TRUE`.",
+            call. = FALSE)
+  }
+  invisible()
 }
 
 ## The scene document for a <script> element: scene_json() output with

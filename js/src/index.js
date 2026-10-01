@@ -12,6 +12,15 @@
 // adds colour images (rgb) and jpeg tiles to tiled_raster layers.
 // On load, every element with a data-aob-scene attribute is rendered from
 // the JSON script it names and the blob scripts that point at it.
+//
+// A served page (decision 0006) carries no blob scripts. Its element has
+// data-aob-blob-base (for example "blob/"), and render() is given that as
+// options.blobBase: a blob key with no delivered bytes is then fetched from
+// blobBase + encodeURIComponent(key), relative to the page, so a key with
+// "/", "@" or "+" is one path segment. options.blobKeys lists the keys the
+// server has (a <script type="application/json" data-aob-blob-keys>); a
+// tiled raster fetches a tile from the blob base only when its key is
+// listed, and otherwise reads the cog by range requests as before.
 import { Deck, OrthographicView, _GlobeView as GlobeView, COORDINATE_SYSTEM } from "@deck.gl/core";
 import { decodeBase64, readTable } from "./arrow.js";
 import { buildLayer } from "./layers.js";
@@ -66,10 +75,26 @@ function crsLabel(crs) {
   return method || crs.name || "PROJJSON";
 }
 
-async function loadBytes(ref, id, blobs) {
+// The URL of a blob under a blob base: the key is one path segment.
+function blobUrl(base, key) {
+  return base + encodeURIComponent(key);
+}
+
+// Fetch one blob from the blob base; `what` names it in errors.
+async function fetchBlob(base, key, what, signal) {
+  const url = blobUrl(base, key);
+  const res = await fetch(url, signal ? { signal } : undefined);
+  if (!res.ok) throw new Error(`${what}: blob "${key}" was not delivered (${url} returned ${res.status})`);
+  return new Uint8Array(await res.arrayBuffer());
+}
+
+async function loadBytes(ref, id, blobs, blobBase) {
   if (ref.blob !== undefined) {
     const b = blobs[ref.blob];
-    if (b === undefined) throw new Error(`data ${id}: blob "${ref.blob}" was not delivered`);
+    if (b === undefined) {
+      if (typeof blobBase === "string") return fetchBlob(blobBase, ref.blob, `data ${id}`);
+      throw new Error(`data ${id}: blob "${ref.blob}" was not delivered`);
+    }
     if (typeof b === "string") return decodeBase64(b.trim());
     return b instanceof Uint8Array ? b : new Uint8Array(b);
   }
@@ -124,6 +149,8 @@ export async function render(container, scene, options = {}) {
   // Rendering again into a container replaces its scene: stop the old one.
   if (teardowns.has(container)) teardowns.get(container)();
   const blobs = options.blobs || {};
+  const blobBase = typeof options.blobBase === "string" ? options.blobBase : null;
+  const blobKeys = new Set(blobBase !== null && options.blobKeys ? options.blobKeys : []);
   const warnings = [];
   const errors = [];
   const warn = (m) => {
@@ -164,7 +191,7 @@ export async function render(container, scene, options = {}) {
     const tables = {};
     // Arrow tables are read whole; a cog is read tile by tile by its layers.
     const ids = Object.keys(scene.data).filter((id) => scene.data[id].format !== "cog");
-    const bytes = await Promise.all(ids.map((id) => loadBytes(scene.data[id], id, blobs)));
+    const bytes = await Promise.all(ids.map((id) => loadBytes(scene.data[id], id, blobs, blobBase)));
     let total = 0;
     ids.forEach((id, i) => {
       total += bytes[i].length;
@@ -180,6 +207,8 @@ export async function render(container, scene, options = {}) {
       scene,
       tables,
       blobs,
+      // A tile blob the page does not carry but the server has (decision 0006).
+      servedBlob: (key, what, signal) => (blobKeys.has(key) ? fetchBlob(blobBase, key, what, signal) : null),
       warn,
       error: layerError,
       pending: (d) => {
@@ -539,16 +568,31 @@ export async function render(container, scene, options = {}) {
   }
 }
 
-// Read a scene and its blobs from script elements in the page.
-export function fromPage(sceneId) {
+// Read a scene and its blobs from script elements in the page. A served
+// page's element (`container`, by default the first non-script element
+// naming the scene) gives a blob base, and a JSON script lists the keys the
+// server has; both are returned only when the page has them.
+export function fromPage(sceneId, container) {
   const s = document.getElementById(sceneId);
   if (!s) throw new Error(`no scene script with id ${sceneId}`);
   const scene = JSON.parse(s.textContent);
   const blobs = {};
+  let blobKeys;
   document.querySelectorAll("script[data-aob-blob]").forEach((b) => {
     if (b.getAttribute("data-aob-scene") === sceneId) blobs[b.getAttribute("data-aob-blob")] = b.textContent;
   });
-  return { scene, blobs };
+  document.querySelectorAll("script[data-aob-blob-keys]").forEach((b) => {
+    if (b.getAttribute("data-aob-scene") === sceneId) blobKeys = JSON.parse(b.textContent);
+  });
+  const host = container ||
+    [...document.querySelectorAll("[data-aob-scene]:not(script)")].find((e) => e.getAttribute("data-aob-scene") === sceneId);
+  const out = { scene, blobs };
+  if (host && host.hasAttribute("data-aob-blob-base")) out.blobBase = host.getAttribute("data-aob-blob-base");
+  if (blobKeys !== undefined) {
+    if (!Array.isArray(blobKeys)) throw new Error(`scene ${sceneId}: data-aob-blob-keys is not an array`);
+    out.blobKeys = blobKeys;
+  }
+  return out;
 }
 
 export function boot() {
@@ -558,9 +602,9 @@ export function boot() {
     c.dataset.aobStatus = "loading";
     let p;
     try {
-      const { scene, blobs } = fromPage(c.getAttribute("data-aob-scene"));
+      const { scene, blobs, blobBase, blobKeys } = fromPage(c.getAttribute("data-aob-scene"), c);
       // The handle is kept on the element for tools and tests.
-      p = render(c, scene, { blobs }).then((h) => {
+      p = render(c, scene, { blobs, blobBase, blobKeys }).then((h) => {
         c.aob = h;
         return h;
       });

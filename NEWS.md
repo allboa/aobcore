@@ -1,5 +1,29 @@
 # aobcore 0.0.0.9000
 
+* First steps of the local server transport (decision 0006 in
+  allboa/design; #30, #31, #32). Nothing is served yet; embedded pages are
+  byte-identical to before, blob order included.
+  - `write_scene_html()` builds its page with an internal page builder that
+    has an inline mode (the embedded page, unchanged) and a linked mode (the
+    page a server answers: the renderer by `src`, no blob scripts, a
+    `data-aob-blob-base` attribute on the page element and the served blob
+    keys in one JSON script).
+  - The bundled renderer fetches a blob the page does not carry from the
+    blob base plus `encodeURIComponent(key)`, so keys with `/`, `@` and `+`
+    are one path segment. A tiled raster takes a tile from the blob base
+    only when the page lists its key, and otherwise reads the COG by range
+    requests as before. A missing blob with no blob base is an error as
+    before.
+  - `scene_add_tiled_raster(embed = FALSE)` on a local COG registers the
+    file in the scene's `"files"` attribute (normalized path, size,
+    modification time, and whether `url` was given explicitly) and reads no
+    tile bytes; the scene JSON never sees the path. `write_scene_html()` on
+    such a scene warns that the page cannot read the file from disk, and
+    `embed = FALSE` on a `/vsimem/` COG (with no `url`) is an error that
+    says to embed it or write it to a file.
+  - `tools/write-scenes.R` also writes served pages in the server's route
+    layout, and `js/screenshots.mjs --serve` draws them over loopback HTTP.
+
 * The bundled renderer no longer drops clicks when picking is slow (#26).
   deck.gl picked on every press and dropped a click whose press outlasted
   its tap time limit, which a pick of a heavy polygon layer with software
