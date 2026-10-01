@@ -1,5 +1,43 @@
 # aobcore 0.0.0.9000
 
+* Selections from a served page come back to R over a websocket (decision
+  0007 in allboa/design; #39, #40). It needs 'jsonlite' (in Suggests);
+  without it pages are served as before, with no socket, and
+  `serve_scene()` says so once per session. See `?serve_scene_socket`.
+  - `serve_scene()`'s server takes a websocket at `/<token>/ws` only. The
+    path (else 404, silent), the `Host` (else 403, warned as for every
+    route) and the `Origin` (else 403) are checked in `onHeaders()` and
+    again, first, in `onWSOpen()`, which closes a refused socket with 1008
+    before registering or counting anything, since httpuv 1.6.17 switches
+    protocols even after a refusal. Allowed origins are
+    `http://127.0.0.1:<port>`, `http://localhost:<port>`, and `http://H`
+    and `https://H` for each `aobcore.serve_hosts` value `H`; a missing
+    `Origin` is refused. `Origin` refusals warn with the value escaped and
+    cut to 80 bytes, for the first 5 distinct values per server, then once
+    more. Every other upgrade answers 404 and is closed, as before.
+  - Text frames only (binary: 1003), at most
+    `getOption("aobcore.ws_max_message", 2^20)` bytes (1009, warned),
+    UTF-8 JSON objects with a string `type` (else 1007, never httpuv's
+    1011), `hello` first (else 1008), protocol 1 (else 4000), at most 8
+    pages at once (1013, warned). An error in R closes with 1011 and a
+    warning. `stop()` closes every socket with 1001.
+  - Protocol 1: the page sends `hello`, `select` (its whole selection, as
+    0-based Arrow rows per layer) and `view`; R answers `hello` (connection
+    number, scene serial, spec version, selectable layers and size cap) and
+    sends `reload` when `serve_scene(server = srv)` replaces the scene,
+    which gives it a new serial and clears the selection. Messages for
+    another serial or with a stale `seq` are dropped silently; bad fields
+    drop the message with one warning per page and type.
+  - The served page carries `data-aob-scene-serial` and, with a socket,
+    `data-aob-socket="ws"` on its page element. Embedded pages are
+    unchanged.
+  - The handle gains `selection()` (1-based Arrow rows per layer id, with
+    `at`, `trigger`, `connection`, `seq`, `time` and `scene` attributes),
+    `view_state()`, `wait()`, `on()` and `connections()`, and
+    `serve_scene(select = )` names the selectable layers (default every
+    vector layer). `wait()` inside an `on()` callback is an error, and the
+    reads there skip running the event loop.
+
 * `serve_scene()` serves a scene from a local HTTP server (decision 0006 in
   allboa/design; #33, #34, #35), with httpuv in Suggests. The browser
   reads a local COG added with `scene_add_tiled_raster(embed = FALSE)` by
@@ -30,7 +68,7 @@
     carry `X-Content-Type-Options: nosniff`, the page sends no referrer,
     `HEAD` sends headers only, and an undecodable path segment (such as
     `%00`) is 404.
-  - The server accepts no websockets (until decision 0007 adds one): an
+  - The server accepted no websockets (until decision 0007 added one): an
     upgrade request on any path, with or without the token, answers 404,
     and httpuv's socket (which httpuv 1.6.17 opens even after a refusal)
     is closed at once. Before, any page, from any origin, could open one

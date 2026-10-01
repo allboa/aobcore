@@ -13,7 +13,8 @@ serve_scene(
   title = NULL,
   theme = c("auto", "light", "dark"),
   server = NULL,
-  own = NULL
+  own = NULL,
+  select = NULL
 )
 }
 \arguments{
@@ -47,10 +48,17 @@ files are left behind if R crashes or is killed (for example by
 SIGTERM) before the server stops; those in \code{\link[=tempdir]{tempdir()}} still go with
 R's temporary directory. Two servers owning the same path conflict:
 the first to stop deletes it.}
+
+\item{select}{The layers the page lets the viewer select, by id: \code{NULL}
+(the default) for every vector layer (\code{point}, \code{path} and \code{polygon}),
+a character vector of vector layer ids, or \code{character(0)} for none.
+Ignored without 'jsonlite'.}
 }
 \value{
 A handle of class \code{"aob_server"}, invisibly: a list with \code{url},
-\code{port}, \code{token} and \code{stop()}.
+\code{port}, \code{token}, \code{stop()}, and the selection functions \code{selection()},
+\code{view_state()}, \code{wait()}, \code{on()} and \code{connections()} (see
+\link{serve_scene_socket}).
 }
 \description{
 Starts a small HTTP server on \verb{127.0.0.1} that answers the page for
@@ -96,16 +104,27 @@ warning, once per distinct \code{Host}) unless listed in
 \code{getOption("aobcore.serve_hosts")}, for an IDE proxy that forwards
 requests with its own \code{Host}. There are no CORS headers, responses carry
 \code{X-Content-Type-Options: nosniff}, the page sends no referrer, and only
-the registered files can be read. Websocket upgrades are refused (404)
-and any socket is closed at once. The token is not authentication:
+the registered files can be read. The token is not authentication:
 anyone who sees the URL can read the scene while it is served.
+
+\strong{Selections} (decision 0007). With the 'jsonlite' package, the server
+also takes a websocket at \verb{/<token>/ws}, through which the page sends the
+viewer's selection and settled view back to R; see \link{serve_scene_socket}
+for the messages, the checks and the handle's \code{selection()},
+\code{view_state()}, \code{wait()}, \code{on()} and \code{connections()}. \code{select} names the
+layers the page lets the viewer select. Without 'jsonlite' the page is
+served as before, with no socket, and \code{serve_scene()} says so once per
+session.
 
 \strong{Lifecycle.} Each call starts its own server, unless \code{server} names a
 running one: its scene is then replaced, with the same URL. The handle has
 \code{url}, \code{port}, \code{token} and \code{stop()}. Servers are kept in a registry, so
 losing the handle does not stop one; \code{\link[=scene_servers]{scene_servers()}} lists them,
 \code{\link[=stop_scene_servers]{stop_scene_servers()}} stops them all, and all stop when the R session
-ends or aobcore is unloaded. httpuv answers requests only while R is idle
+ends or aobcore is unloaded. \code{stop()} first closes every page's socket
+(code 1001). \code{serve_scene(scene, server = srv)} gives the new scene a new
+serial number, clears the selection and tells each connected page to
+reload itself. httpuv answers requests only while R is idle
 at the prompt, so a long computation stalls the page; in \code{Rscript} the
 server stops when the script ends, and \code{serve_scene()} warns when the
 session is not interactive.
@@ -118,5 +137,5 @@ srv$stop()
 \dontshow{\}) # examplesIf}
 }
 \seealso{
-\code{\link[=scene_servers]{scene_servers()}}, \code{\link[=stop_scene_servers]{stop_scene_servers()}}.
+\code{\link[=scene_servers]{scene_servers()}}, \code{\link[=stop_scene_servers]{stop_scene_servers()}}, \link{serve_scene_socket}.
 }

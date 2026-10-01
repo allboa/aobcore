@@ -44,16 +44,27 @@
 #' `getOption("aobcore.serve_hosts")`, for an IDE proxy that forwards
 #' requests with its own `Host`. There are no CORS headers, responses carry
 #' `X-Content-Type-Options: nosniff`, the page sends no referrer, and only
-#' the registered files can be read. Websocket upgrades are refused (404)
-#' and any socket is closed at once. The token is not authentication:
+#' the registered files can be read. The token is not authentication:
 #' anyone who sees the URL can read the scene while it is served.
+#'
+#' **Selections** (decision 0007). With the 'jsonlite' package, the server
+#' also takes a websocket at `/<token>/ws`, through which the page sends the
+#' viewer's selection and settled view back to R; see [serve_scene_socket]
+#' for the messages, the checks and the handle's `selection()`,
+#' `view_state()`, `wait()`, `on()` and `connections()`. `select` names the
+#' layers the page lets the viewer select. Without 'jsonlite' the page is
+#' served as before, with no socket, and `serve_scene()` says so once per
+#' session.
 #'
 #' **Lifecycle.** Each call starts its own server, unless `server` names a
 #' running one: its scene is then replaced, with the same URL. The handle has
 #' `url`, `port`, `token` and `stop()`. Servers are kept in a registry, so
 #' losing the handle does not stop one; [scene_servers()] lists them,
 #' [stop_scene_servers()] stops them all, and all stop when the R session
-#' ends or aobcore is unloaded. httpuv answers requests only while R is idle
+#' ends or aobcore is unloaded. `stop()` first closes every page's socket
+#' (code 1001). `serve_scene(scene, server = srv)` gives the new scene a new
+#' serial number, clears the selection and tells each connected page to
+#' reload itself. httpuv answers requests only while R is idle
 #' at the prompt, so a long computation stalls the page; in `Rscript` the
 #' server stops when the script ends, and `serve_scene()` warns when the
 #' session is not interactive.
@@ -81,9 +92,15 @@
 #'   SIGTERM) before the server stops; those in [tempdir()] still go with
 #'   R's temporary directory. Two servers owning the same path conflict:
 #'   the first to stop deletes it.
+#' @param select The layers the page lets the viewer select, by id: `NULL`
+#'   (the default) for every vector layer (`point`, `path` and `polygon`),
+#'   a character vector of vector layer ids, or `character(0)` for none.
+#'   Ignored without 'jsonlite'.
 #' @return A handle of class `"aob_server"`, invisibly: a list with `url`,
-#'   `port`, `token` and `stop()`.
-#' @seealso [scene_servers()], [stop_scene_servers()].
+#'   `port`, `token`, `stop()`, and the selection functions `selection()`,
+#'   `view_state()`, `wait()`, `on()` and `connections()` (see
+#'   [serve_scene_socket]).
+#' @seealso [scene_servers()], [stop_scene_servers()], [serve_scene_socket].
 #' @export
 #' @examplesIf interactive() && requireNamespace("httpuv", quietly = TRUE)
 #' srv <- serve_scene(probe_scene())
@@ -91,7 +108,8 @@
 #' srv$stop()
 serve_scene <- function(scene, blobs = attr(scene, "blobs"), files = attr(scene, "files"),
                         port = NULL, open = interactive(), title = NULL,
-                        theme = c("auto", "light", "dark"), server = NULL, own = NULL) {
+                        theme = c("auto", "light", "dark"), server = NULL, own = NULL,
+                        select = NULL) {
   if (!has_httpuv()) {
     stop("serve_scene() needs the 'httpuv' package; install it with ",
          "install.packages(\"httpuv\").", call. = FALSE)
@@ -112,11 +130,18 @@ serve_scene <- function(scene, blobs = attr(scene, "blobs"), files = attr(scene,
     stop("`own` must be a character vector of paths.", call. = FALSE)
   }
   own <- owned_records(own)
-  content <- serve_content(scene, blobs %||% list(), files %||% list(), title, theme)
+  socket <- has_jsonlite()
+  if (!socket) tell_no_jsonlite()
+  serial <- if (is.null(server)) 1L else server$state$serial + 1L
+  content <- serve_content(scene, blobs %||% list(), files %||% list(), title, theme,
+                           serial = serial, socket = socket)
+  sel <- select_layers(scene, select)
+  if (!socket) sel <- character()
 
   if (!is.null(server)) {
     state <- server$state
     serve_set(state, content, own)
+    ws_new_scene(state, scene, sel, serial, socket)
     if (isTRUE(open)) open_url(state$url)
     return(invisible(server))
   }
@@ -135,9 +160,11 @@ serve_scene <- function(scene, blobs = attr(scene, "blobs"), files = attr(scene,
   state$warned_hosts <- character()
   state$renderer <- renderer_js()
   serve_set(state, content, own)
+  ws_init(state)
+  ws_new_scene(state, scene, sel, serial, socket)
   app <- list(call = function(req) serve_request(state, req),
-              onHeaders = refuse_upgrade,
-              onWSOpen = close_websocket)
+              onHeaders = function(req) ws_on_headers(state, req),
+              onWSOpen = function(ws) ws_on_open(state, ws))
   ## The token's draw already said if the source is the weaker one.
   candidates <- if (is.null(port)) random_ports(20L, quiet = TRUE) else check_port(port)
   handle <- NULL
@@ -154,7 +181,14 @@ serve_scene <- function(scene, blobs = attr(scene, "blobs"), files = attr(scene,
   state$url <- paste0("http://127.0.0.1:", p, "/", token, "/")
   state$running <- TRUE
   srv <- structure(list(url = state$url, port = state$port, token = token,
-                        stop = function() server_stop(state), state = state),
+                        stop = function() server_stop(state),
+                        selection = function() ws_selection(state),
+                        view_state = function() ws_view_state(state),
+                        wait = function(type = c("select", "view"), timeout = Inf)
+                          ws_wait(state, type, timeout),
+                        on = function(type, f) ws_on(state, type, f),
+                        connections = function() ws_connections(state),
+                        state = state),
                    class = "aob_server")
   assign(token, srv, envir = servers)
   if (isTRUE(open)) open_url(state$url)
@@ -167,6 +201,10 @@ print.aob_server <- function(x, ...) {
   cat("<aob_server> ", x$url, "\n", sep = "")
   cat("  ", length(st$blobs), " blobs, ", length(st$files), " files, ",
       if (isTRUE(st$running)) "running" else "stopped", "\n", sep = "")
+  if (isTRUE(st$running) && isTRUE(st$socket)) {
+    n <- length(st$conns)
+    cat("  ", n, if (n == 1L) " page" else " pages", " connected\n", sep = "")
+  }
   invisible(x)
 }
 
@@ -218,7 +256,7 @@ keep_seed <- function(expr) {
 servers <- new.env(parent = emptyenv())
 
 ## The page, blobs and files one server answers, checked.
-serve_content <- function(scene, blobs, files, title, theme) {
+serve_content <- function(scene, blobs, files, title, theme, serial = NULL, socket = FALSE) {
   check_blobs(blobs)
   check_files(files)
   dots <- intersect(names(blobs), c(".", ".."))
@@ -266,7 +304,8 @@ serve_content <- function(scene, blobs, files, title, theme) {
            "arrow-ipc-stream" = "application/vnd.apache.arrow.stream",
            "application/octet-stream")
   }, "")
-  page <- scene_page(served, blobs, title = title, theme = theme, mode = "linked")
+  page <- scene_page(served, blobs, title = title, theme = theme, mode = "linked",
+                     serial = serial, socket = socket)
   list(page = charToRaw(paste0("<!DOCTYPE html>\n", page, "\n")), blobs = blobs,
        types = types, files = routes)
 }
@@ -370,12 +409,13 @@ check_file_unchanged <- function(id, rec, signal) {
   NULL
 }
 
-## The server accepts no websockets (until decision 0007 adds one). Without
-## onWSOpen, httpuv would accept any upgrade and print "attempt to apply
-## non-function" to the console, which any web page can trigger. A refusal
-## in onHeaders alone is not enough: httpuv 1.6.17 still switches protocols
-## and calls onWSOpen afterwards, so that closes the socket at once and
-## keeps nothing. Other requests go on to `call` (NULL).
+## Refuse a websocket upgrade outright, as a server without a socket (no
+## jsonlite) does. Without onWSOpen, httpuv would accept any upgrade and
+## print "attempt to apply non-function" to the console, which any web page
+## can trigger. A refusal in onHeaders alone is not enough: httpuv 1.6.17
+## still switches protocols and calls onWSOpen afterwards, so that closes
+## the socket at once and keeps nothing. Other requests go on to `call`
+## (NULL). See serve-ws.R for the socket itself.
 refuse_upgrade <- function(req) {
   if (is_upgrade(req)) not_found() else NULL
 }
@@ -409,18 +449,8 @@ serve_get <- function(state, req) {
   method <- req$REQUEST_METHOD
   path <- req$PATH_INFO
   host <- req$HTTP_HOST %||% ""
-  allowed <- c(paste0(c("127.0.0.1:", "localhost:"), state$port),
-               as.character(getOption("aobcore.serve_hosts")))
-  if (!host %in% allowed) {
-    ## The Host is the requester's bytes: escaped and cut short before it
-    ## reaches the console, and warned about once per server.
-    shown <- safe_text(host, 80L)
-    if (!host %in% state$warned_hosts) {
-      state$warned_hosts <- c(state$warned_hosts, host)
-      warning("aobcore server ", state$url, " refused a request with Host ", shown,
-              ". Only if this is your IDE proxy's host, allow it with ",
-              "options(aobcore.serve_hosts = ", shown, ").", call. = FALSE)
-    }
+  if (!host_allowed(state, host)) {
+    warn_host(state, host)
     return(serve_response(403L, "Forbidden"))
   }
   if (!method %in% c("GET", "HEAD")) {
@@ -456,6 +486,23 @@ serve_get <- function(state, req) {
     return(serve_file(id, f, req$HTTP_RANGE))
   }
   not_found()
+}
+
+host_allowed <- function(state, host) {
+  allowed <- c(paste0(c("127.0.0.1:", "localhost:"), state$port),
+               as.character(getOption("aobcore.serve_hosts")))
+  is.character(host) && length(host) == 1L && host %in% allowed
+}
+
+## The Host is the requester's bytes: escaped and cut short before it
+## reaches the console, and warned about once per server.
+warn_host <- function(state, host) {
+  if (host %in% state$warned_hosts) return(invisible())
+  state$warned_hosts <- c(state$warned_hosts, host)
+  shown <- safe_text(host, 80L)
+  warning("aobcore server ", state$url, " refused a request with Host ", shown,
+          ". Only if this is your IDE proxy's host, allow it with ",
+          "options(aobcore.serve_hosts = ", shown, ").", call. = FALSE)
 }
 
 ## One registered file, whole or one byte range.
@@ -544,6 +591,7 @@ safe_text <- function(x, max) {
 server_stop <- function(state) {
   if (isTRUE(state$running)) {
     state$running <- FALSE
+    ws_close_all(state, 1001L, "server stopping")
     keep_seed(try(httpuv::stopServer(state$httpuv), silent = TRUE))
   }
   if (exists(state$token, envir = servers, inherits = FALSE)) rm(list = state$token, envir = servers)

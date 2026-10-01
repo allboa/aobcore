@@ -81,11 +81,15 @@ write_scene_html <- function(scene, blobs = attr(scene, "blobs"), file = tempfil
 ##   the keys the server delivers are listed in one JSON script
 ##   (data-aob-blob-keys), which tells a tiled raster which tiles have a
 ##   blob; and the renderer is loaded from "aob-renderer.min.js" beside
-##   the page.
+##   the page. A served page also carries the scene serial its server gave
+##   it (data-aob-scene-serial, `serial`) and, when the server takes a
+##   websocket, data-aob-socket="ws": the socket's URL relative to the page
+##   (decision 0007). Inline pages carry neither.
 ##
 ## `blobs` has been checked (check_blobs(), check_scene_shape()) and holds
 ## only the blobs the scene uses; in "linked" mode only its names are used.
-scene_page <- function(scene, blobs, title, theme, mode = c("inline", "linked")) {
+scene_page <- function(scene, blobs, title, theme, mode = c("inline", "linked"),
+                       serial = NULL, socket = FALSE) {
   mode <- match.arg(mode)
   sid <- "aob-scene"
   linked <- mode == "linked"
@@ -124,7 +128,9 @@ scene_page <- function(scene, blobs, title, theme, mode = c("inline", "linked"))
     ),
     htmltools::tags$body(
       htmltools::tags$div(class = "aob-page", `data-aob-scene` = sid,
-                          `data-aob-blob-base` = if (linked) "blob/"),
+                          `data-aob-blob-base` = if (linked) "blob/",
+                          `data-aob-scene-serial` = if (linked && !is.null(serial)) format(serial),
+                          `data-aob-socket` = if (linked && isTRUE(socket)) "ws"),
       htmltools::tags$script(type = "application/json", id = sid, htmltools::HTML(page_json(scene))),
       blob_tags,
       renderer
