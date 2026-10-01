@@ -24,7 +24,9 @@
 //    and in an EPSG:3031 view a click on a point selects it and its popup
 //    shows the named columns (closed by Escape or the keyboard), a point
 //    popup follows the pointer over a polygon, and a missing popup column
-//    is a layer error. In Node, cell text and legend helpers.
+//    is a layer error. A click still selects when its press is held 1.5 s
+//    or every pick takes 1.5 s, and a drag or a double click (which zooms)
+//    does not select. In Node, cell text and legend helpers.
 // Also in Node: the range reader keeps a whole-file (200) response, and the
 // tile cache evicts least recently used idle tiles.
 // Set CHROMIUM_PATH to pick a browser; SKIP_BROWSER=1 runs only part 1.
@@ -641,6 +643,83 @@ try {
       assert.equal((await popupState()).trigger, "select");
       console.log("ok   0.5 popup: trigger point acts as select with no hover");
     }
+
+    // A click selects whatever the length of the press or the pick (#26):
+    // deck.gl's tap is dropped when its press lasts over its time limit,
+    // and its pointerdown pick can take seconds with software rendering.
+    const closed = () => document.querySelector(".aob-popup").hidden && !document.getElementById("c").dataset.aobSelected;
+    await page.mouse.move(xe, ye);
+    await page.waitForTimeout(350);
+    await page.mouse.move(x0, y0);
+    await page.mouse.down();
+    await page.waitForTimeout(1500);
+    await page.mouse.up();
+    await page.waitForFunction(popupRow, 0, { timeout: 5000 });
+    await page.keyboard.press("Escape");
+    // Every pick (its draw and read-back) now takes 1.5 s. The press
+    // itself does not pick.
+    await page.evaluate(() => {
+      const picker = window.h.deck.deckPicker;
+      window.slowPicks = 0;
+      window.fastPick = picker._drawAndSample;
+      picker._drawAndSample = function (...args) {
+        window.slowPicks++;
+        const t = performance.now();
+        while (performance.now() - t < 1500);
+        return window.fastPick.apply(this, args);
+      };
+    });
+    await page.waitForTimeout(350);
+    await page.mouse.move(x2, y2);
+    await page.waitForTimeout(2000); // let a hover pick finish
+    const before = await page.evaluate(() => window.slowPicks);
+    const t0 = Date.now();
+    await page.mouse.down();
+    const downMs = Date.now() - t0;
+    assert.equal(await page.evaluate(() => window.slowPicks), before, "a press does not pick");
+    assert.ok(downMs < 1000, `a press is not blocked by a pick (${downMs} ms)`);
+    await page.waitForTimeout(1200);
+    await page.mouse.up();
+    await page.waitForFunction(popupRow, 2, { timeout: 10000 });
+    assert.equal((await popupState()).trigger, "select");
+    await page.keyboard.press("Escape");
+    await page.evaluate(() => { window.h.deck.deckPicker._drawAndSample = window.fastPick; });
+    // A drag that starts on a feature pans and selects nothing, even one
+    // that comes back to where it started.
+    const v0 = await page.evaluate(() => window.h.view());
+    // Put the camera back. handle.setView() only moves deck's camera when
+    // the view has bounds, so set deck's initial view state as well.
+    const resetView = (v) => page.evaluate((v) => {
+      window.h.deck.setProps({ initialViewState: { ...v, resetKey: Math.random() } });
+      window.h.setView(v);
+    }, v);
+    await page.waitForTimeout(350);
+    await page.mouse.move(x0, y0);
+    await page.mouse.down();
+    await page.mouse.move(x0 + 60, y0 + 30, { steps: 6 });
+    await page.mouse.up();
+    await page.waitForTimeout(800);
+    assert.ok(await page.evaluate(closed), "a drag does not select");
+    const v1 = await page.evaluate(() => window.h.view());
+    assert.ok(Math.abs(v1.target[0] - v0.target[0]) > 1, "a drag pans");
+    await resetView(v0);
+    await page.waitForTimeout(350);
+    await page.mouse.move(x0, y0);
+    await page.mouse.down();
+    await page.mouse.move(x0 + 40, y0, { steps: 4 });
+    await page.mouse.move(x0, y0, { steps: 4 });
+    await page.mouse.up();
+    await page.waitForTimeout(800);
+    assert.ok(await page.evaluate(closed), "a drag back to its start does not select");
+    await resetView(v0);
+    // A double click on a feature zooms in and does not select it.
+    await page.waitForTimeout(350);
+    await page.mouse.dblclick(x0, y0);
+    await page.waitForFunction((z) => window.h.view().zoom > z + 0.5, v0.zoom, { timeout: 5000 });
+    await page.waitForTimeout(800);
+    assert.ok(await page.evaluate(closed), "a double click does not select");
+    await resetView(v0);
+    console.log("ok   0.5 popup: a long press or a slow pick still selects; a drag or double click does not");
 
     // Hiding a layer hides its legend and closes its popup.
     await page.mouse.move(xe, ye);
