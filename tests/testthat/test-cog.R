@@ -480,3 +480,30 @@ test_that("embed = FALSE on a /vsimem/ COG is an error", {
   s <- scene_add_tiled_raster(scene("EPSG:3031"), "sst", plan)
   expect_null(attr(s, "files"))
 })
+
+test_that("a local COG rewritten after cog_info() is refused", {
+  skip_if_no_gdal()
+  f <- tempfile(fileext = ".tif")
+  on.exit(unlink(f))
+  file.copy(fixture("polar_3031.tif"), f)
+  cog <- cog_info(f)
+  expect_identical(cog$size, file.size(f))
+  expect_identical(cog$mtime, file.mtime(f))
+  plan <- cog_plan(cog, "EPSG:3031", levels = 3)
+  s <- scene_add_tiled_raster(scene("EPSG:3031"), "sst", plan, embed = FALSE, range = c(0, 1))
+  expect_identical(attr(s, "files")$sst[c("size", "mtime")], list(size = cog$size, mtime = cog$mtime))
+  ## A new modification time, then new bytes: refused embedded or not.
+  Sys.setFileTime(f, cog$mtime + 60)
+  expect_error(scene_add_tiled_raster(scene("EPSG:3031"), "sst", plan, embed = FALSE, range = c(0, 1)),
+               "has changed since cog_info\\(\\).*plan it again")
+  expect_error(scene_add_tiled_raster(scene("EPSG:3031"), "sst", plan, range = c(0, 1)),
+               "has changed since cog_info\\(\\)")
+  unlink(f)
+  expect_error(scene_add_tiled_raster(scene("EPSG:3031"), "sst", plan, range = c(0, 1)),
+               "is gone since cog_info\\(\\)")
+  ## A remote or /vsimem/ COG carries no size or time.
+  m <- "/vsimem/aob-test-mtime.tif"
+  gdalraster::vsi_copy_file(fixture("polar_3031.tif"), m)
+  on.exit(gdalraster::vsi_unlink(m), add = TRUE)
+  expect_null(cog_info(m)$size)
+})

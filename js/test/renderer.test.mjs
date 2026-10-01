@@ -32,7 +32,9 @@
 //    encodeURIComponent(key) (a key with "/", "@" and "+" round-trips),
 //    a tiled raster takes listed tile blobs from the base and nothing by
 //    range, an unlisted tile is read by range as before, and a missing blob
-//    with no base is still an error (with a base, one that names the 404).
+//    with no base is still an error (with a base, one that names the 404,
+//    and a network failure names the key and URL); rendering again into
+//    the same element aborts the first render's blob fetches.
 // Also in Node: the range reader keeps a whole-file (200) response, and the
 // tile cache evicts least recently used idle tiles.
 // Set CHROMIUM_PATH to pick a browser; SKIP_BROWSER=1 runs only part 1.
@@ -780,16 +782,34 @@ ${keys === null ? "" : `<script type="application/json" data-aob-blob-keys data-
     ranged: [linked(tiled.scene, Object.keys(meshBlobs)), meshBlobs],
     nobase: [linked(rasterScene, null, null), {}],
     gone: [linked(rasterScene, []), {}],
+    // A blob base no server answers: a network failure, not a status.
+    netfail: [linked(rasterScene, [odd], "http://127.0.0.1:1/blob/"), {}],
   };
+  let slowAborted = null;
   const seen = { blob: [], range: [], whole: 0, other: [] };
   const server = createServer((req, res) => {
     const m = /^\/([a-z]+)\/(.*)$/.exec(req.url);
-    const site = m && sites[m[1]];
+    const site = m && (sites[m[1]] || (m[1] === "slow" ? [] : null));
     if (!site) {
       res.writeHead(404);
       return res.end();
     }
-    const rest = m[2];
+    const rest = m && m[2];
+    if (m && m[1] === "slow") {
+      // Answers after 3 s, unless the request is aborted first.
+      slowAborted = false;
+      const timer = setTimeout(() => {
+        res.writeHead(200, { "content-type": "application/vnd.apache.arrow.stream" });
+        res.end(values);
+      }, 3000);
+      res.on("close", () => {
+        if (!res.writableEnded) {
+          slowAborted = true;
+          clearTimeout(timer);
+        }
+      });
+      return;
+    }
     if (rest === "") {
       res.writeHead(200, { "content-type": "text/html" });
       return res.end(site[0]);
@@ -896,6 +916,32 @@ ${keys === null ? "" : `<script type="application/json" data-aob-blob-keys data-
     assert.equal(x.status, "error");
     assert.match(x.line, /data values: blob "v\/a@b\+c d" was not delivered \(blob\/v%2Fa%40b%2Bc%20d returned 404\)/);
     console.log("ok   a blob the server does not have is an error naming the 404");
+
+    const nf = await state("/netfail/");
+    assert.equal(nf.status, "error");
+    assert.match(nf.line, /data values: blob "v\/a@b\+c d" could not be fetched from http:\/\/127\.0\.0\.1:1\/blob\/v%2Fa%40b%2Bc%20d: /);
+    console.log("ok   a network failure fetching a blob is an error naming the key and URL");
+
+    // Rendering again into the container aborts the first render's fetches,
+    // and the first render leaves the container to the second.
+    const page = await browser7.newPage({ viewport: { width: 900, height: 700 } });
+    await page.goto(base + "/raster/");
+    await page.waitForFunction(() => document.querySelector("div[data-aob-scene]").dataset.aobStatus === "ready", null, { timeout: 60000 });
+    const ab = await page.evaluate(async (sc) => {
+      const c = document.querySelector("div[data-aob-scene]");
+      const first = aob.render(c, sc, { blobBase: "/slow/blob/" }).then(() => "resolved", (e) => e.name);
+      await new Promise((r) => setTimeout(r, 300));
+      const second = await aob.render(c, sc, { blobBase: "blob/" });
+      const r1 = await first;
+      await new Promise((r) => setTimeout(r, 300));
+      return { r1, status: c.dataset.aobStatus, errors: second.errors.length, line: c.querySelector(".aob-status").textContent };
+    }, rasterScene);
+    await page.close();
+    assert.equal(ab.r1, "AbortError");
+    assert.equal(ab.errors, 0);
+    assert.equal(ab.line, "");
+    assert.equal(slowAborted, true, "the slow blob request was aborted");
+    console.log("ok   rendering again aborts the first render's blob fetches");
     assert.deepEqual(seen.other, []);
   } finally {
     await browser7.close();

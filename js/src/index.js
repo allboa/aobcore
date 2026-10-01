@@ -80,25 +80,32 @@ function blobUrl(base, key) {
   return base + encodeURIComponent(key);
 }
 
-// Fetch one blob from the blob base; `what` names it in errors.
+// Fetch one blob from the blob base; `what` names it in errors. A network
+// failure is an error naming the key and URL; an abort stays an abort.
 async function fetchBlob(base, key, what, signal) {
   const url = blobUrl(base, key);
-  const res = await fetch(url, signal ? { signal } : undefined);
+  let res;
+  try {
+    res = await fetch(url, signal ? { signal } : undefined);
+  } catch (err) {
+    if (signal && signal.aborted) throw err;
+    throw new Error(`${what}: blob "${key}" could not be fetched from ${url}: ${err && err.message ? err.message : err}`);
+  }
   if (!res.ok) throw new Error(`${what}: blob "${key}" was not delivered (${url} returned ${res.status})`);
   return new Uint8Array(await res.arrayBuffer());
 }
 
-async function loadBytes(ref, id, blobs, blobBase) {
+async function loadBytes(ref, id, blobs, blobBase, signal) {
   if (ref.blob !== undefined) {
     const b = blobs[ref.blob];
     if (b === undefined) {
-      if (typeof blobBase === "string") return fetchBlob(blobBase, ref.blob, `data ${id}`);
+      if (typeof blobBase === "string") return fetchBlob(blobBase, ref.blob, `data ${id}`, signal);
       throw new Error(`data ${id}: blob "${ref.blob}" was not delivered`);
     }
     if (typeof b === "string") return decodeBase64(b.trim());
     return b instanceof Uint8Array ? b : new Uint8Array(b);
   }
-  const res = await fetch(ref.url);
+  const res = await fetch(ref.url, signal ? { signal } : undefined);
   if (!res.ok) throw new Error(`data ${id}: ${ref.url} returned ${res.status}`);
   return new Uint8Array(await res.arrayBuffer());
 }
@@ -148,6 +155,15 @@ export async function render(container, scene, options = {}) {
   injectStyle();
   // Rendering again into a container replaces its scene: stop the old one.
   if (teardowns.has(container)) teardowns.get(container)();
+  // Aborts this render's data fetches when the container is rendered again
+  // (or options.signal aborts) before they finish.
+  const loading = new AbortController();
+  if (options.signal) {
+    if (options.signal.aborted) loading.abort(options.signal.reason);
+    else options.signal.addEventListener("abort", () => loading.abort(options.signal.reason), { once: true });
+  }
+  const stopLoading = () => loading.abort();
+  teardowns.set(container, stopLoading);
   const blobs = options.blobs || {};
   const blobBase = typeof options.blobBase === "string" ? options.blobBase : null;
   const blobKeys = new Set(blobBase !== null && options.blobKeys ? options.blobKeys : []);
@@ -191,7 +207,7 @@ export async function render(container, scene, options = {}) {
     const tables = {};
     // Arrow tables are read whole; a cog is read tile by tile by its layers.
     const ids = Object.keys(scene.data).filter((id) => scene.data[id].format !== "cog");
-    const bytes = await Promise.all(ids.map((id) => loadBytes(scene.data[id], id, blobs, blobBase)));
+    const bytes = await Promise.all(ids.map((id) => loadBytes(scene.data[id], id, blobs, blobBase, loading.signal)));
     let total = 0;
     ids.forEach((id, i) => {
       total += bytes[i].length;
@@ -530,6 +546,7 @@ export async function render(container, scene, options = {}) {
     const finalize = () => {
       if (finalized) return;
       finalized = true;
+      loading.abort();
       offPress();
       clearTimeout(pendingSelect);
       canvasHost.removeEventListener("pointerdown", onDownCapture, true);
@@ -561,6 +578,9 @@ export async function render(container, scene, options = {}) {
     container.dataset.aobInfo = `${kib} KiB Arrow decoded in ${decodeMs.toFixed(1)} ms`;
     return handle;
   } catch (err) {
+    // Replaced by a newer render of this container: leave it alone.
+    if (loading.signal.aborted && teardowns.get(container) !== stopLoading) throw err;
+    if (teardowns.get(container) === stopLoading) teardowns.delete(container);
     container.dataset.aobStatus = "error";
     setStatus(`This scene could not be drawn: ${err && err.message ? err.message : err}`, true);
     console.error(err);

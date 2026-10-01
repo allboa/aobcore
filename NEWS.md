@@ -17,10 +17,14 @@
   - `scene_add_tiled_raster(embed = FALSE)` on a local COG registers the
     file in the scene's `"files"` attribute (normalized path, size,
     modification time, and whether `url` was given explicitly) and reads no
-    tile bytes; the scene JSON never sees the path. `write_scene_html()` on
+    tile bytes. The registry is never written to the scene JSON; the
+    layer's `url` stays the `file://` URL (the full path) until a server
+    replaces it, unless `url` was given. `write_scene_html()` on
     such a scene warns that the page cannot read the file from disk, and
     `embed = FALSE` on a `/vsimem/` COG (with no `url`) is an error that
-    says to embed it or write it to a file.
+    says to embed it or write it to a file. `cog_info()` records a local
+    file's size and modification time, and `scene_add_tiled_raster()`
+    refuses a file that has changed since (its tile plan is out of date).
   - `tools/write-scenes.R` also writes served pages in the server's route
     layout, and `js/screenshots.mjs --serve` draws them over loopback HTTP.
 
