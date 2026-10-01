@@ -51,10 +51,11 @@ export function popupRows(table, columns, row) {
 }
 
 // The popup element inside the map. show() fills and places it; hide()
-// removes it. Escape and the close button dismiss it.
+// removes it. Escape and the close button dismiss it. A selected feature's
+// popup is a dialog that takes focus and gives it back, on close, to the
+// element that had it before; a pointed-at feature's is a tooltip.
 export function popupBox(map, onClose) {
   const box = el("div", "aob-popup");
-  box.setAttribute("role", "dialog");
   box.tabIndex = -1;
   box.hidden = true;
   const head = el("div", "aob-popup-head");
@@ -69,12 +70,18 @@ export function popupBox(map, onClose) {
   box.append(head, body);
   map.append(box);
   let current = null;
+  let returnTo = null;
   const hide = (restoreFocus) => {
     if (box.hidden) return;
     const hadFocus = box.contains(document.activeElement);
     box.hidden = true;
     current = null;
-    if (restoreFocus || hadFocus) map.focus({ preventScroll: true });
+    const back = returnTo;
+    returnTo = null;
+    if (restoreFocus || hadFocus) {
+      if (back && back !== document.body && back.isConnected && !box.contains(back)) back.focus({ preventScroll: true });
+      else if (box.contains(document.activeElement)) document.activeElement.blur();
+    }
     if (onClose) onClose();
   };
   close.addEventListener("click", () => hide(true));
@@ -102,6 +109,7 @@ export function popupBox(map, onClose) {
       box.dataset.aobRow = String(sel.row);
       box.dataset.aobTrigger = sel.trigger;
       close.hidden = sel.trigger === "point";
+      box.setAttribute("role", sel.trigger === "point" ? "tooltip" : "dialog");
       box.hidden = false;
       // Place beside the point, kept inside the map.
       const w = map.clientWidth;
@@ -114,7 +122,11 @@ export function popupBox(map, onClose) {
       if (y + bh > h - 8) y = Math.max(8, sel.y - bh - 12);
       box.style.left = `${x}px`;
       box.style.top = `${y}px`;
-      if (focus) box.focus({ preventScroll: true });
+      if (focus) {
+        // Keep the first opener when one selection replaces another.
+        if (!box.contains(document.activeElement)) returnTo = document.activeElement;
+        box.focus({ preventScroll: true });
+      }
     },
     hide,
   };

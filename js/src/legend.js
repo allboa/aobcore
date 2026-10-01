@@ -10,14 +10,21 @@ function el(tag, cls, text) {
   return e;
 }
 
+// Colour components and stop positions go through Number(), so a scene
+// can only ever put numbers into the CSS (never url() or other text).
+const num = (v, lo, hi) => {
+  const n = Number(v);
+  return isFinite(n) ? Math.min(hi, Math.max(lo, n)) : lo;
+};
+
 export function rgbaCss(c) {
-  const a = c.length > 3 ? c[3] / 255 : 1;
-  return `rgba(${c[0]}, ${c[1]}, ${c[2]}, ${Number(a.toFixed(3))})`;
+  const a = c.length > 3 ? num(c[3], 0, 255) / 255 : 1;
+  return `rgba(${num(c[0], 0, 255)}, ${num(c[1], 0, 255)}, ${num(c[2], 0, 255)}, ${Number(a.toFixed(3))})`;
 }
 
 // A CSS gradient through 0.5 ramp stops ({at, color}); positions as given.
 export function stopsGradient(stops) {
-  return `linear-gradient(90deg, ${stops.map((s) => `${rgbaCss(s.color)} ${Number((s.at * 100).toFixed(3))}%`).join(", ")})`;
+  return `linear-gradient(90deg, ${stops.map((s) => `${rgbaCss(s.color)} ${Number((num(s.at, 0, 1) * 100).toFixed(3))}%`).join(", ")})`;
 }
 
 // A palette's colours as evenly spaced 0.5 stops.

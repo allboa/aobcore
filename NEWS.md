@@ -15,7 +15,9 @@
   dark, labelled in text) and shows a popup for a selected point, path or
   polygon, closed by Escape or its close button; a popup column missing
   from the data is an error for that layer. Before 0.5 a palette raster's
-  ramp is still drawn from its palette as before.
+  ramp is still drawn from its palette as before; in a 0.5 scene only the
+  scene's own legends are drawn, so once a scene has any legend or popup,
+  add `scene_add_legend()` for each palette layer that should keep its key.
 
 * `crs_domain()` no longer crashes R when GDAL cannot find its PROJ
   database (`proj.db`) and the view CRS is a PROJ string (#21): it checks

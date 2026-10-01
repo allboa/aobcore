@@ -59,6 +59,12 @@ spaced. Colours are interpolated linearly between stops.
 \strong{Default.} With neither \code{ramp} nor \code{classes}, a layer with a palette
 gets a palette ramp copied from the layer, so
 \code{scene_add_legend(s, "sst", "SST (degrees C)")} keys a palette raster.
+
+\strong{Palette layers in a 0.5 scene.} For scenes before 0.5 the bundled
+renderer draws a ramp for each palette raster on its own. A 0.5 scene's
+legends are only those in \code{scene$legends}, so once a scene is 0.5 (any
+legend or popup) that automatic ramp is no longer drawn: add
+\code{scene_add_legend()} for each palette layer that should keep its key.
 }
 \examples{
 # A palette ramp for the probe's SST raster, copied from the layer.

@@ -250,15 +250,23 @@ export async function render(container, scene, options = {}) {
         legends.append(box);
       }
     });
-    if (legends.childElementCount) legends.setAttribute("aria-label", "Legends");
+    if (legends.childElementCount) {
+      legends.setAttribute("role", "group");
+      legends.setAttribute("aria-label", "Legends");
+    }
     panel.append(list, legends, themeButton());
 
-    // 0.5 popups. "point" shows while the pointer is over a feature, where
-    // the device has a pointer that can hover; otherwise it acts as select.
-    const canHover = typeof matchMedia === "function" && matchMedia("(hover: hover)").matches;
-    const triggerOf = (L) => {
+    // 0.5 popups. "point" shows while the pointer is over a feature; a
+    // pointer that cannot hover (touch) makes it act as select. Decided per
+    // event from its pointer type, since one page can see mouse and touch;
+    // with no pointer type, from whether the device can hover.
+    const canHover = () => typeof matchMedia === "function" && matchMedia("(hover: hover)").matches;
+    const triggerOf = (L, event) => {
       const t = (L.popup && L.popup.trigger) || "select";
-      return t === "point" && !canHover ? "select" : t;
+      if (t !== "point") return t;
+      const kind = event && event.srcEvent && event.srcEvent.pointerType;
+      const hovers = kind ? kind !== "touch" : canHover();
+      return hovers ? "point" : "select";
     };
     map.tabIndex = -1;
     const popup = popupBox(map, () => delete container.dataset.aobSelected);
@@ -346,22 +354,26 @@ export async function render(container, scene, options = {}) {
       initialViewState,
       layers: [],
       onViewStateChange: ({ viewState: vs }) => setView(vs),
-      onHover: (info) => {
+      onHover: (info, event) => {
         const c = info.coordinate;
         readout.textContent = c ? `x ${fmt(c[0], span)}   y ${fmt(c[1], span)}` : "";
         const f = featureAt(info);
         const cur = popup.current;
-        if (f && triggerOf(f.layer) === "point") {
+        if (f && triggerOf(f.layer, event) === "point") {
           if (!cur || cur.trigger === "point") showFeature(f, info.x, info.y, "point", false);
         } else if (cur && cur.trigger === "point") {
           popup.hide();
         }
       },
-      onClick: (info) => {
+      onClick: (info, event) => {
         const f = featureAt(info);
-        if (f && triggerOf(f.layer) === "select") showFeature(f, info.x, info.y, "select", true);
+        if (f && triggerOf(f.layer, event) === "select") showFeature(f, info.x, info.y, "select", true);
         else if (!f) popup.hide();
       },
+      // deck.gl's click is a tap whose press must end within `time` ms,
+      // measured when the release is processed; the pick run on press can
+      // take hundreds of ms on a slow device, so allow a second.
+      eventRecognizerOptions: { click: { time: 1000 } },
       getCursor: ({ isDragging, isHovering }) => (isDragging ? "grabbing" : isHovering ? "pointer" : "grab"),
       onError: (err) => setStatus(`Rendering error: ${err && err.message ? err.message : err}`, true),
       onAfterRender: () => {
@@ -417,6 +429,8 @@ export async function render(container, scene, options = {}) {
       finalized = true;
       if (observer) observer.disconnect();
       else window.removeEventListener("resize", onResize);
+      popup.hide();
+      delete container.dataset.aobSelected;
       deck.finalize();
       if (teardowns.get(container) === finalize) teardowns.delete(container);
     };

@@ -55,16 +55,11 @@ for (const f of pages) {
     if (status === "ready") {
       const at = await page.evaluate(firstSelectPoint);
       if (at) {
-        // Retried in case a click lands before the first picking pass.
-        popupOk = false;
-        for (let attempt = 0; attempt < 3 && !popupOk; attempt++) {
-          await page.waitForTimeout(400);
-          await page.mouse.click(at.x, at.y);
-          popupOk = await page.waitForFunction(() => {
-            const p = document.querySelector(".aob-popup");
-            return p && !p.hidden;
-          }, null, { timeout: 3000 }).then(() => true).catch(() => false);
-        }
+        await page.mouse.click(at.x, at.y);
+        popupOk = await page.waitForFunction(() => {
+          const p = document.querySelector(".aob-popup");
+          return p && !p.hidden;
+        }, null, { timeout: 5000 }).then(() => true).catch(() => false);
         await page.waitForTimeout(200);
         const pout = join(outDir, `${basename(f, ".html")}-popup-${scheme}.png`);
         await page.screenshot({ path: pout });

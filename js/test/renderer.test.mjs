@@ -204,6 +204,7 @@ console.log("ok   level selection");
   assert.equal(rangeLabel(-2), "-2");
   assert.equal(rangeLabel(1 / 3), "0.333333");
   assert.equal(rgbaCss([1, 2, 3, 255]), "rgba(1, 2, 3, 1)");
+  assert.equal(rgbaCss(["url(x)", "1", 300, 255]), "rgba(0, 1, 255, 1)", "only numbers reach the CSS");
   assert.equal(stopsGradient([{ at: 0, color: [0, 0, 0, 0] }, { at: 1, color: [255, 0, 0, 255] }]),
     "linear-gradient(90deg, rgba(0, 0, 0, 0) 0%, rgba(255, 0, 0, 1) 100%)");
   console.log("ok   popup cell text and legend helpers");
@@ -551,17 +552,12 @@ try {
         role: p.getAttribute("role") };
     });
 
-    // Click and wait for the popup to reach a state. Clicks are spaced so
-    // two are never taken as a double click, and retried once or twice in
-    // case a click lands before the first picking pass is ready.
+    // Click once and wait for the popup to reach a state. Clicks are
+    // spaced so two at one spot are never taken as a double click (zoom).
     const clickFor = async (x, y, test, arg) => {
-      for (let attempt = 0; attempt < 3; attempt++) {
-        await page.waitForTimeout(400);
-        await page.mouse.click(x, y);
-        const ok = await page.waitForFunction(test, arg, { timeout: 3000 }).then(() => true).catch(() => false);
-        if (ok) return;
-      }
-      throw new Error(`no popup change after clicking at ${x}, ${y}`);
+      await page.waitForTimeout(350);
+      await page.mouse.click(x, y);
+      await page.waitForFunction(test, arg, { timeout: 5000 });
     };
     const openPopup = () => !document.querySelector(".aob-popup").hidden;
     const popupRow = (r) => !document.querySelector(".aob-popup").hidden && document.querySelector(".aob-popup").dataset.aobRow === String(r);
@@ -634,6 +630,7 @@ try {
       await page.waitForFunction(() => !document.querySelector(".aob-popup").hidden, null, { timeout: 5000 });
       p = await popupState();
       assert.equal(p.trigger, "point");
+      assert.equal(p.role, "tooltip", "a pointed-at feature's popup is a tooltip");
       assert.deepEqual(p.rows, [["zone", "Protected"], ["area", "1960000"]]);
       assert.ok(!p.focus, "a point popup does not take focus");
       await page.mouse.move(xe, ye);

@@ -119,6 +119,8 @@ test_that("scene_add_legend() follows the 0.5 validator's rules", {
                "first stop must be at 0")
   expect_error(scene_add_legend(s, "stations", ramp = list(range = c(0, 1), stops = two, at = c(0, 0.9))),
                "last at 1")
+  expect_error(scene_add_legend(s, "stations", ramp = list(range = c(0, 1), at = c(0, 1), stops = list(
+    list(at = 0, color = c(0, 0, 0, 255)), list(at = 1, color = c(9, 9, 9, 255))))), "not both")
   three <- rbind(two, c(9, 9, 9, 255))
   expect_error(scene_add_legend(s, "stations", ramp = list(range = c(0, 1), stops = three,
                                                          at = c(0, 0, 1))), "increase strictly")

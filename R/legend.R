@@ -23,6 +23,12 @@
 #' gets a palette ramp copied from the layer, so
 #' `scene_add_legend(s, "sst", "SST (degrees C)")` keys a palette raster.
 #'
+#' **Palette layers in a 0.5 scene.** For scenes before 0.5 the bundled
+#' renderer draws a ramp for each palette raster on its own. A 0.5 scene's
+#' legends are only those in `scene$legends`, so once a scene is 0.5 (any
+#' legend or popup) that automatic ramp is no longer drawn: add
+#' `scene_add_legend()` for each palette layer that should keep its key.
+#'
 #' @param scene A scene from [scene()].
 #' @param layer The id of the layer the legend keys; it must be in the scene.
 #' @param title Optional heading, such as the variable and its units. A
@@ -129,7 +135,11 @@ legend_stops <- function(stops, at = NULL) {
     if (ncol(stops) != 4L) stop("A `stops` matrix needs 4 columns (r, g, b, a).", call. = FALSE)
     cols <- lapply(seq_len(nrow(stops)), function(i) stops[i, ])
   } else if (is.list(stops) && length(stops) && all(vapply(stops, is.list, TRUE))) {
-    if (is.null(at)) at <- vapply(stops, function(s) as.numeric(s$at %||% NA_real_)[1], 0)
+    if (!is.null(at)) {
+      stop("Give stop positions in `stops` (list(at = , color = )) or in `at`, not both.",
+           call. = FALSE)
+    }
+    at <- vapply(stops, function(s) as.numeric(s$at %||% NA_real_)[1], 0)
     cols <- lapply(stops, function(s) s$color)
   } else if (is.list(stops)) {
     cols <- stops
