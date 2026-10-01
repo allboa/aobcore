@@ -24,6 +24,12 @@ test_that("base64 round-trips every padding length", {
   expect_identical(b64_encode(charToRaw("Man")), "TWFu")
   expect_identical(b64_encode(charToRaw("Ma")), "TWE=")
   expect_identical(b64_encode(charToRaw("M")), "TQ==")
+  ## Chunks are joined without padding between them.
+  for (n in c(5, 6, 7, 12, 13, 14)) {
+    x <- as.raw(seq_len(n))
+    expect_identical(b64_encode(x, chunk = 6L), b64_encode(x))
+  }
+  expect_error(b64_encode(as.raw(1:10), chunk = 4L))
 })
 
 test_that("scene_json() writes NA as null without a coercion warning", {

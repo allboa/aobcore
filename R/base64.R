@@ -8,7 +8,7 @@ b64_alphabet <- c(LETTERS, letters, as.character(0:9), "+", "/")
 ## vector of 4/3 n one-letter strings (with the integer matrices beside it)
 ## took about 40 bytes of R memory per input byte.
 b64_encode <- function(x, chunk = 3L * 2^20) {
-  stopifnot(is.raw(x))
+  stopifnot(is.raw(x), chunk >= 3, chunk %% 3 == 0)
   n <- length(x)
   if (n == 0L) {
     return("")
