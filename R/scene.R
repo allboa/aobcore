@@ -5,29 +5,54 @@
 #' unless it has a tiled raster layer (added by [scene_add_tiled_raster()]),
 #' which needs 0.2; a tiled raster drawn as a colour image (`rgb`) or with
 #' JPEG tiles needs 0.3; a view with `bounds` (see [scene()]'s `domain`)
-#' needs 0.4. Each version only adds to the one before, so earlier output is
-#' unchanged by the later additions.
+#' needs 0.4; legends ([scene_add_legend()]) or a layer `popup` (see
+#' [scene_add_layer()]) need 0.5. Each version only adds to the one before,
+#' so earlier output is unchanged by the later additions.
 #'
 #' @param scene Optional scene. Without it, the version of a new scene.
 #' @return A character string: `"0.1"`, `"0.2"` for a scene with a
-#'   `tiled_raster` layer, or `"0.3"` for one whose tiled raster uses `rgb`
-#'   or JPEG tiles, or `"0.4"` for one whose view has `bounds`. A scene
-#'   already marked with a version keeps at least that version (removing
-#'   its bounds by hand leaves it 0.4).
+#'   `tiled_raster` layer, `"0.3"` for one whose tiled raster uses `rgb`
+#'   or JPEG tiles, `"0.4"` for one whose view has `bounds`, or `"0.5"` for
+#'   one with legends or popups. A scene already marked with a version keeps
+#'   at least that version (removing its bounds by hand leaves it 0.4).
 #' @export
 #' @examples
 #' scene_spec_version()
 #' scene_spec_version(scene())
 scene_spec_version <- function(scene = NULL) {
   if (is.null(scene)) return("0.1")
-  if (!is.null(scene$view$bounds) || identical(scene$version, "0.4")) return("0.4")
   kinds <- vapply(scene$layers, function(l) as.character(l$kind %||% ""), "")
-  v03 <- vapply(scene$layers, uses_spec_03, TRUE)
-  if (any(v03) || identical(scene$version, "0.3")) return("0.3")
-  if (any(kinds == "tiled_raster") || identical(scene$version, "0.2")) "0.2" else "0.1"
+  v <- if (uses_spec_05(scene)) {
+    "0.5"
+  } else if (!is.null(scene$view$bounds)) {
+    "0.4"
+  } else if (any(vapply(scene$layers, uses_spec_03, TRUE))) {
+    "0.3"
+  } else if (any(kinds == "tiled_raster")) {
+    "0.2"
+  } else {
+    "0.1"
+  }
+  marked <- scene$version
+  if (is.character(marked) && length(marked) == 1L && marked %in% scene_spec_versions &&
+      spec_at_least(marked, v)) {
+    v <- marked
+  }
+  v
 }
 
-scene_spec_versions <- c("0.1", "0.2", "0.3", "0.4")
+scene_spec_versions <- c("0.1", "0.2", "0.3", "0.4", "0.5")
+
+## Is spec version `v` the same as or later than `min`?
+spec_at_least <- function(v, min) {
+  is.character(v) && length(v) == 1L && v %in% scene_spec_versions &&
+    match(v, scene_spec_versions) >= match(min, scene_spec_versions)
+}
+
+## Does a scene use a scene spec 0.5 feature (legends, or a layer popup)?
+uses_spec_05 <- function(scene) {
+  length(scene$legends) > 0L || any(vapply(scene$layers, function(l) !is.null(l$popup), TRUE))
+}
 
 ## Does a layer use a scene spec 0.3 feature (a colour image, or JPEG tiles)?
 uses_spec_03 <- function(l) {
@@ -42,7 +67,7 @@ uses_spec_03 <- function(l) {
 #' Its fields follow the scene spec (`version`, `view`, `data`, `layers`).
 #' A scene starts as version 0.1 and becomes 0.2 when a tiled raster is
 #' added (0.3 for a colour image or JPEG tiles). A view with `bounds` is
-#' scene spec 0.4.
+#' scene spec 0.4, and legends or popups make it 0.5.
 #'
 #' By default the view gets the CRS's domain (allboa/design decision 0005,
 #' [crs_domain()]) as `view$bounds`: the renderer keeps the camera within
@@ -109,6 +134,7 @@ view_bounds <- function(crs, domain) {
 print.aob_scene <- function(x, ...) {
   cat("<scene spec ", x$version, "> view ", x$view$type, " ", crs_label(x$view$crs),
       if (!is.null(x$view$bounds)) " (bounded)",
-      ", ", length(x$data), " data, ", length(x$layers), " layers\n", sep = "")
+      ", ", length(x$data), " data, ", length(x$layers), " layers",
+      if (length(x$legends)) paste0(", ", length(x$legends), " legends"), "\n", sep = "")
   invisible(x)
 }

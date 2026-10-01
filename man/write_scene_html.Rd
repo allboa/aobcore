@@ -15,7 +15,7 @@ write_scene_html(
 \arguments{
 \item{scene}{A scene from \code{\link[=scene]{scene()}} and \code{\link[=scene_add_data]{scene_add_data()}} or
 \code{\link[=scene_add_vector]{scene_add_vector()}}, which carries its blobs; or a plain list following
-scene spec 0.1, 0.2 or 0.3, with \code{version}, \code{view}, \code{data} and \code{layers}. It is written
+scene spec 0.1 to 0.5, with \code{version}, \code{view}, \code{data} and \code{layers}. It is written
 with \code{\link[=scene_json]{scene_json()}}.}
 
 \item{blobs}{A named list of raw vectors, each an Arrow IPC stream or file,
@@ -42,8 +42,9 @@ nothing from a CDN.
 \details{
 The scene is checked cheaply before writing: the top-level fields, the
 version, the view type, that layer ids are unique, that every data id a
-layer uses is defined in \code{scene$data}, and that every \code{blob} key has a
-blob. Full validation against the scene spec JSON Schema happens outside
+layer uses is defined in \code{scene$data}, that every \code{blob} key has a
+blob, and that legends name layers in the scene and popups are on vector
+layers. Full validation against the scene spec JSON Schema happens outside
 R (see the allboa/scenespec validator).
 }
 \examples{

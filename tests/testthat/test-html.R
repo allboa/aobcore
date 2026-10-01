@@ -85,8 +85,8 @@ test_that("write_scene_html() checks the scene shape", {
   tf <- tempfile(fileext = ".html")
   expect_error(write_scene_html(unclass(s)[c("version", "view")], b, tf), "missing data, layers")
   s1 <- s
-  s1$version <- "0.5"
-  expect_error(write_scene_html(s1, b, tf), "must be one of \"0.1\", \"0.2\", \"0.3\", \"0.4\"")
+  s1$version <- "0.6"
+  expect_error(write_scene_html(s1, b, tf), "must be one of \"0.1\", \"0.2\", \"0.3\", \"0.4\", \"0.5\"")
   s2 <- s
   s2$view$type <- "orthographic"
   expect_error(write_scene_html(s2, b, tf), "view\\$type")

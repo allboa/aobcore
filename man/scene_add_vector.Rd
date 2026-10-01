@@ -17,7 +17,7 @@ scene_add_vector(scene, id, x, ...)
 interleaved stream goes through \code{\link[=vector_stream]{vector_stream()}} with the scene's view
 CRS, so its coordinates must already be in that CRS.}
 
-\item{...}{Passed to \code{\link[=scene_add_layer]{scene_add_layer()}} (\code{kind}, \code{stroke}, \code{fill}, ...).}
+\item{...}{Passed to \code{\link[=scene_add_layer]{scene_add_layer()}} (\code{kind}, \code{stroke}, \code{fill}, \code{popup}, ...).}
 }
 \value{
 The scene with the data and the layer added.

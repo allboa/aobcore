@@ -23,6 +23,13 @@
 #                an RGBA LZW COG (alpha 0, 128 and 255) and a YCbCr JPEG COG
 #                (tiles joined to the level's JPEGTables), whole and at the
 #                pole (full resolution).
+#   polar-legends-popups  scene spec 0.5: the polar probe with legends (a
+#                palette ramp with a no-data entry for the SST field, a
+#                class legend for land, classes for two sectors and a
+#                colour-stop ramp for stations coloured by elevation) and
+#                popups (stations on select, showing text, ISO dates and
+#                numbers; sectors on point). js/screenshots.mjs also takes
+#                it with the first station's popup open.
 library(aobcore)
 library(nanoarrow)
 
@@ -174,4 +181,64 @@ for (name in names(rgb)) {
   write_scene_html(s, file = file.path(out, paste0(name, ".html")), title = x$file)
   writeLines(scene_json(s), file.path(out, paste0(name, ".json")))
 }
+# ---- legends and popups (scene spec 0.5) -----------------------------------
+# Example stations: positions, opening dates and elevations are approximate,
+# for illustration.
+st <- data.frame(
+  name = c("Davis", "Mawson", "Casey", "McMurdo", "Rothera", "Halley", "Vostok",
+           "Concordia", "Amundsen-Scott", "Dumont d'Urville"),
+  lon = c(77.97, 62.87, 110.53, 166.67, -68.13, -26.66, 106.84, 123.33, 0, 140.0),
+  lat = c(-68.58, -67.60, -66.28, -77.85, -67.57, -75.58, -78.46, -75.10, -90, -66.66),
+  opened = c("1957-01-13", "1954-02-13", "1969-02-19", "1956-02-16", "1975-01-01",
+             "1956-01-06", "1957-12-16", "2005-02-01", "1956-11-20", "1956-04-12"),
+  elevation_m = c(15, 10, 40, 10, 16, 35, 3488, 3233, 2835, 40)
+)
+xy <- gdalraster::transform_xy(cbind(st$lon, st$lat), "EPSG:4326", "EPSG:3031")
+# Elevation through a two-stop ramp, written as the RGBA column the layer
+# draws and as the legend's stops, from the same numbers.
+lo <- c(255, 255, 204, 255)
+hi <- c(8, 29, 88, 255)
+t <- st$elevation_m / 3500
+st_rgba <- round(outer(1 - t, lo) + outer(t, hi))
+attr_table <- function(wkt, schema, cols, rgba) {
+  g <- as_nanoarrow_array(geoarrow::as_geoarrow_vctr(wk::wkt(wkt), schema = schema))
+  arrays <- c(list(geometry = g), lapply(cols, as_nanoarrow_array), list(fill = rgba_array(rgba)))
+  sch <- na_struct(lapply(arrays, infer_nanoarrow_schema))
+  nanoarrow_array_modify(nanoarrow_array_init(sch), list(length = length(wkt), children = arrays))
+}
+stations <- attr_table(sprintf("POINT (%.1f %.1f)", xy[, 1], xy[, 2]),
+                       interleaved(geoarrow::geoarrow_point),
+                       st[c("name", "opened", "elevation_m")], st_rgba)
+
+# Two sectors between 60S and 70S as polygons (vertices along each arc).
+sector <- function(lon0, lon1) {
+  a <- seq(lon0, lon1, length.out = 40)
+  ll <- rbind(cbind(a, -60), cbind(rev(a), -70))
+  p <- gdalraster::transform_xy(ll, "EPSG:4326", "EPSG:3031")
+  p <- rbind(p, p[1, ])
+  sprintf("POLYGON ((%s))", paste(sprintf("%.0f %.0f", p[, 1], p[, 2]), collapse = ", "))
+}
+sector_rgba <- rbind(c(27, 158, 119, 110), c(117, 112, 179, 110))
+sectors <- attr_table(c(sector(20, 80), sector(-80, -20)), interleaved(geoarrow::geoarrow_polygon),
+                      data.frame(sector = c("Indian", "Weddell"), lon_from = c(20, -80), lon_to = c(80, -20)),
+                      sector_rgba)
+
+lp <- probe_scene()
+lp <- scene_add_data(lp, "sectors", ipc(sectors))
+lp <- scene_add_layer(lp, "sectors", label = "Sectors", fill = "fill",
+                      stroke = c(60L, 66L, 72L, 160L), stroke_width_px = 1,
+                      popup = list(columns = c("sector", "lon_from", "lon_to"), trigger = "point"))
+lp <- scene_add_data(lp, "stations", ipc(stations))
+lp <- scene_add_layer(lp, "stations", label = "Stations (approximate)", fill = "fill",
+                      stroke = c(30L, 30L, 30L, 255L), stroke_width_px = 1, radius_px = 6,
+                      popup = c("name", "opened", "elevation_m"))
+lp <- scene_add_legend(lp, "sst", "SST (degrees C)", na = list(label = "no data", color = c(0, 0, 0, 0)))
+lp <- scene_add_legend(lp, "land", classes = list(`Land (50m)` = c(218, 213, 202, 255)))
+lp <- scene_add_legend(lp, "sectors", "Sector", classes = list(Indian = sector_rgba[1, ], Weddell = sector_rgba[2, ]))
+lp <- scene_add_legend(lp, "stations", "Station elevation (m)",
+                       ramp = list(range = c(0, 3500), stops = rbind(lo, hi)))
+stopifnot(identical(lp$version, "0.5"))
+write_scene_html(lp, file = file.path(out, "polar-legends-popups.html"), title = "Legends and popups")
+writeLines(scene_json(lp), file.path(out, "polar-legends-popups.json"))
+
 cat("wrote", out, "\n")

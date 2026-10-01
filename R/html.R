@@ -7,13 +7,14 @@
 #'
 #' The scene is checked cheaply before writing: the top-level fields, the
 #' version, the view type, that layer ids are unique, that every data id a
-#' layer uses is defined in `scene$data`, and that every `blob` key has a
-#' blob. Full validation against the scene spec JSON Schema happens outside
+#' layer uses is defined in `scene$data`, that every `blob` key has a
+#' blob, and that legends name layers in the scene and popups are on vector
+#' layers. Full validation against the scene spec JSON Schema happens outside
 #' R (see the allboa/scenespec validator).
 #'
 #' @param scene A scene from [scene()] and [scene_add_data()] or
 #'   [scene_add_vector()], which carries its blobs; or a plain list following
-#'   scene spec 0.1, 0.2 or 0.3, with `version`, `view`, `data` and `layers`. It is written
+#'   scene spec 0.1 to 0.5, with `version`, `view`, `data` and `layers`. It is written
 #'   with [scene_json()].
 #' @param blobs A named list of raw vectors, each an Arrow IPC stream or file,
 #'   named by the `blob` keys used in `scene$data`. Defaults to the blobs the
@@ -168,7 +169,7 @@ check_scene_shape <- function(scene, blobs) {
     if (!is.null(ce) && !(ce[1] >= b[1] && ce[1] <= b[2] && ce[2] >= b[3] && ce[2] <= b[4])) {
       fail("`scene$view$center` lies outside `scene$view$bounds`.")
     }
-    if (!identical(scene$version, "0.4") && !inherits(scene, "aob_scene")) {
+    if (!spec_at_least(scene$version, "0.4") && !inherits(scene, "aob_scene")) {
       fail("`scene$view$bounds` needs scene spec 0.4.")
     }
   }
@@ -224,7 +225,7 @@ check_scene_shape <- function(scene, blobs) {
       if (identical(scene$version, "0.1") && !inherits(scene, "aob_scene")) {
         fail("Layer `", lid, "` is a tiled raster, which needs scene spec 0.2 or later.")
       }
-      if (uses_spec_03(layer) && !scene$version %in% c("0.3", "0.4") && !inherits(scene, "aob_scene")) {
+      if (uses_spec_03(layer) && !spec_at_least(scene$version, "0.3") && !inherits(scene, "aob_scene")) {
         fail("Layer `", lid, "` uses `rgb` or JPEG tiles, which need scene spec 0.3.")
       }
       need(lid, layer$source)
@@ -246,6 +247,23 @@ check_scene_shape <- function(scene, blobs) {
     } else {
       fail("Layer `", lid, "` has kind \"", format(kind), "\"; expected polygon, path, point, raster or tiled_raster.")
     }
+    if (!is.null(layer$popup) && !kind %in% c("polygon", "path", "point")) {
+      fail("Layer `", lid, "` has a popup; popups are for polygon, path and point layers.")
+    }
+  }
+  ## Scene spec 0.5: legends key layers in the scene.
+  if (!is.null(scene$legends)) {
+    if (!is.list(scene$legends) || !is.null(names(scene$legends))) {
+      fail("`scene$legends` must be an unnamed list of legends.")
+    }
+    for (lg in scene$legends) {
+      if (!is.character(lg$layer) || length(lg$layer) != 1L || !lg$layer %in% seen) {
+        fail("A legend keys layer \"", format(lg$layer), "\", which is not in `scene$layers`.")
+      }
+    }
+  }
+  if (uses_spec_05(scene) && !spec_at_least(scene$version, "0.5") && !inherits(scene, "aob_scene")) {
+    fail("Legends and popups need scene spec 0.5.")
   }
   unused <- setdiff(names(blobs), used_blobs)
   if (length(unused)) {

@@ -14,7 +14,8 @@ scene_add_layer(
   stroke_width_px = NULL,
   radius_px = NULL,
   label = NULL,
-  visible = NULL
+  visible = NULL,
+  popup = NULL
 )
 }
 \arguments{
@@ -36,6 +37,17 @@ scene_add_layer(
 \item{label}{Optional human-readable name.}
 
 \item{visible}{Optional initial visibility.}
+
+\item{popup}{Optional attributes to show for one feature at a time
+(scene spec 0.5): a character vector of column names in the layer's
+data, shown in that order labelled by column name, or
+\code{list(columns = ..., trigger = ...)}. \code{trigger} is \code{"select"} (the
+spec's default: shown when the viewer selects a feature, by a click,
+tap or key press, until another selection or a dismissal) or \code{"point"}
+(shown while the pointer is over a feature; a renderer with no way to
+point without selecting treats it as \code{"select"}). The columns must be in
+the data and must not be its geometry column. A popup makes the scene
+scene spec 0.5.}
 }
 \value{
 The scene with the layer appended (drawn above earlier layers).
@@ -53,4 +65,16 @@ x <- wk::wkt("LINESTRING (0 0, 1000 1000)", crs = "EPSG:3031")
 s <- scene_add_data(s, "line", x)
 s <- scene_add_layer(s, "line", stroke = c(60, 66, 72, 255), stroke_width_px = 1)
 s$layers[[1]]$kind
+
+# Attributes shown when a feature is selected (scene spec 0.5)
+df <- data.frame(name = c("Davis", "Mawson"), depth_m = c(120, 450))
+df$geometry <- wk::wkt(c("POINT (2300000 600000)", "POINT (1300000 1600000)"),
+                       crs = "EPSG:3031")
+s <- scene_add_data(scene(), "stations", df)
+s <- scene_add_layer(s, "stations", popup = c("name", "depth_m"))
+s$layers[[1]]$popup
+scene_spec_version(s)
+}
+\seealso{
+\code{\link[=scene_add_legend]{scene_add_legend()}} for a key to the layer's colours.
 }

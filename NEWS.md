@@ -1,5 +1,22 @@
 # aobcore 0.0.0.9000
 
+* Legends and popups (scene spec 0.5, #23). New `scene_add_legend()` adds a
+  key to a layer's colours: a continuous ramp from a palette name or from
+  colour stops (with the range ends labelled), discrete classes, and an
+  optional no-data entry, checked against the 0.5 rules (the layer exists,
+  ramp ends differ, stops run from 0 to 1 strictly increasing, a palette
+  ramp only keys a palette layer and equals its palette and range). With no
+  `ramp` or `classes`, a palette raster gets a ramp copied from its palette.
+  `scene_add_layer()` and `scene_add_vector()` take `popup`: attribute
+  columns shown for one feature at a time, on select (default) or while
+  pointed at (`trigger = "point"`); the columns must be in the layer's data
+  and not its geometry column. A scene is written as 0.5 only when it has
+  legends or popups. The bundled renderer draws 0.5 legends (light and
+  dark, labelled in text) and shows a popup for a selected point, path or
+  polygon, closed by Escape or its close button; a popup column missing
+  from the data is an error for that layer. Before 0.5 a palette raster's
+  ramp is still drawn from its palette as before.
+
 * `crs_domain()` no longer crashes R when GDAL cannot find its PROJ
   database (`proj.db`) and the view CRS is a PROJ string (#21): it checks
   the database first and stops with an error, so `scene()` quietly writes

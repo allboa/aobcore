@@ -15,7 +15,7 @@ const lock = JSON.parse(readFileSync(join(here, "package-lock.json"), "utf8"));
 const ver = (name) => lock.packages[`node_modules/${name}`].version;
 
 const banner =
-  `/* aob-renderer ${pkg.version}: allonboard scene spec 0.1, 0.2 and 0.3 renderer. ` +
+  `/* aob-renderer ${pkg.version}: allonboard scene spec 0.1 to 0.5 renderer. ` +
   `Built from js/ in allboa/aobcore with esbuild ${ver("esbuild")}; ` +
   `bundles deck.gl ${ver("@deck.gl/core")} (MIT) and apache-arrow ${ver("apache-arrow")} (Apache-2.0). ` +
   `Licenses: inst/COPYRIGHTS. */`;
