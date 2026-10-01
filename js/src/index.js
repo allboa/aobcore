@@ -365,15 +365,8 @@ export async function render(container, scene, options = {}) {
           popup.hide();
         }
       },
-      onClick: (info, event) => {
-        const f = featureAt(info);
-        if (f && triggerOf(f.layer, event) === "select") showFeature(f, info.x, info.y, "select", true);
-        else if (!f) popup.hide();
-      },
-      // deck.gl's click is a tap whose press must end within `time` ms,
-      // measured when the release is processed; the pick run on press can
-      // take hundreds of ms on a slow device, so allow a second.
-      eventRecognizerOptions: { click: { time: 1000 } },
+      // No onClick: selection is our own press and release (see clicks
+      // below), so a slow pick cannot make deck's tap time out.
       getCursor: ({ isDragging, isHovering }) => (isDragging ? "grabbing" : isHovering ? "pointer" : "grab"),
       onError: (err) => setStatus(`Rendering error: ${err && err.message ? err.message : err}`, true),
       onAfterRender: () => {
@@ -408,6 +401,87 @@ export async function render(container, scene, options = {}) {
     }
     deck = new Deck(deckProps);
     update();
+
+    // Clicks (#26). deck.gl picks synchronously on every pointerdown, to
+    // hand the pressed object to onClick and the onDrag* callbacks, whether
+    // or not anything uses them. That pick draws every pickable layer and
+    // reads back a pixel; with software rendering and a heavy polygon layer
+    // it takes seconds, and its tap recognizer then sees a press longer
+    // than its time limit and drops the click. Nothing here is dragged, so
+    // picking is switched off for the length of deck's own pointerdown
+    // handler (on the canvas, between our capture and bubble listeners on
+    // its parent), and a click is our own: a primary press and release
+    // that never moves more than `slop` pixels, of any duration. A drag
+    // moves further, so it pans and never selects. The pick runs once,
+    // after the release, at the pressed point. Like deck's click, it waits
+    // for the double-click interval, and a second press there (a double
+    // click, which zooms) cancels it.
+    const slop = 9; // px, deck's tap threshold
+    const dblMs = 300; // deck's double-tap interval
+    let press = null;
+    let pendingSelect = null;
+    let lastUp = null;
+    const offPress = () => {
+      window.removeEventListener("pointermove", onPressMove, true);
+      window.removeEventListener("pointerup", onPressUp, true);
+      window.removeEventListener("pointercancel", onPressCancel, true);
+      press = null;
+    };
+    const selectAt = (cx, cy, srcEvent) => {
+      pendingSelect = null;
+      if (finalized) return;
+      const r = (deck.getCanvas() || canvasHost).getBoundingClientRect();
+      const x = cx - r.left;
+      const y = cy - r.top;
+      const info = deck.pickObject({ x, y, radius: deck.props.pickingRadius || 0 });
+      const f = featureAt(info);
+      if (f && triggerOf(f.layer, { srcEvent }) === "select") showFeature(f, x, y, "select", true);
+      else if (!f) popup.hide();
+    };
+    function onPressMove(e) {
+      if (press && e.pointerId === press.id &&
+          Math.hypot(e.clientX - press.x, e.clientY - press.y) >= slop) press.moved = true;
+    }
+    function onPressUp(e) {
+      if (!press || e.pointerId !== press.id) return;
+      const p = press;
+      offPress();
+      if (p.moved || Math.hypot(e.clientX - p.x, e.clientY - p.y) >= slop) return;
+      lastUp = { t: performance.now(), x: p.x, y: p.y };
+      if (p.second) return;
+      pendingSelect = setTimeout(() => selectAt(p.x, p.y, e), dblMs);
+    }
+    function onPressCancel(e) {
+      if (press && e.pointerId === press.id) offPress();
+    }
+    const onDownCapture = (e) => {
+      if (deck.props._pickable !== false) {
+        deck.setProps({ _pickable: false });
+        setTimeout(onDownBubble, 0); // in case the bubble listener is not reached
+      }
+      if (!e.isPrimary || e.button !== 0) {
+        if (press) press.moved = true; // a second finger (pinch) or button
+        return;
+      }
+      offPress();
+      // A press near the last click, soon after it, is a double click.
+      const second = !!lastUp && performance.now() - lastUp.t < dblMs &&
+        Math.hypot(e.clientX - lastUp.x, e.clientY - lastUp.y) < slop + 1;
+      if (second && pendingSelect) {
+        clearTimeout(pendingSelect);
+        pendingSelect = null;
+      }
+      lastUp = null;
+      press = { id: e.pointerId, x: e.clientX, y: e.clientY, moved: false, second };
+      window.addEventListener("pointermove", onPressMove, true);
+      window.addEventListener("pointerup", onPressUp, true);
+      window.addEventListener("pointercancel", onPressCancel, true);
+    };
+    const onDownBubble = () => {
+      if (deck.props._pickable === false) deck.setProps({ _pickable: true });
+    };
+    canvasHost.addEventListener("pointerdown", onDownCapture, true);
+    canvasHost.addEventListener("pointerdown", onDownBubble);
     // The view's extent and pixel size change with the element's size, so
     // tiled rasters choose their level and tiles again on resize.
     const onResize = () => {
@@ -427,6 +501,10 @@ export async function render(container, scene, options = {}) {
     const finalize = () => {
       if (finalized) return;
       finalized = true;
+      offPress();
+      clearTimeout(pendingSelect);
+      canvasHost.removeEventListener("pointerdown", onDownCapture, true);
+      canvasHost.removeEventListener("pointerdown", onDownBubble);
       if (observer) observer.disconnect();
       else window.removeEventListener("resize", onResize);
       popup.hide();

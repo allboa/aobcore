@@ -1,5 +1,13 @@
 # aobcore 0.0.0.9000
 
+* The bundled renderer no longer drops clicks when picking is slow (#26).
+  deck.gl picked on every press and dropped a click whose press outlasted
+  its tap time limit, which a pick of a heavy polygon layer with software
+  rendering could take by itself. The press no longer picks; a click is a
+  primary press and release that moves less than 9 pixels, of any
+  duration, picked once after the release. A drag pans and never selects,
+  and a double click still zooms without selecting.
+
 * Legends and popups (scene spec 0.5, #23). New `scene_add_legend()` adds a
   key to a layer's colours: a continuous ramp from a palette name or from
   colour stops (with the range ends labelled), discrete classes, and an
