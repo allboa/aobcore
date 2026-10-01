@@ -609,10 +609,57 @@ test_that("only a websocket Upgrade header counts as an upgrade", {
   expect_false(is_upgrade(list(HTTP_UPGRADE = "")))
   expect_false(is_upgrade(list(HTTP_UPGRADE = "h2c")))
   expect_false(is_upgrade(list(HTTP_UPGRADE = "notwebsocket")))
-  expect_null(refuse_upgrade(list(REQUEST_METHOD = "GET", PATH_INFO = "/")))
-  expect_identical(refuse_upgrade(list(HTTP_UPGRADE = "websocket"))$status, 404L)
-  closed <- FALSE
-  ws <- list(close = function(...) closed <<- TRUE)
-  expect_silent(close_websocket(ws))
-  expect_true(closed)
+})
+
+## ---- follow-ups from the #37 review (#38) ------------------------------------
+
+test_that("refused-Host warnings stop after five distinct values", {
+  skip_if_not_installed("httpuv")
+  srv <- serve_test(probe_scene())
+  on.exit(srv$stop())
+  root <- paste0("/", srv$token, "/")
+  w <- character()
+  for (i in 1:8) {
+    r <- withCallingHandlers(http_req(srv$port, root, host = paste0("h", i, ".example")),
+                             warning = function(c) {
+                               w <<- c(w, conditionMessage(c))
+                               invokeRestart("muffleWarning")
+                             })
+    expect_identical(r$status, 403L)
+  }
+  expect_length(w, 6L)
+  expect_match(w[5], "h5.example", fixed = TRUE)
+  expect_match(w[6], "further refusals not shown", fixed = TRUE)
+  expect_length(srv$state$warned_hosts, 5L)
+})
+
+test_that("own = \".\" is refused as not a regular file", {
+  skip_if_not_installed("httpuv")
+  expect_error(serve_test(probe_scene(), own = "."), "\".\" is not a regular file")
+})
+
+test_that("a path in another case is not taken for a link on macOS", {
+  d <- tempfile("aob-case-")
+  dir.create(d)
+  on.exit(unlink(d, recursive = TRUE))
+  f <- file.path(d, "a.tif")
+  writeLines("x", f)
+  given <- file.path(d, "A.TIF")
+  real_dir <- normalizePath(d, winslash = "/")
+  ## As on a case-insensitive volume: the given name exists and resolves to
+  ## the file's own case.
+  fake <- function(sysname) {
+    g <- is_link
+    environment(g) <- list2env(list(
+      Sys.readlink = function(p) "",
+      file.exists = function(p) TRUE,
+      Sys.info = function() c(sysname = sysname),
+      normalizePath = function(p, ...) {
+        if (identical(p, given)) file.path(real_dir, "a.tif") else base::normalizePath(p, ...)
+      }), parent = asNamespace("aobcore"))
+    g
+  }
+  skip_if(.Platform$OS.type == "windows", "Windows folds case already")
+  expect_false(fake("Darwin")(given))
+  expect_true(fake("Linux")(given))
 })
