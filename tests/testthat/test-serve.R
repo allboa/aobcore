@@ -430,3 +430,133 @@ test_that("url_component() encodes as encodeURIComponent() does", {
   expect_identical(url_component(c("a/b@c+d e!*'()~-_.", "\u00e9%", "cog@123+45")),
                    c("a%2Fb%40c%2Bd%20e!*'()~-_.", "%C3%A9%25", "cog%40123%2B45"))
 })
+
+## ---- attack cases (security review of #37) ----------------------------------
+
+test_that("a hostile Host is escaped, cut short and warned about once", {
+  skip_if_not_installed("httpuv")
+  srv <- serve_test(probe_scene())
+  on.exit(srv$stop())
+  root <- paste0("/", srv$token, "/")
+  evil <- paste0("\033]0;pwned\007\033[2Jx", strrep("y", 200))
+  ## Caught with a calling handler: unwinding out of the request handler
+  ## (as tryCatch() would) breaks httpuv's response.
+  w <- character()
+  r <- withCallingHandlers(http_req(srv$port, root, host = evil), warning = function(c) {
+    w <<- c(w, conditionMessage(c))
+    invokeRestart("muffleWarning")
+  })
+  expect_identical(r$status, 403L)
+  expect_length(w, 1L)
+  expect_false(grepl("[\001-\037\177]", w))
+  expect_match(w, "\\x1b]0;pwned\\x07\\x1b[2Jxyyy", fixed = TRUE)
+  expect_match(w, "yyy...\"", fixed = TRUE)
+  expect_lt(nchar(w), 600)
+  expect_match(w, "Only if this is your IDE proxy's host", fixed = TRUE)
+  ## Once per Host per server; another Host warns again.
+  expect_no_warning(r <- http_req(srv$port, root, host = evil))
+  expect_identical(r$status, 403L)
+  expect_warning(http_req(srv$port, root, host = "other.example"), "other.example")
+})
+
+test_that("undecodable segments answer 404, not 500", {
+  skip_if_not_installed("httpuv")
+  skip_if_no_gdal()
+  x <- served_cog()
+  on.exit(unlink(x$dir, recursive = TRUE))
+  srv <- serve_test(x$scene)
+  on.exit(srv$stop(), add = TRUE)
+  t <- srv$token
+  for (p in c("/blob/%00", "/blob/cog_vertices%00", "/blob/cog_vertices%00x", "/blob/%ff%fe", "/blob/%zz",
+              "/files/%00/polar_3031.tif", "/files/cog/polar_3031.tif%00",
+              "/files/cog/%c0%ae%c0%ae", "/files/cog/%"))
+    expect_identical(http_req(srv$port, paste0("/", t, p))$status, 404L, label = p)
+})
+
+test_that("HEAD sends headers only, with the GET length", {
+  skip_if_not_installed("httpuv")
+  skip_if_no_gdal()
+  x <- served_cog()
+  on.exit(unlink(x$dir, recursive = TRUE))
+  srv <- serve_test(x$scene)
+  on.exit(srv$stop(), add = TRUE)
+  root <- paste0("/", srv$token, "/")
+  for (p in c("", "aob-renderer.min.js", "blob/cog_vertices", "files/cog/polar_3031.tif", "nope")) {
+    g <- http_req(srv$port, paste0(root, p))
+    h <- http_req(srv$port, paste0(root, p), method = "HEAD")
+    expect_identical(h$status, g$status, label = p)
+    expect_identical(h$headers[["content-length"]], sprintf("%.0f", length(g$body)), label = p)
+    expect_identical(h$trailing, 0L, label = p)
+  }
+  h <- http_req(srv$port, paste0(root, "files/cog/polar_3031.tif"), method = "HEAD",
+                headers = c(Range = "bytes=0-9"))
+  expect_identical(h$status, 206L)
+  expect_identical(h$headers[["content-length"]], "10")
+})
+
+test_that("responses carry nosniff, the page no referrer, and units are case-insensitive", {
+  skip_if_not_installed("httpuv")
+  skip_if_no_gdal()
+  x <- served_cog()
+  on.exit(unlink(x$dir, recursive = TRUE))
+  srv <- serve_test(x$scene)
+  on.exit(srv$stop(), add = TRUE)
+  root <- paste0("/", srv$token, "/")
+  for (p in c("", "blob/cog_vertices", "files/cog/polar_3031.tif", "nope")) {
+    expect_identical(http_req(srv$port, paste0(root, p))$headers[["x-content-type-options"]], "nosniff",
+                     label = p)
+  }
+  expect_match(rawToChar(http_req(srv$port, root)$body),
+               "<meta name=\"referrer\" content=\"no-referrer\"/>", fixed = TRUE)
+  for (u in c("BYTES=0-9", "Bytes=0-9")) {
+    r <- http_req(srv$port, paste0(root, "files/cog/polar_3031.tif"), headers = c(Range = u))
+    expect_identical(r$status, 206L, label = u)
+    expect_length(r$body, 10L)
+  }
+  r <- http_req(srv$port, paste0(root, "files/cog/polar_3031.tif"), headers = c(Range = "items=0-9"))
+  expect_identical(r$status, 200L)
+})
+
+test_that("own takes existing regular files only and deletes them only if unchanged", {
+  skip_if_not_installed("httpuv")
+  d <- tempfile("aob-own-")
+  dir.create(d)
+  on.exit(unlink(d, recursive = TRUE))
+  target <- file.path(d, "precious.txt")
+  writeLines("keep me", target)
+  ## A symbolic link is refused, so its target cannot be deleted.
+  link <- file.path(d, "link.tif")
+  if (isTRUE(suppressWarnings(file.symlink(target, link)))) {
+    expect_error(serve_test(probe_scene(), own = link), "symbolic link")
+  }
+  ## A path that does not exist yet is refused.
+  expect_error(serve_test(probe_scene(), own = file.path(d, "later.tif")), "does not exist")
+  expect_error(serve_test(probe_scene(), own = d), "not a regular file")
+  ## A relative path is kept absolute: a same-named file in another working
+  ## directory is left alone.
+  owned <- file.path(d, "own.tif")
+  writeLines("tmp", owned)
+  other <- tempfile("aob-own-other-")
+  dir.create(other)
+  on.exit(unlink(other, recursive = TRUE), add = TRUE)
+  writeLines("other", file.path(other, "own.tif"))
+  old <- setwd(d)
+  srv <- tryCatch(serve_test(probe_scene(), own = "own.tif"), finally = setwd(old))
+  setwd(other)
+  srv$stop()
+  setwd(old)
+  expect_false(file.exists(owned))
+  expect_true(file.exists(file.path(other, "own.tif")))
+  ## A file changed since it was given is left, with a warning.
+  writeLines("tmp", owned)
+  srv <- serve_test(probe_scene(), own = owned)
+  Sys.setFileTime(owned, Sys.time() + 120)
+  expect_warning(srv$stop(), "Left .* in place")
+  expect_true(file.exists(owned))
+  expect_true(file.exists(target))
+})
+
+test_that("only Unix reads /dev/urandom", {
+  body <- paste(deparse(random_bytes), collapse = "\n")
+  expect_match(body, ".Platform$OS.type == \"unix\"", fixed = TRUE)
+})

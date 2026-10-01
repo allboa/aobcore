@@ -16,6 +16,18 @@ http_req <- function(port, path, method = "GET", host = paste0("127.0.0.1:", por
     chunk <- readBin(con, "raw", 1e7)
     if (length(chunk)) buf <- c(buf, chunk)
     res <- parse_http(buf, method)
+    if (!is.null(res) && method == "HEAD") {
+      ## A HEAD response has no body: nothing may follow the headers.
+      t1 <- Sys.time()
+      while (as.numeric(Sys.time() - t1, units = "secs") < 0.3) {
+        httpuv::service(10)
+        buf <- c(buf, readBin(con, "raw", 1e7))
+      }
+      end <- grepRaw(charToRaw("\r\n\r\n"), buf, fixed = TRUE)
+      res$trailing <- length(buf) - (end + 3L)
+      testthat::expect_identical(res$trailing, 0L, label = paste("bytes after HEAD headers for", path))
+      return(res)
+    }
     if (!is.null(res)) return(res)
     if (as.numeric(Sys.time() - t0, units = "secs") > timeout) stop("No response to ", path)
   }

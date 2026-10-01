@@ -39,7 +39,14 @@ serve this scene on instead of starting a new one. \code{port} is then
 ignored.}
 
 \item{own}{Paths of files the server owns (such as temporary COGs): they
-are deleted when it stops. Added to any it already owns.}
+are deleted when it stops. Added to any it already owns. Each must
+exist and be a regular file, not a symbolic link; it is recorded by
+absolute path with its size and modification time, and is deleted only
+if those are unchanged (otherwise it is left, with a warning). Owned
+files are left behind if R crashes or is killed (for example by
+SIGTERM) before the server stops; those in \code{\link[=tempdir]{tempdir()}} still go with
+R's temporary directory. Two servers owning the same path conflict:
+the first to stop deletes it.}
 }
 \value{
 A handle of class \code{"aob_server"}, invisibly: a list with \code{url},
@@ -74,16 +81,23 @@ whole file. A registered file that has changed since it was registered
 answers 409, and one that is gone 404, each with a warning in R.
 
 \strong{Security.} The server binds the loopback interface only. Every route
-is under a random 128-bit token, read from \verb{/dev/urandom} where it exists
-(with a weaker fallback elsewhere, which says so in a message). The port
-is drawn from separate random bytes, between 20000 and 60000; neither
-uses R's random number generator, so \code{.Random.seed} is untouched. A
-request whose \code{Host} is not \verb{127.0.0.1:<port>} or \verb{localhost:<port>} is
-refused (403, with a warning) unless listed in
+is under a random 128-bit token, read from \verb{/dev/urandom} on Unix-alikes
+(Linux, macOS). Elsewhere (Windows) a weaker fallback hashes the time,
+process id and similar values, and says so in a message: that token
+guards against other web pages but does not resist other users of the
+same computer, who can narrow those inputs down. The port is drawn from
+separate random bytes, between 20000 and 60000; with \verb{/dev/urandom} it
+says nothing about the token, but with the fallback both come from the
+same guessable inputs, so a visible port helps guess the token. Neither
+uses R's random number generator, and \code{.Random.seed} is restored around
+httpuv (which draws from it), so it is untouched. A request whose \code{Host}
+is not \verb{127.0.0.1:<port>} or \verb{localhost:<port>} is refused (403, with a
+warning, once per distinct \code{Host}) unless listed in
 \code{getOption("aobcore.serve_hosts")}, for an IDE proxy that forwards
-requests with its own \code{Host}. There are no CORS headers, and only the
-registered files can be read. The token is not authentication: anyone
-who sees the URL can read the scene while it is served.
+requests with its own \code{Host}. There are no CORS headers, responses carry
+\code{X-Content-Type-Options: nosniff}, the page sends no referrer, and only
+the registered files can be read. The token is not authentication:
+anyone who sees the URL can read the scene while it is served.
 
 \strong{Lifecycle.} Each call starts its own server, unless \code{server} names a
 running one: its scene is then replaced, with the same URL. The handle has

@@ -29,16 +29,23 @@
 #' answers 409, and one that is gone 404, each with a warning in R.
 #'
 #' **Security.** The server binds the loopback interface only. Every route
-#' is under a random 128-bit token, read from `/dev/urandom` where it exists
-#' (with a weaker fallback elsewhere, which says so in a message). The port
-#' is drawn from separate random bytes, between 20000 and 60000; neither
-#' uses R's random number generator, so `.Random.seed` is untouched. A
-#' request whose `Host` is not `127.0.0.1:<port>` or `localhost:<port>` is
-#' refused (403, with a warning) unless listed in
+#' is under a random 128-bit token, read from `/dev/urandom` on Unix-alikes
+#' (Linux, macOS). Elsewhere (Windows) a weaker fallback hashes the time,
+#' process id and similar values, and says so in a message: that token
+#' guards against other web pages but does not resist other users of the
+#' same computer, who can narrow those inputs down. The port is drawn from
+#' separate random bytes, between 20000 and 60000; with `/dev/urandom` it
+#' says nothing about the token, but with the fallback both come from the
+#' same guessable inputs, so a visible port helps guess the token. Neither
+#' uses R's random number generator, and `.Random.seed` is restored around
+#' httpuv (which draws from it), so it is untouched. A request whose `Host`
+#' is not `127.0.0.1:<port>` or `localhost:<port>` is refused (403, with a
+#' warning, once per distinct `Host`) unless listed in
 #' `getOption("aobcore.serve_hosts")`, for an IDE proxy that forwards
-#' requests with its own `Host`. There are no CORS headers, and only the
-#' registered files can be read. The token is not authentication: anyone
-#' who sees the URL can read the scene while it is served.
+#' requests with its own `Host`. There are no CORS headers, responses carry
+#' `X-Content-Type-Options: nosniff`, the page sends no referrer, and only
+#' the registered files can be read. The token is not authentication:
+#' anyone who sees the URL can read the scene while it is served.
 #'
 #' **Lifecycle.** Each call starts its own server, unless `server` names a
 #' running one: its scene is then replaced, with the same URL. The handle has
@@ -65,7 +72,14 @@
 #'   serve this scene on instead of starting a new one. `port` is then
 #'   ignored.
 #' @param own Paths of files the server owns (such as temporary COGs): they
-#'   are deleted when it stops. Added to any it already owns.
+#'   are deleted when it stops. Added to any it already owns. Each must
+#'   exist and be a regular file, not a symbolic link; it is recorded by
+#'   absolute path with its size and modification time, and is deleted only
+#'   if those are unchanged (otherwise it is left, with a warning). Owned
+#'   files are left behind if R crashes or is killed (for example by
+#'   SIGTERM) before the server stops; those in [tempdir()] still go with
+#'   R's temporary directory. Two servers owning the same path conflict:
+#'   the first to stop deletes it.
 #' @return A handle of class `"aob_server"`, invisibly: a list with `url`,
 #'   `port`, `token` and `stop()`.
 #' @seealso [scene_servers()], [stop_scene_servers()].
@@ -96,6 +110,7 @@ serve_scene <- function(scene, blobs = attr(scene, "blobs"), files = attr(scene,
   if (!is.null(own) && (!is.character(own) || anyNA(own))) {
     stop("`own` must be a character vector of paths.", call. = FALSE)
   }
+  own <- owned_records(own)
   content <- serve_content(scene, blobs %||% list(), files %||% list(), title, theme)
 
   if (!is.null(server)) {
@@ -115,7 +130,8 @@ serve_scene <- function(scene, blobs = attr(scene, "blobs"), files = attr(scene,
   state <- new.env(parent = emptyenv())
   state$token <- token
   state$running <- FALSE
-  state$owned <- character()
+  state$owned <- list()
+  state$warned_hosts <- character()
   state$renderer <- renderer_js()
   serve_set(state, content, own)
   app <- list(call = function(req) serve_request(state, req))
@@ -258,8 +274,48 @@ serve_set <- function(state, content, own) {
   state$types <- content$types
   state$files <- content$files
   state$started <- state$started %||% as.numeric(Sys.time())
-  if (length(own)) state$owned <- unique(c(state$owned, normalizePath(own, winslash = "/", mustWork = FALSE)))
+  if (length(own)) {
+    owned <- state$owned
+    owned[names(own)] <- own
+    state$owned <- owned
+  }
   invisible(state)
+}
+
+## Records of files a server may delete: each must exist and be a regular
+## file, not a symbolic link (whose target would be deleted), and is kept by
+## absolute path (so a later setwd() cannot redirect it) with its size and
+## modification time (so a file replaced since is not deleted).
+owned_records <- function(own) {
+  out <- list()
+  for (p in own) {
+    if (!file.exists(p)) stop("`own` path \"", p, "\" does not exist.", call. = FALSE)
+    if (nzchar(Sys.readlink(p))) {
+      stop("`own` path \"", p, "\" is a symbolic link; give the file itself.", call. = FALSE)
+    }
+    if (!utils::file_test("-f", p)) stop("`own` path \"", p, "\" is not a regular file.", call. = FALSE)
+    abs <- normalizePath(p, winslash = "/", mustWork = TRUE)
+    info <- file.info(abs, extra_cols = FALSE)
+    out[[abs]] <- list(path = abs, size = info$size, mtime = info$mtime)
+  }
+  out
+}
+
+## Delete owned files that are as recorded; warn about the others.
+delete_owned <- function(owned) {
+  for (rec in owned) {
+    p <- rec$path
+    if (!file.exists(p) && !nzchar(Sys.readlink(p))) next
+    info <- file.info(p, extra_cols = FALSE)
+    if (nzchar(Sys.readlink(p)) || !utils::file_test("-f", p) ||
+        !identical(info$size, rec$size) || !identical(info$mtime, rec$mtime)) {
+      warning("Left \"", p, "\" in place: it has changed since the server was given it.",
+              call. = FALSE)
+      next
+    }
+    unlink(p)
+  }
+  invisible()
 }
 
 check_files <- function(files) {
@@ -295,16 +351,35 @@ check_file_unchanged <- function(id, rec, signal) {
   NULL
 }
 
+## HEAD answers with the headers of the matching GET, an explicit
+## Content-Length and no body.
 serve_request <- function(state, req) {
+  res <- serve_get(state, req)
+  if (!identical(req$REQUEST_METHOD, "HEAD")) return(res)
+  b <- res$body
+  n <- if (is.list(b)) file.size(b$file) else if (is.raw(b)) length(b) else
+    if (is.character(b)) sum(nchar(b, type = "bytes")) else 0
+  res$headers$`Content-Length` <- sprintf("%.0f", n)
+  res$body <- raw(0)
+  res
+}
+
+serve_get <- function(state, req) {
   method <- req$REQUEST_METHOD
   path <- req$PATH_INFO
   host <- req$HTTP_HOST %||% ""
   allowed <- c(paste0(c("127.0.0.1:", "localhost:"), state$port),
                as.character(getOption("aobcore.serve_hosts")))
   if (!host %in% allowed) {
-    warning("aobcore server ", state$url, " refused a request with Host \"", host,
-            "\". If an IDE proxy forwards to it, allow that host with ",
-            "options(aobcore.serve_hosts = \"", host, "\").", call. = FALSE)
+    ## The Host is the requester's bytes: escaped and cut short before it
+    ## reaches the console, and warned about once per server.
+    shown <- safe_text(host, 80L)
+    if (!host %in% state$warned_hosts) {
+      state$warned_hosts <- c(state$warned_hosts, host)
+      warning("aobcore server ", state$url, " refused a request with Host ", shown,
+              ". Only if this is your IDE proxy's host, allow it with ",
+              "options(aobcore.serve_hosts = ", shown, ").", call. = FALSE)
+    }
     return(serve_response(403L, "Forbidden"))
   }
   if (!method %in% c("GET", "HEAD")) {
@@ -325,16 +400,16 @@ serve_request <- function(state, req) {
   if (startsWith(rest, "blob/")) {
     seg <- substring(rest, 6L)
     if (!nzchar(seg) || grepl("/", seg, fixed = TRUE)) return(not_found())
-    key <- utils::URLdecode(seg)
-    if (!key %in% names(state$blobs)) return(not_found())
+    key <- url_decode(seg)
+    if (is.na(key) || !key %in% names(state$blobs)) return(not_found())
     return(serve_response(200L, state$blobs[[key]], state$types[[key]]))
   }
   if (startsWith(rest, "files/")) {
     parts <- strsplit(rest, "/", fixed = TRUE)[[1]]
     if (length(parts) != 3L || grepl("/$", rest)) return(not_found())
-    id <- utils::URLdecode(parts[2])
-    name <- utils::URLdecode(parts[3])
-    if (!id %in% names(state$files)) return(not_found())
+    id <- url_decode(parts[2])
+    name <- url_decode(parts[3])
+    if (is.na(id) || is.na(name) || !id %in% names(state$files)) return(not_found())
     f <- state$files[[id]]
     if (!identical(name, f$name)) return(not_found())
     return(serve_file(id, f, req$HTTP_RANGE))
@@ -350,9 +425,11 @@ serve_file <- function(id, f, range) {
   size <- f$size
   type <- if (grepl("[.]tiff?$", f$name, ignore.case = TRUE)) "image/tiff" else "application/octet-stream"
   base <- list(`Accept-Ranges` = "bytes")
-  if (is.null(range) || !nzchar(range) || !startsWith(range, "bytes=")) {
+  ## Range units are case-insensitive; another unit is ignored (200).
+  if (is.null(range) || !nzchar(range) || tolower(substr(range, 1L, 6L)) != "bytes=") {
     return(list(status = 200L,
-                headers = c(base, list(`Content-Type` = type, `Cache-Control` = "no-cache")),
+                headers = c(base, list(`Content-Type` = type, `Cache-Control` = "no-cache",
+                                       `X-Content-Type-Options` = "nosniff")),
                 body = list(file = f$path)))
   }
   r <- parse_range(substring(range, 7L), size, getOption("aobcore.serve_range_max", 64 * 2^20))
@@ -391,11 +468,37 @@ parse_range <- function(spec, size, cap) {
 
 serve_response <- function(status, body, type = "text/plain; charset=utf-8", headers = list()) {
   list(status = status,
-       headers = c(list(`Content-Type` = type, `Cache-Control` = "no-cache"), headers),
+       headers = c(list(`Content-Type` = type, `Cache-Control` = "no-cache",
+                        `X-Content-Type-Options` = "nosniff"), headers),
        body = body)
 }
 
 not_found <- function() serve_response(404L, "Not found")
+
+## A path segment decoded once, or NA when it cannot be (such as "%00").
+url_decode <- function(x) {
+  ## URLdecode() stops a string at a decoded NUL ("a%00b" is "a"), so a
+  ## %00 anywhere is refused outright.
+  ## A "%" not followed by two hex digits is malformed.
+  if (grepl("%00", x, fixed = TRUE) || grepl("%(?![0-9A-Fa-f]{2})", x, perl = TRUE)) {
+    return(NA_character_)
+  }
+  out <- tryCatch(utils::URLdecode(x), error = function(e) NA_character_,
+                  warning = function(w) NA_character_)
+  if (is.na(out) || !validUTF8(out)) NA_character_ else out
+}
+
+## Untrusted text for the console: printable ASCII kept, every other byte
+## as \xNN, quoted, and cut to `max` bytes.
+safe_text <- function(x, max) {
+  b <- charToRaw(x)
+  cut <- length(b) > max
+  b <- b[seq_len(min(length(b), max))]
+  v <- as.integer(b)
+  ok <- v >= 0x20 & v <= 0x7e & v != 0x22 & v != 0x5c
+  chars <- ifelse(ok, vapply(v, function(i) rawToChar(as.raw(max(i, 1L))), ""), sprintf("\\x%02x", v))
+  paste0("\"", paste(chars, collapse = ""), if (cut) "...", "\"")
+}
 
 server_stop <- function(state) {
   if (isTRUE(state$running)) {
@@ -404,8 +507,9 @@ server_stop <- function(state) {
   }
   if (exists(state$token, envir = servers, inherits = FALSE)) rm(list = state$token, envir = servers)
   if (length(state$owned)) {
-    unlink(state$owned[file.exists(state$owned)])
-    state$owned <- character()
+    owned <- state$owned
+    state$owned <- list()
+    delete_owned(owned)
   }
   invisible()
 }
@@ -436,11 +540,15 @@ url_component <- function(x) {
 
 ## ---- random bytes without R's RNG -----------------------------------------
 
-## `n` random bytes from /dev/urandom, or from the weaker fallback where it
-## does not exist (or when the internal option aobcore.serve_fallback_random
-## is TRUE, for tests). Neither touches .Random.seed.
+## `n` random bytes from /dev/urandom on a Unix-alike, or from the weaker
+## fallback elsewhere (or when the internal option
+## aobcore.serve_fallback_random is TRUE, for tests). Only on Unix: on
+## Windows "/dev/urandom" is a path on the current drive (C:\\dev\\urandom)
+## that any local user could create with fixed bytes. Neither touches
+## .Random.seed.
 random_bytes <- function(n, quiet = FALSE) {
-  if (!isTRUE(getOption("aobcore.serve_fallback_random")) && file.exists("/dev/urandom")) {
+  if (!isTRUE(getOption("aobcore.serve_fallback_random")) && .Platform$OS.type == "unix" &&
+      file.exists("/dev/urandom")) {
     con <- file("/dev/urandom", open = "rb", raw = TRUE)
     on.exit(close(con))
     b <- readBin(con, "raw", n)
@@ -455,8 +563,10 @@ random_bytes <- function(n, quiet = FALSE) {
 
 random_hex <- function(n) paste(format(as.hexmode(as.integer(random_bytes(n))), width = 2), collapse = "")
 
-## Candidate ports in 20000 to 60000, from their own random bytes (not the
-## token's), so a visible port says nothing about the token.
+## Candidate ports in 20000 to 60000, from their own random bytes (a second
+## draw, not the token's). With /dev/urandom a visible port says nothing
+## about the token. With the fallback both are hashes of nearly the same
+## guessable inputs, so a visible port is an oracle for guessing the token.
 random_ports <- function(k, quiet = FALSE) {
   b <- as.integer(random_bytes(2L * k, quiet = quiet))
   20000L + as.integer((b[c(TRUE, FALSE)] * 256L + b[c(FALSE, TRUE)]) %% 40001L)

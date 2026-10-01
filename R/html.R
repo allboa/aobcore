@@ -118,6 +118,8 @@ scene_page <- function(scene, blobs, title, theme, mode = c("inline", "linked"))
       ## A served page asks the server for no favicon (it would be a 404
       ## outside the token).
       if (linked) htmltools::tags$link(rel = "icon", href = "data:,"),
+      ## Nor does it send the token in a Referer to anything it links to.
+      if (linked) htmltools::tags$meta(name = "referrer", content = "no-referrer"),
       htmltools::tags$style(htmltools::HTML(page_css))
     ),
     htmltools::tags$body(

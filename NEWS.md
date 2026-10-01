@@ -19,14 +19,21 @@
     served page never holds the local path. A cog with a relative `url`
     and neither a registered file nor embedded tiles is an error, as are
     the blob keys `"."` and `".."`.
-  - Loopback only, a random 128-bit path token from `/dev/urandom` (with a
-    weaker fallback, announced by a message, where it is missing) and a
-    random port from separate bytes; neither touches `.Random.seed`. A
+  - Loopback only, a random 128-bit path token from `/dev/urandom` on
+    Unix-alikes (elsewhere a weaker fallback, announced by a message, that
+    does not resist other local users and makes the port a hint to the
+    token) and a random port from separate bytes; neither touches
+    `.Random.seed`. A
     `Host` other than `127.0.0.1:<port>` or `localhost:<port>` is refused
-    (403, with a warning naming the option) unless listed in
-    `getOption("aobcore.serve_hosts")`.
+    (403, with one warning per distinct `Host`, the value escaped and cut
+    short) unless listed in `getOption("aobcore.serve_hosts")`. Responses
+    carry `X-Content-Type-Options: nosniff`, the page sends no referrer,
+    `HEAD` sends headers only, and an undecodable path segment (such as
+    `%00`) is 404.
   - The `"aob_server"` handle has `url`, `port`, `token` and an idempotent
-    `stop()`, which also deletes files given in `own`. `serve_scene(scene,
+    `stop()`, which also deletes files given in `own` (existing regular
+    files, not symbolic links, kept by absolute path, and deleted only if
+    their size and modification time are unchanged). `serve_scene(scene,
     server = srv)` replaces the scene on a running server with the same
     URL. `scene_servers()` lists running servers and
     `stop_scene_servers()` stops them; all stop at session end and when
