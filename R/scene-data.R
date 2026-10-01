@@ -63,7 +63,18 @@ scene_add_data <- function(scene, id, x) {
 #' @param radius_px Optional point radius in pixels (points only).
 #' @param label Optional human-readable name.
 #' @param visible Optional initial visibility.
+#' @param popup Optional attributes to show for one feature at a time
+#'   (scene spec 0.5): a character vector of column names in the layer's
+#'   data, shown in that order labelled by column name, or
+#'   `list(columns = ..., trigger = ...)`. `trigger` is `"select"` (the
+#'   spec's default: shown when the viewer selects a feature, by a click,
+#'   tap or key press, until another selection or a dismissal) or `"point"`
+#'   (shown while the pointer is over a feature; a renderer with no way to
+#'   point without selecting treats it as `"select"`). The columns must be in
+#'   the data and must not be its geometry column. A popup makes the scene
+#'   scene spec 0.5.
 #' @return The scene with the layer appended (drawn above earlier layers).
+#' @seealso [scene_add_legend()] for a key to the layer's colours.
 #' @export
 #' @examples
 #' s <- scene("EPSG:3031")
@@ -71,9 +82,18 @@ scene_add_data <- function(scene, id, x) {
 #' s <- scene_add_data(s, "line", x)
 #' s <- scene_add_layer(s, "line", stroke = c(60, 66, 72, 255), stroke_width_px = 1)
 #' s$layers[[1]]$kind
+#'
+#' # Attributes shown when a feature is selected (scene spec 0.5)
+#' df <- data.frame(name = c("Davis", "Mawson"), depth_m = c(120, 450))
+#' df$geometry <- wk::wkt(c("POINT (2300000 600000)", "POINT (1300000 1600000)"),
+#'                        crs = "EPSG:3031")
+#' s <- scene_add_data(scene(), "stations", df)
+#' s <- scene_add_layer(s, "stations", popup = c("name", "depth_m"))
+#' s$layers[[1]]$popup
+#' scene_spec_version(s)
 scene_add_layer <- function(scene, data, id = data, kind = NULL,
                             stroke = NULL, fill = NULL, stroke_width_px = NULL,
-                            radius_px = NULL, label = NULL, visible = NULL) {
+                            radius_px = NULL, label = NULL, visible = NULL, popup = NULL) {
   check_scene(scene)
   check_id(data, "data")
   check_id(id)
@@ -103,9 +123,11 @@ scene_add_layer <- function(scene, data, id = data, kind = NULL,
     fill = as_color(fill, "fill"),
     stroke = as_color(stroke, "stroke"),
     stroke_width_px = check_px(stroke_width_px, "stroke_width_px"),
-    radius_px = check_px(radius_px, "radius_px")
+    radius_px = check_px(radius_px, "radius_px"),
+    popup = as_popup(popup, scene, ref)
   )
   scene$layers[[length(scene$layers) + 1L]] <- layer[!vapply(layer, is.null, TRUE)]
+  if (!is.null(layer$popup)) scene <- as_spec_05(scene)
   scene
 }
 
@@ -114,7 +136,7 @@ scene_add_layer <- function(scene, data, id = data, kind = NULL,
 #' `scene_add_data()` then `scene_add_layer()`, with one id for both.
 #'
 #' @inheritParams scene_add_data
-#' @param ... Passed to [scene_add_layer()] (`kind`, `stroke`, `fill`, ...).
+#' @param ... Passed to [scene_add_layer()] (`kind`, `stroke`, `fill`, `popup`, ...).
 #' @return The scene with the data and the layer added.
 #' @export
 #' @examples

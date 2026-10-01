@@ -26,7 +26,7 @@ A minimal scene: a projected view in \code{crs}, with no data and no layers.
 Its fields follow the scene spec (\code{version}, \code{view}, \code{data}, \code{layers}).
 A scene starts as version 0.1 and becomes 0.2 when a tiled raster is
 added (0.3 for a colour image or JPEG tiles). A view with \code{bounds} is
-scene spec 0.4.
+scene spec 0.4, and legends or popups make it 0.5.
 }
 \details{
 By default the view gets the CRS's domain (allboa/design decision 0005,

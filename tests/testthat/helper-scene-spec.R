@@ -264,6 +264,13 @@ expect_valid_tiled_scene <- function(s) {
                                  simplifyDataFrame = FALSE, simplifyMatrix = FALSE)
     expect_identical(tiled_spec_problems(parsed), character())
   }
+  expect_validator_ok(json)
+}
+
+# When AOB_SCENESPEC names an allboa/scenespec checkout with its node modules
+# installed, check scene JSON with its validator (scripts/validate.js), or
+# check that the validator rejects it (`valid = FALSE`). Otherwise nothing.
+expect_validator_ok <- function(json, valid = TRUE) {
   dir <- Sys.getenv("AOB_SCENESPEC")
   node <- Sys.which("node")
   if (nzchar(dir) && nzchar(node) && file.exists(file.path(dir, "scripts", "validate.js"))) {
@@ -272,7 +279,11 @@ expect_valid_tiled_scene <- function(s) {
     writeLines(json, f)
     out <- suppressWarnings(system2(node, c(file.path(dir, "scripts", "validate.js"), f),
                                     stdout = TRUE, stderr = TRUE))
-    expect_null(attr(out, "status"), label = paste(out, collapse = "\n"))
-    expect_match(out[1], "^valid")
+    if (valid) {
+      expect_null(attr(out, "status"), label = paste(out, collapse = "\n"))
+      expect_match(out[1], "^valid")
+    } else {
+      expect_false(is.null(attr(out, "status")), label = paste(out, collapse = "\n"))
+    }
   }
 }

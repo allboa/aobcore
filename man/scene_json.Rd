@@ -15,10 +15,8 @@ scene_json(scene, pretty = FALSE)
 A single character string of JSON.
 }
 \description{
-Writes a scene as a scene spec JSON document: version 0.1, 0.2 when the
-scene has a tiled raster layer, or 0.3 when a tiled raster is drawn as a
-colour image or has JPEG tiles (see \code{\link[=scene_spec_version]{scene_spec_version()}}). The
-blobs are not
+Writes a scene as a scene spec JSON document, as the lowest version that
+can express it (0.1 to 0.5; see \code{\link[=scene_spec_version]{scene_spec_version()}}). The blobs are not
 included; a transport delivers them beside the document (see
 \code{\link[=scene_blobs]{scene_blobs()}}). The output is ASCII: other characters are written as
 \verb{\\uXXXX} escapes.

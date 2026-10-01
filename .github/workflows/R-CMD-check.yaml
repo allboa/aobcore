@@ -50,14 +50,15 @@ jobs:
           error-on: '"warning"'
 
       # Scene spec 0.2 to 0.4 output from cog_scene() (palette COGs, and
-      # RGBA and YCbCr JPEG colour images) and the 0.1 scenes checked by the
+      # RGBA and YCbCr JPEG colour images), a 0.5 scene with legends and
+      # popups (scene_add_legend(), popup =) and the 0.1 scenes checked by the
       # scenespec validator, not only by the R tests' structural checks. Linux only: it has R, the package's dependencies and Node.
       - name: Validate written scenes with the scenespec validator
         if: runner.os == 'Linux'
         env:
-          # A pinned scenespec commit (main after scene spec 0.4), so a spec
+          # A pinned scenespec commit (main after scene spec 0.5), so a spec
           # change cannot turn this check red unseen; bump it deliberately.
-          SCENESPEC_SHA: fc3a786d57e6c3c5a95a310e56fa5051c5952525
+          SCENESPEC_SHA: 9f8df2699f7fc7813d491547f1be59cdca7c44ce
         run: |
           R CMD INSTALL .
           Rscript tools/write-scenes.R "$RUNNER_TEMP/scenes"

@@ -1,5 +1,7 @@
 // Scene spec 0.1 layers to deck.gl layers. This file is the only place where
-// spec concepts meet deck.gl names.
+// spec concepts meet deck.gl names. A 0.5 popup makes a vector layer's
+// features pickable; ctx.pickable() records how a picked part maps to its
+// feature row.
 import { COORDINATE_SYSTEM } from "@deck.gl/core";
 import { SolidPolygonLayer, PathLayer, ScatterplotLayer, BitmapLayer } from "@deck.gl/layers";
 import { SimpleMeshLayer } from "@deck.gl/mesh-layers";
@@ -59,14 +61,32 @@ export function buildLayer(L, ctx) {
   if (geomIdx < 0) throw new Error(`layer ${L.id}: geometry column "${ref.geometry.column}" not found`);
   const origin = ref.origin_subtracted ? ctx.scene.view.local_origin : null;
   const fields = table.schema.fields;
+  // 0.5 popup: features can be picked when every named column is present;
+  // a missing one is an error for this layer's popup (the layer still draws).
+  let popup = false;
+  if (L.popup) {
+    const missing = L.popup.columns.filter((c) => !fields.some((f) => f.name === c));
+    if (missing.length) {
+      ctx.error(`layer ${L.id}: popup column${missing.length > 1 ? "s" : ""} ${missing.map((c) => `"${c}"`).join(", ")} not found in data ${L.data}; popup not shown`);
+    } else {
+      popup = true;
+    }
+  }
   const out = [];
   let count = 0;
+  let rowOffset = 0;
   table.batches.forEach((b, bi) => {
     const g = geometryChunk(b.data.children[geomIdx], enc);
     g.coords = absolute(g.coords, g.size, origin);
     bounds(g.coords, g.size, ctx.bounds);
-    const base = { coordinateSystem: ctx.coordinateSystem, pickable: false };
+    const base = { coordinateSystem: ctx.coordinateSystem, pickable: popup, autoHighlight: popup,
+                   highlightColor: [255, 196, 0, 160] };
     const id = `${L.id}--${bi}`;
+    // A picked object's index is a part (a member linestring, polygon or
+    // point); its feature row in the table is rowOffset + feature[index].
+    const pick = (deckId, feature) => {
+      if (popup) ctx.pickable(deckId, { layer: L, table, feature, rowOffset });
+    };
     const what = `layer ${L.id}`;
     const widthPx = L.stroke_width_px === undefined ? 1 : L.stroke_width_px;
     if (L.kind === "path") {
@@ -74,6 +94,7 @@ export function buildLayer(L, ctx) {
       const parts = partsOf(g, multi ? 1 : 0);
       const starts = g.levels[multi ? 1 : 0];
       count += g.rows;
+      pick(id, parts.feature);
       out.push(new PathLayer({
         ...base,
         id,
@@ -120,6 +141,7 @@ export function buildLayer(L, ctx) {
           indices.set(t, o);
           o += t.length;
         }
+        pick(`${id}-fill`, polys.feature);
         out.push(new SolidPolygonLayer({
           ...base,
           id: `${id}-fill`,
@@ -143,6 +165,7 @@ export function buildLayer(L, ctx) {
         for (let p = 0; p < polys.count; p++) {
           for (let r = polyRings[p]; r < polyRings[p + 1]; r++) ringFeature[r - polyRings[0]] = polys.feature[p];
         }
+        pick(`${id}-stroke`, ringFeature);
         out.push(new PathLayer({
           ...base,
           id: `${id}-stroke`,
@@ -171,6 +194,7 @@ export function buildLayer(L, ctx) {
       count += g.rows;
       const filled = L.fill !== undefined || L.stroke === undefined;
       const stroked = L.stroke !== undefined;
+      pick(id, feature);
       out.push(new ScatterplotLayer({
         ...base,
         id,
@@ -185,6 +209,7 @@ export function buildLayer(L, ctx) {
         getLineColor: colorAccessor(L.stroke, DEFAULT_STROKE, b.data, fields, feature, what),
       }));
     }
+    rowOffset += b.numRows;
   });
   const noun = { path: "line", polygon: "polygon", point: "point" }[L.kind];
   return { layers: out, summary: `${count.toLocaleString("en-US")} ${noun}${count === 1 ? "" : "s"}` };

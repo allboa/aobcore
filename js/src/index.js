@@ -1,5 +1,7 @@
-// allonboard renderer for scene spec 0.1 to 0.4, on deck.gl. 0.4 view.bounds keep
-// the camera within them plus a quarter of their size on each side.
+// allonboard renderer for scene spec 0.1 to 0.5, on deck.gl. 0.4 view.bounds keep
+// the camera within them plus a quarter of their size on each side. 0.5
+// legends are drawn from the scene's legends array (legend.js) and 0.5
+// popups show a picked feature's attributes (popup.js).
 //
 // aob.render(container, scene, {blobs}) draws one scene into an element.
 // blobs maps each data reference's blob key to Arrow IPC bytes (Uint8Array,
@@ -16,10 +18,13 @@ import { buildLayer } from "./layers.js";
 import { buildTiledRaster } from "./tiles.js";
 import { decodeTileSamples } from "./jpeg.js";
 import { cssGradient } from "./palettes.js";
+import { legendElement } from "./legend.js";
+import { popupBox, popupRows } from "./popup.js";
 import { CSS } from "./style.js";
 
-const VERSION = "0.0.4";
-const SPECS = ["0.1", "0.2", "0.3", "0.4"];
+const VERSION = "0.0.5";
+const SPECS = ["0.1", "0.2", "0.3", "0.4", "0.5"];
+const atLeast = (v, min) => SPECS.indexOf(v) >= SPECS.indexOf(min);
 
 
 function injectStyle() {
@@ -169,6 +174,8 @@ export async function render(container, scene, options = {}) {
 
     let pending = 0;
     const layerStatus = {};
+    // deck layer id -> how its picked parts map to feature rows (0.5 popups).
+    const picks = new Map();
     const ctx = {
       scene,
       tables,
@@ -185,6 +192,7 @@ export async function render(container, scene, options = {}) {
       },
       coordinateSystem: globe ? COORDINATE_SYSTEM.LNGLAT : COORDINATE_SYSTEM.CARTESIAN,
       bounds: [Infinity, -Infinity, Infinity, -Infinity],
+      pickable: (deckId, info) => picks.set(deckId, info),
     };
     const built = scene.layers.map((L) => {
       if (globe && (L.kind === "raster" || L.kind === "tiled_raster")) {
@@ -196,10 +204,27 @@ export async function render(container, scene, options = {}) {
     });
     const visible = scene.layers.map((L) => L.visible !== false);
 
-    // Layer list (top of the list draws on top) and legends.
+    // Layer list (top of the list draws on top) and legends. From 0.5 the
+    // legends are the scene's own (shown while their layer is shown);
+    // before 0.5 a palette raster gets a ramp from its palette.
     panel.append(el("h2", "aob-h", "Layers"));
     const list = el("div", "aob-layers");
     const legends = el("div", "aob-legends");
+    const specLegends = atLeast(scene.version, "0.5");
+    const legendEls = [];
+    if (specLegends) {
+      const byId = new Map(scene.layers.map((L, i) => [L.id, i]));
+      (scene.legends || []).forEach((lg) => {
+        const i = byId.get(lg.layer);
+        const box = legendElement(lg, scene.layers[i], layerError);
+        box.hidden = i === undefined || !visible[i];
+        legendEls.push([i, box]);
+        legends.append(box);
+      });
+    }
+    const showLegends = () => legendEls.forEach(([i, box]) => {
+      box.hidden = i === undefined || !visible[i];
+    });
     scene.layers.forEach((L, i) => {
       const lab = el("label", "aob-layer");
       const cb = el("input");
@@ -207,11 +232,13 @@ export async function render(container, scene, options = {}) {
       cb.checked = visible[i];
       cb.addEventListener("change", () => {
         visible[i] = cb.checked;
+        if (!cb.checked && popup.current && popup.current.layer === L) popup.hide();
+        showLegends();
         update();
       });
       lab.append(cb, el("span", "aob-name", L.label || L.id), el("small", "aob-count", built[i].summary));
       list.prepend(lab);
-      const lg = built[i].legend;
+      const lg = specLegends ? null : built[i].legend;
       if (lg) {
         const box = el("div", "aob-legend");
         box.append(el("div", "aob-legend-title", lg.label));
@@ -223,7 +250,38 @@ export async function render(container, scene, options = {}) {
         legends.append(box);
       }
     });
+    if (legends.childElementCount) {
+      legends.setAttribute("role", "group");
+      legends.setAttribute("aria-label", "Legends");
+    }
     panel.append(list, legends, themeButton());
+
+    // 0.5 popups. "point" shows while the pointer is over a feature; a
+    // pointer that cannot hover (touch) makes it act as select. Decided per
+    // event from its pointer type, since one page can see mouse and touch;
+    // with no pointer type, from whether the device can hover.
+    const canHover = () => typeof matchMedia === "function" && matchMedia("(hover: hover)").matches;
+    const triggerOf = (L, event) => {
+      const t = (L.popup && L.popup.trigger) || "select";
+      if (t !== "point") return t;
+      const kind = event && event.srcEvent && event.srcEvent.pointerType;
+      const hovers = kind ? kind !== "touch" : canHover();
+      return hovers ? "point" : "select";
+    };
+    map.tabIndex = -1;
+    const popup = popupBox(map, () => delete container.dataset.aobSelected);
+    // The feature under a picking result, or null.
+    const featureAt = (info) => {
+      if (!info || !info.picked || !info.layer) return null;
+      const p = picks.get(info.layer.id);
+      if (!p || info.index < 0 || info.index >= p.feature.length) return null;
+      return { layer: p.layer, table: p.table, row: p.rowOffset + p.feature[info.index] };
+    };
+    const showFeature = (f, x, y, trigger, focus) => {
+      const rows = popupRows(f.table, f.layer.popup.columns, f.row);
+      popup.show({ layer: f.layer, row: f.row, rows, x, y, trigger }, focus);
+      container.dataset.aobSelected = `${f.layer.id}:${f.row}`;
+    };
 
     // Initial view: extent, then center, then the data bounds (clipped to
     // view.bounds when the scene has them), then the bounds themselves.
@@ -296,10 +354,27 @@ export async function render(container, scene, options = {}) {
       initialViewState,
       layers: [],
       onViewStateChange: ({ viewState: vs }) => setView(vs),
-      onHover: (info) => {
+      onHover: (info, event) => {
         const c = info.coordinate;
         readout.textContent = c ? `x ${fmt(c[0], span)}   y ${fmt(c[1], span)}` : "";
+        const f = featureAt(info);
+        const cur = popup.current;
+        if (f && triggerOf(f.layer, event) === "point") {
+          if (!cur || cur.trigger === "point") showFeature(f, info.x, info.y, "point", false);
+        } else if (cur && cur.trigger === "point") {
+          popup.hide();
+        }
       },
+      onClick: (info, event) => {
+        const f = featureAt(info);
+        if (f && triggerOf(f.layer, event) === "select") showFeature(f, info.x, info.y, "select", true);
+        else if (!f) popup.hide();
+      },
+      // deck.gl's click is a tap whose press must end within `time` ms,
+      // measured when the release is processed; the pick run on press can
+      // take hundreds of ms on a slow device, so allow a second.
+      eventRecognizerOptions: { click: { time: 1000 } },
+      getCursor: ({ isDragging, isHovering }) => (isDragging ? "grabbing" : isHovering ? "pointer" : "grab"),
       onError: (err) => setStatus(`Rendering error: ${err && err.message ? err.message : err}`, true),
       onAfterRender: () => {
         if (!ready && ++frames >= 2 && pending === 0) {
@@ -354,6 +429,8 @@ export async function render(container, scene, options = {}) {
       finalized = true;
       if (observer) observer.disconnect();
       else window.removeEventListener("resize", onResize);
+      popup.hide();
+      delete container.dataset.aobSelected;
       deck.finalize();
       if (teardowns.get(container) === finalize) teardowns.delete(container);
     };
@@ -368,8 +445,12 @@ export async function render(container, scene, options = {}) {
     // handle.finalize() stops the scene: resize tracking and the deck.
     // handle.view() is the camera; handle.setView(vs) moves it, clamped to
     // view.bounds as interaction is, and returns where it ended up.
+    // handle.selected() is the feature whose popup is open, as
+    // {layer, row}, or null; handle.closePopup() dismisses it.
     const handle = { deck, scene, tables, decodeMs, bytes: total, warnings, errors, finalize,
-                     view: () => viewState, setView };
+                     view: () => viewState, setView,
+                     selected: () => (popup.current ? { layer: popup.current.layer.id, row: popup.current.row } : null),
+                     closePopup: () => popup.hide() };
     container.dataset.aobInfo = `${kib} KiB Arrow decoded in ${decodeMs.toFixed(1)} ms`;
     return handle;
   } catch (err) {
@@ -400,7 +481,11 @@ export function boot() {
     let p;
     try {
       const { scene, blobs } = fromPage(c.getAttribute("data-aob-scene"));
-      p = render(c, scene, { blobs });
+      // The handle is kept on the element for tools and tests.
+      p = render(c, scene, { blobs }).then((h) => {
+        c.aob = h;
+        return h;
+      });
     } catch (err) {
       c.dataset.aobStatus = "error";
       c.textContent = `This scene could not be drawn: ${err.message}`;

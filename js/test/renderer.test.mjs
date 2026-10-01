@@ -19,6 +19,12 @@
 //    test/rgb-tiles.json against GDAL; in the browser, the YCbCr JPEG tile
 //    decoded by the browser against GDAL's read, and a 0.3 scene of the
 //    JPEG COG over HTTP range requests.
+// 6. Scene spec 0.5 in the browser: legends drawn from the scene (palette
+//    and stops ramps, classes, a no-data entry, hidden with their layer),
+//    and in an EPSG:3031 view a click on a point selects it and its popup
+//    shows the named columns (closed by Escape or the keyboard), a point
+//    popup follows the pointer over a polygon, and a missing popup column
+//    is a layer error. In Node, cell text and legend helpers.
 // Also in Node: the range reader keeps a whole-file (200) response, and the
 // tile cache evicts least recently used idle tiles.
 // Set CHROMIUM_PATH to pick a browser; SKIP_BROWSER=1 runs only part 1.
@@ -26,10 +32,13 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { tableToIPC, tableFromArrays } from "apache-arrow";
+import { tableToIPC, tableFromArrays, Table, Schema, Field, RecordBatch, Struct, List, FixedSizeList,
+  Float64, Utf8, Int32, DateDay, makeData, vectorFromArray } from "apache-arrow";
 import { paletteStops, colorize, UnknownPaletteError } from "../src/palettes.js";
 import { decodeTile, decodeSamples, jpegStream, samplesFromRGBA, colorizeRGB, encodingProblem, UnsupportedCodecError } from "../src/decode.js";
 import { selectLevel, rangeReader, tilesToEvict } from "../src/tiles.js";
+import { cellText } from "../src/popup.js";
+import { stopsGradient, rangeLabel, rgbaCss } from "../src/legend.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -181,6 +190,24 @@ console.log("ok   level selection");
   assert.deepEqual(tilesToEvict(cached, 9, 1).map((x) => x.used), [1, 3]);
   assert.deepEqual(tilesToEvict(cached, 9, 0).map((x) => x.used), [1, 3, 5]);
   console.log("ok   tile cache evicts least recently used idle tiles");
+}
+
+// ---- 6a. popup text and legend helpers in Node -------------------------------
+{
+  assert.equal(cellText("1957-01-13", new Utf8()), "1957-01-13", "ISO text passes through");
+  assert.equal(cellText(null, new Utf8()), "NA");
+  assert.equal(cellText(15, new Float64()), "15");
+  assert.equal(cellText(0.1 + 0.2, new Float64()), "0.3");
+  assert.equal(cellText(Date.UTC(1957, 0, 13), new DateDay()), "1957-01-13");
+  assert.equal(cellText(true), "true");
+  assert.equal(cellText(12n), "12");
+  assert.equal(rangeLabel(-2), "-2");
+  assert.equal(rangeLabel(1 / 3), "0.333333");
+  assert.equal(rgbaCss([1, 2, 3, 255]), "rgba(1, 2, 3, 1)");
+  assert.equal(rgbaCss(["url(x)", "1", 300, 255]), "rgba(0, 1, 255, 1)", "only numbers reach the CSS");
+  assert.equal(stopsGradient([{ at: 0, color: [0, 0, 0, 0] }, { at: 1, color: [255, 0, 0, 255] }]),
+    "linear-gradient(90deg, rgba(0, 0, 0, 0) 0%, rgba(255, 0, 0, 1) 100%)");
+  console.log("ok   popup cell text and legend helpers");
 }
 
 if (process.env.SKIP_BROWSER) process.exit(0);
@@ -434,5 +461,199 @@ try {
     console.log("ok   view.bounds clamp zoom and pan");
   } finally {
     await browser3.close();
+  }
+}
+
+// ---- 6b. legends and popups in an EPSG:3031 view (scene spec 0.5) -------------
+{
+  const geoField = (name, type, ext) => new Field(name, type, false, new Map([["ARROW:extension:name", ext]]));
+  const xyType = () => new FixedSizeList(2, new Field("xy", new Float64(), false));
+  const xyData = (coords) => makeData({ type: xyType(), length: coords.length / 2,
+    child: makeData({ type: new Float64(), length: coords.length, data: Float64Array.from(coords) }) });
+  // A table of a geometry column and attribute vectors, as Arrow IPC base64.
+  const geoBlob = (geomField, geomData, attrs) => {
+    const vecs = Object.entries(attrs).map(([k, v]) => [k, v]);
+    const fields = [geomField, ...vecs.map(([k, v]) => new Field(k, v.type, true))];
+    const data = makeData({ type: new Struct(fields), length: geomData.length,
+      children: [geomData, ...vecs.map(([, v]) => v.data[0])] });
+    return b64(new Table([new RecordBatch(new Schema(fields), data)]));
+  };
+  const pts = [[1e6, 1e6], [-1.5e6, 5e5], [5e5, -1.8e6]];
+  const stationsBlob = geoBlob(geoField("geometry", xyType(), "geoarrow.point"), xyData(pts.flat()), {
+    name: vectorFromArray(["Davis", "Mawson", "Casey"], new Utf8()),
+    opened: vectorFromArray(["1957-01-13", "1954-02-13", null], new Utf8()),
+    depth_m: vectorFromArray([120.5, 450, 30], new Float64()),
+  });
+  // One polygon: a square from (-2.4e6, -2.4e6) to (-1e6, -1e6).
+  const ring = [-2.4e6, -2.4e6, -1e6, -2.4e6, -1e6, -1e6, -2.4e6, -1e6, -2.4e6, -2.4e6];
+  const ringType = new List(new Field("vertices", xyType(), false));
+  const polyType = new List(new Field("rings", ringType, false));
+  const rings = makeData({ type: ringType, length: 1, valueOffsets: Int32Array.from([0, 5]), child: xyData(ring) });
+  const polys = makeData({ type: polyType, length: 1, valueOffsets: Int32Array.from([0, 1]), child: rings });
+  const zoneBlob = geoBlob(geoField("geom", polyType, "geoarrow.polygon"), polys, {
+    zone: vectorFromArray(["Protected"], new Utf8()),
+    area: vectorFromArray([1960000], new Int32()),
+  });
+  const values = b64(tableFromArrays({ value: new Float64Array([-2, 3, 8, 13]) }));
+  const scene = {
+    version: "0.5",
+    view: { type: "projected", crs: "EPSG:3031", extent: [-3e6, 3e6, -3e6, 3e6] },
+    data: {
+      values: { format: "arrow-ipc-stream", blob: "values" },
+      zones: { format: "arrow-ipc-stream", blob: "zones", geometry: { column: "geom", encoding: "geoarrow.polygon" } },
+      stations: { format: "arrow-ipc-stream", blob: "stations", geometry: { column: "geometry", encoding: "geoarrow.point" } },
+    },
+    layers: [
+      { id: "sst", kind: "raster", label: "SST", grid: { crs: "EPSG:3031", extent: [2e6, 3e6, 2e6, 3e6], dim: [2, 2] },
+        values: "values", palette: { name: "ocean", range: [-2, 13] } },
+      { id: "zones", kind: "polygon", label: "Zones", data: "zones", fill: [27, 158, 119, 160],
+        popup: { columns: ["zone", "area"], trigger: "point" } },
+      { id: "stations", kind: "point", label: "Stations", data: "stations", radius_px: 8,
+        popup: { columns: ["name", "opened", "depth_m"] } },
+      { id: "broken", kind: "point", label: "Broken popup", data: "stations", radius_px: 2,
+        popup: { columns: ["name", "nope"] } },
+    ],
+    legends: [
+      { layer: "sst", title: "SST (degrees C)", ramp: { palette: "ocean", range: [-2, 13] },
+        na: { label: "no data", color: [0, 0, 0, 0] } },
+      { layer: "zones", classes: [{ label: "Protected", color: [27, 158, 119, 160] }] },
+      { layer: "stations", title: "Depth (m)", ramp: { range: [0, 4000],
+        stops: [{ at: 0, color: [255, 255, 204, 255] }, { at: 1, color: [8, 29, 88, 255] }] } },
+    ],
+  };
+  const blobs6 = { values, zones: zoneBlob, stations: stationsBlob };
+  const browser4 = await chromium.launch({
+    executablePath: process.env.CHROMIUM_PATH || undefined,
+    args: ["--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--ignore-gpu-blocklist"],
+  });
+  try {
+    const page = await browser4.newPage({ viewport: { width: 900, height: 700 } });
+    await page.setContent(`<!DOCTYPE html><html><head><meta charset="utf-8"></head><body style="margin:0;height:100vh">
+<div id="c" style="height:100%;width:100%"></div><script>${bundle}</script></body></html>`);
+    await page.evaluate(async ([sc, bl]) => {
+      const c = document.getElementById("c");
+      window.h = await new Promise((resolve, reject) => {
+        aob.render(c, sc, { blobs: bl, onReady: resolve }).catch(reject);
+      });
+    }, [scene, blobs6]);
+    // Screen position of a point in view CRS units.
+    const screen = (x, y) => page.evaluate(([x, y]) => {
+      const r = document.querySelector(".aob-canvas").getBoundingClientRect();
+      const v = window.h.view();
+      const k = Math.pow(2, v.zoom);
+      return [r.left + r.width / 2 + (x - v.target[0]) * k, r.top + r.height / 2 - (y - v.target[1]) * k];
+    }, [x, y]);
+    const popupState = () => page.evaluate(() => {
+      const p = document.querySelector(".aob-popup");
+      return { hidden: p.hidden, layer: p.dataset.aobLayer, trigger: p.dataset.aobTrigger,
+        title: p.querySelector(".aob-popup-title").textContent,
+        rows: [...p.querySelectorAll("dt")].map((dt) => [dt.textContent, dt.nextElementSibling.textContent]),
+        focus: p.contains(document.activeElement), selected: document.getElementById("c").dataset.aobSelected,
+        role: p.getAttribute("role") };
+    });
+
+    // Click once and wait for the popup to reach a state. Clicks are
+    // spaced so two at one spot are never taken as a double click (zoom).
+    const clickFor = async (x, y, test, arg) => {
+      await page.waitForTimeout(350);
+      await page.mouse.click(x, y);
+      await page.waitForFunction(test, arg, { timeout: 5000 });
+    };
+    const openPopup = () => !document.querySelector(".aob-popup").hidden;
+    const popupRow = (r) => !document.querySelector(".aob-popup").hidden && document.querySelector(".aob-popup").dataset.aobRow === String(r);
+
+    // Legends, from the scene's array, in its order.
+    const lg = await page.evaluate(() => [...document.querySelectorAll(".aob-legend")].map((e) => ({
+      title: e.querySelector(".aob-legend-title").textContent, hidden: e.hidden, label: e.getAttribute("aria-label"),
+      bar: e.querySelector(".aob-legend-bar") && e.querySelector(".aob-legend-bar").getAttribute("aria-label"),
+      scale: [...e.querySelectorAll(".aob-legend-scale span")].map((s) => s.textContent),
+      classes: [...e.querySelectorAll(".aob-legend-class")].map((li) => li.textContent),
+      na: [...e.querySelectorAll(".aob-legend-na")].map((li) => li.textContent) })));
+    assert.deepEqual(lg.map((l) => l.title), ["SST (degrees C)", "Zones", "Depth (m)"], "title falls back to the layer label");
+    assert.equal(lg[0].bar, "Colour ramp from -2 to 13");
+    assert.deepEqual(lg[0].scale, ["-2", "13"]);
+    assert.deepEqual(lg[0].na, ["no data"]);
+    assert.deepEqual(lg[1].classes, ["Protected"]);
+    assert.deepEqual(lg[2].scale, ["0", "4000"]);
+    assert.equal(lg[2].label, "Legend: Depth (m)");
+    const bg = await page.evaluate(() => document.querySelectorAll(".aob-legend-bar")[1].style.background);
+    assert.match(bg, /rgb\(255, 255, 204\) 0%.*rgb\(8, 29, 88\) 100%/);
+    console.log("ok   0.5 legends: palette and stops ramps, classes, no-data entry");
+
+    // A missing popup column is an error for that layer; the layer draws.
+    const st = await page.evaluate(() => ({ errors: document.getElementById("c").dataset.aobErrors,
+      line: document.querySelector(".aob-status").textContent,
+      counts: [...document.querySelectorAll(".aob-count")].map((e) => e.textContent) }));
+    assert.equal(st.errors, "1");
+    assert.match(st.line, /error: layer broken: popup column "nope" not found in data stations; popup not shown/);
+    assert.deepEqual(st.counts, ["3 points", "3 points", "1 polygon", "2 x 2 cells"]);
+    console.log("ok   a missing popup column is a layer error");
+
+    // Select a station in the EPSG:3031 view: its popup shows its attributes.
+    const [x0, y0] = await screen(...pts[0]);
+    await clickFor(x0, y0, popupRow, 0);
+    let p = await popupState();
+    assert.equal(p.layer, "stations");
+    assert.equal(p.title, "Stations");
+    assert.equal(p.role, "dialog");
+    assert.deepEqual(p.rows, [["name", "Davis"], ["opened", "1957-01-13"], ["depth_m", "120.5"]]);
+    assert.equal(p.selected, "stations:0");
+    assert.ok(p.focus, "the popup takes focus");
+    assert.deepEqual(await page.evaluate(() => window.h.selected()), { layer: "stations", row: 0 });
+    // Another selection replaces it; a missing value reads NA.
+    const [x2, y2] = await screen(...pts[2]);
+    await clickFor(x2, y2, popupRow, 2);
+    p = await popupState();
+    assert.deepEqual(p.rows, [["name", "Casey"], ["opened", "NA"], ["depth_m", "30"]]);
+    // Escape closes it.
+    await page.keyboard.press("Escape");
+    p = await popupState();
+    assert.ok(p.hidden, "Escape closes the popup");
+    assert.equal(p.selected, undefined);
+    // The close button works from the keyboard.
+    await clickFor(x0, y0, popupRow, 0);
+    await page.keyboard.press("Tab");
+    assert.equal(await page.evaluate(() => document.activeElement.getAttribute("aria-label")), "Close");
+    await page.keyboard.press("Enter");
+    assert.ok((await popupState()).hidden, "the close button closes the popup");
+    // A click on empty map closes a popup too.
+    await clickFor(x0, y0, popupRow, 0);
+    const [xe, ye] = await screen(0, 2.5e6);
+    await clickFor(xe, ye, () => document.querySelector(".aob-popup").hidden);
+    console.log("ok   0.5 popup: select a feature in an EPSG:3031 view and see its attributes; keyboard close");
+
+    // trigger "point": shown while the pointer is over the polygon.
+    const hover = await page.evaluate(() => matchMedia("(hover: hover)").matches);
+    const [xz, yz] = await screen(-1.7e6, -1.7e6);
+    if (hover) {
+      await page.mouse.move(xz, yz);
+      await page.waitForFunction(() => !document.querySelector(".aob-popup").hidden, null, { timeout: 5000 });
+      p = await popupState();
+      assert.equal(p.trigger, "point");
+      assert.equal(p.role, "tooltip", "a pointed-at feature's popup is a tooltip");
+      assert.deepEqual(p.rows, [["zone", "Protected"], ["area", "1960000"]]);
+      assert.ok(!p.focus, "a point popup does not take focus");
+      await page.mouse.move(xe, ye);
+      await page.waitForFunction(() => document.querySelector(".aob-popup").hidden, null, { timeout: 5000 });
+      console.log("ok   0.5 popup: trigger point follows the pointer");
+    } else {
+      await clickFor(xz, yz, openPopup);
+      assert.equal((await popupState()).trigger, "select");
+      console.log("ok   0.5 popup: trigger point acts as select with no hover");
+    }
+
+    // Hiding a layer hides its legend and closes its popup.
+    await page.mouse.move(xe, ye);
+    await clickFor(x0, y0, popupRow, 0);
+    await page.evaluate(() => {
+      const lab = [...document.querySelectorAll(".aob-layer")].find((l) => l.textContent.startsWith("Stations"));
+      lab.querySelector("input").click();
+    });
+    const after = await page.evaluate(() => ({ popup: document.querySelector(".aob-popup").hidden,
+      legend: document.querySelector('[data-aob-legend="stations"]').hidden }));
+    assert.deepEqual(after, { popup: true, legend: true });
+    console.log("ok   0.5 hiding a layer hides its legend and popup");
+  } finally {
+    await browser4.close();
   }
 }
