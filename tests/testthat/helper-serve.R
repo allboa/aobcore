@@ -62,3 +62,27 @@ port_free <- function(port) {
   httpuv::stopServer(s)
   TRUE
 }
+
+# A websocket upgrade request on a raw socket: the header block of the
+# first response the server sent within `wait` seconds (what a client acts
+# on), and whether any of it switched protocols first.
+ws_upgrade <- function(port, path, host = paste0("127.0.0.1:", port),
+                       upgrade = "websocket", wait = 1) {
+  con <- socketConnection("127.0.0.1", port, blocking = FALSE, open = "r+b", timeout = 5)
+  on.exit(close(con))
+  writeBin(charToRaw(paste0(
+    "GET ", path, " HTTP/1.1\r\nHost: ", host, "\r\n",
+    "Upgrade: ", upgrade, "\r\nConnection: Upgrade\r\n",
+    "Origin: http://evil.example\r\n",
+    "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n")), con)
+  buf <- raw()
+  t0 <- Sys.time()
+  while (as.numeric(Sys.time() - t0, units = "secs") < wait) {
+    httpuv::service(10)
+    buf <- c(buf, readBin(con, "raw", 1e6))
+  }
+  end <- grepRaw(charToRaw("\r\n\r\n"), buf, fixed = TRUE)
+  if (!length(end)) return(list(head = "", switched_first = FALSE))
+  head <- rawToChar(buf[seq_len(end - 1L)])
+  list(head = head, switched_first = startsWith(head, "HTTP/1.1 101"))
+}

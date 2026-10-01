@@ -96,7 +96,8 @@ warning, once per distinct \code{Host}) unless listed in
 \code{getOption("aobcore.serve_hosts")}, for an IDE proxy that forwards
 requests with its own \code{Host}. There are no CORS headers, responses carry
 \code{X-Content-Type-Options: nosniff}, the page sends no referrer, and only
-the registered files can be read. The token is not authentication:
+the registered files can be read. Websocket upgrades are refused (404)
+and any socket is closed at once. The token is not authentication:
 anyone who sees the URL can read the scene while it is served.
 
 \strong{Lifecycle.} Each call starts its own server, unless \code{server} names a

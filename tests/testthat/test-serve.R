@@ -577,3 +577,42 @@ test_that("a link is found by resolving it where Sys.readlink() cannot see it", 
   expect_false(no_readlink(f))
   expect_false(no_readlink(file.path(d, "..", basename(d), "a.tif")))
 })
+
+test_that("websocket upgrades are refused, closed and print nothing", {
+  skip_if_not_installed("httpuv")
+  srv <- serve_test(probe_scene())
+  on.exit(srv$stop())
+  paths <- c("/", "/no-token-at-all", paste0("/", srv$token), paste0("/", srv$token, "/"),
+             paste0("/", srv$token, "/index.html"))
+  hosts <- c(paste0("127.0.0.1:", srv$port), "evil.example:80")
+  for (path in paths) for (host in hosts) for (upgrade in c("websocket", "WebSocket")) {
+    out <- NULL
+    msg <- capture.output(type = "message", out <- capture.output(
+      expect_no_warning(got <- ws_upgrade(srv$port, path, host = host, upgrade = upgrade))))
+    label <- paste(path, host, upgrade)
+    ## The answer starts with a refusal, never with an accepted handshake.
+    expect_false(got$switched_first, label = label)
+    expect_true(startsWith(got$head, "HTTP/1.1 404 Not Found\r\n"), label = label)
+    expect_true(grepl("X-Content-Type-Options: nosniff", got$head, fixed = TRUE), label = label)
+    expect_identical(c(out, msg), character(), label = label)
+  }
+  ## Ordinary requests still reach the routes.
+  expect_identical(http_req(srv$port, paste0("/", srv$token, "/"))$status, 200L)
+  expect_identical(http_req(srv$port, paste0("/", srv$token, "/aob-renderer.min.js"))$status, 200L)
+})
+
+test_that("only a websocket Upgrade header counts as an upgrade", {
+  expect_true(is_upgrade(list(HTTP_UPGRADE = "websocket")))
+  expect_true(is_upgrade(list(HTTP_UPGRADE = "WebSocket")))
+  expect_true(is_upgrade(list(HTTP_UPGRADE = "h2c, websocket")))
+  expect_false(is_upgrade(list()))
+  expect_false(is_upgrade(list(HTTP_UPGRADE = "")))
+  expect_false(is_upgrade(list(HTTP_UPGRADE = "h2c")))
+  expect_false(is_upgrade(list(HTTP_UPGRADE = "notwebsocket")))
+  expect_null(refuse_upgrade(list(REQUEST_METHOD = "GET", PATH_INFO = "/")))
+  expect_identical(refuse_upgrade(list(HTTP_UPGRADE = "websocket"))$status, 404L)
+  closed <- FALSE
+  ws <- list(close = function(...) closed <<- TRUE)
+  expect_silent(close_websocket(ws))
+  expect_true(closed)
+})
