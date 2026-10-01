@@ -144,6 +144,7 @@ test_that("binary, malformed and oversized messages close with their codes", {
   srv <- serve_test(probe_scene())
   on.exit(srv$stop())
   close_with <- function(x, code, warn, binary = FALSE, hello = TRUE) {
+    srv$state$ws_warnings <- 0L # each case warns; the per-server cap is tested below
     ws <- ws_open(srv)
     if (hello) ws_hello(ws)
     expect_warning(ws_say(ws, x, binary = binary), warn)
@@ -196,7 +197,7 @@ test_that("at most eight pages connect at once", {
   expect_warning(ninth <- ws_open(srv), "at most 8 pages")
   expect_identical(ninth$closed$code, 1013L)
   expect_null(ninth$on_message)
-  ## Warned once until a page leaves.
+  ## Warned once per server, even when pages come and go.
   expect_no_warning(tenth <- ws_open(srv))
   expect_identical(tenth$closed$code, 1013L)
   socks[[3]]$on_close()
@@ -204,7 +205,69 @@ test_that("at most eight pages connect at once", {
   again <- ws_open(srv)
   expect_null(again$closed)
   expect_identical(srv$connections(), 8L)
-  expect_warning(ws_open(srv), "at most 8 pages")
+  for (i in 1:30) {
+    expect_no_warning(extra <- ws_open(srv))
+    expect_identical(extra$closed$code, 1013L)
+    again$on_close()
+    again <- ws_open(srv)
+  }
+})
+
+test_that("warnings about pages are capped per server", {
+  skip_if_no_ws()
+  srv <- serve_test(probe_scene())
+  on.exit(srv$stop())
+  w <- character()
+  for (i in 1:20) {
+    ws <- ws_open(srv)
+    withCallingHandlers(ws_say(ws, "not json"), warning = function(c) {
+      w <<- c(w, conditionMessage(c))
+      invokeRestart("muffleWarning")
+    })
+    expect_identical(ws$closed$code, 1007L)
+  }
+  expect_length(w, 6L)
+  expect_match(w[1:5], "closed the socket of page")
+  expect_match(w[6], "further ones not shown", fixed = TRUE)
+  ## Dropped messages and spec mismatches count toward the same cap.
+  ws <- ws_open(srv)
+  expect_no_warning(ws_hello(ws, specs = list("9.9")))
+  expect_no_warning(ws_say(ws, list(type = "select", scene = 1L, seq = 1L,
+                                    items = list(list(layer = "nope", rows = list())))))
+  ## Another server has its own.
+  srv2 <- serve_test(probe_scene())
+  on.exit(srv2$stop(), add = TRUE)
+  expect_warning(ws_say(ws_open(srv2), "not json"), "closed the socket")
+})
+
+test_that("reads take in every queued message, not only the first", {
+  skip_if_no_ws()
+  srv <- serve_test(probe_scene())
+  on.exit(srv$stop())
+  ws <- ws_open(srv)
+  ws_hello(ws)
+  queue <- function(from) {
+    for (i in from + 0:2) local({
+      k <- i
+      later::later(function() {
+        ws_say(ws, list(type = "select", scene = 1L, seq = k, items = list(list(layer = "land", rows = list(k)))))
+      }, 0)
+    })
+  }
+  queue(1L)
+  expect_identical(srv$selection()$row, 4L)
+  queue(4L)
+  expect_identical(srv$connections(), 1L)
+  expect_identical(srv$selection()$row, 7L)
+  queue(7L)
+  later::later(function() {
+    ws_say(ws, list(type = "view", scene = 1L, seq = 10L, extent = list(0, 1, 0, 1)))
+  }, 0)
+  expect_identical(srv$view_state()$seq, 10L)
+  expect_identical(srv$selection()$row, 10L)
+  ## wait() returns the latest of what arrived together.
+  queue(11L)
+  expect_identical(srv$wait(timeout = 5)$row, 14L)
 })
 
 test_that("stop() closes every socket with 1001", {
@@ -333,6 +396,7 @@ test_that("bad fields drop the message with one warning per page and type", {
     list(list(type = "select", scene = "1", seq = 1L, items = list()), "scene or seq")
   )
   for (k in cases) {
+    srv$state$ws_warnings <- 0L # the per-server cap is tested below
     ws <- ws_open(srv)
     ws_hello(ws)
     expect_warning(ws_say(ws, k[[1]]), k[[2]], fixed = TRUE)
@@ -347,6 +411,7 @@ test_that("bad fields drop the message with one warning per page and type", {
     ws$on_close()
   }
   ## The warning is per type: a bad view still warns once.
+  srv$state$ws_warnings <- 0L
   ws <- ws_open(srv)
   ws_hello(ws)
   expect_warning(ws_say(ws, sel(list(list(layer = "x", rows = list())), 1L)), "dropped a select")

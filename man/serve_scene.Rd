@@ -52,7 +52,7 @@ the first to stop deletes it.}
 \item{select}{The layers the page lets the viewer select, by id: \code{NULL}
 (the default) for every vector layer (\code{point}, \code{path} and \code{polygon}),
 a character vector of vector layer ids, or \code{character(0)} for none.
-Ignored without 'jsonlite'.}
+Checked, but has no effect without 'jsonlite'.}
 }
 \value{
 A handle of class \code{"aob_server"}, invisibly: a list with \code{url},
@@ -100,7 +100,8 @@ same guessable inputs, so a visible port helps guess the token. Neither
 uses R's random number generator, and \code{.Random.seed} is restored around
 httpuv (which draws from it), so it is untouched. A request whose \code{Host}
 is not \verb{127.0.0.1:<port>} or \verb{localhost:<port>} is refused (403, with a
-warning, once per distinct \code{Host}) unless listed in
+warning once per distinct \code{Host}, for the first 5 per server, then once
+to say further refusals are not shown) unless listed in
 \code{getOption("aobcore.serve_hosts")}, for an IDE proxy that forwards
 requests with its own \code{Host}. There are no CORS headers, responses carry
 \code{X-Content-Type-Options: nosniff}, the page sends no referrer, and only

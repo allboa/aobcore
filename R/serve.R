@@ -40,7 +40,8 @@
 #' uses R's random number generator, and `.Random.seed` is restored around
 #' httpuv (which draws from it), so it is untouched. A request whose `Host`
 #' is not `127.0.0.1:<port>` or `localhost:<port>` is refused (403, with a
-#' warning, once per distinct `Host`) unless listed in
+#' warning once per distinct `Host`, for the first 5 per server, then once
+#' to say further refusals are not shown) unless listed in
 #' `getOption("aobcore.serve_hosts")`, for an IDE proxy that forwards
 #' requests with its own `Host`. There are no CORS headers, responses carry
 #' `X-Content-Type-Options: nosniff`, the page sends no referrer, and only
@@ -95,7 +96,7 @@
 #' @param select The layers the page lets the viewer select, by id: `NULL`
 #'   (the default) for every vector layer (`point`, `path` and `polygon`),
 #'   a character vector of vector layer ids, or `character(0)` for none.
-#'   Ignored without 'jsonlite'.
+#'   Checked, but has no effect without 'jsonlite'.
 #' @return A handle of class `"aob_server"`, invisibly: a list with `url`,
 #'   `port`, `token`, `stop()`, and the selection functions `selection()`,
 #'   `view_state()`, `wait()`, `on()` and `connections()` (see
@@ -332,10 +333,13 @@ owned_records <- function(own) {
   out <- list()
   for (p in own) {
     if (!file.exists(p)) stop("`own` path \"", p, "\" does not exist.", call. = FALSE)
+    ## A directory (such as ".") is not a regular file, whatever is_link()
+    ## makes of its name; a link to a regular file passes this and is
+    ## refused next.
+    if (!utils::file_test("-f", p)) stop("`own` path \"", p, "\" is not a regular file.", call. = FALSE)
     if (is_link(p)) {
       stop("`own` path \"", p, "\" is a symbolic link; give the file itself.", call. = FALSE)
     }
-    if (!utils::file_test("-f", p)) stop("`own` path \"", p, "\" is not a regular file.", call. = FALSE)
     abs <- normalizePath(p, winslash = "/", mustWork = TRUE)
     info <- file.info(abs, extra_cols = FALSE)
     out[[abs]] <- list(path = abs, size = info$size, mtime = info$mtime)
@@ -346,13 +350,15 @@ owned_records <- function(own) {
 ## Whether `p` is a symbolic link (or, on Windows, any link or junction
 ## that resolves elsewhere): Sys.readlink() reports links on Unix but
 ## always returns "" on Windows, so the file is also resolved and compared
-## with its own directory plus its name.
+## with its own directory plus its name. That comparison ignores case on
+## Windows and macOS, whose volumes are usually case-insensitive, so a
+## path given in another case than the file's is not taken for a link.
 is_link <- function(p) {
   if (nzchar(Sys.readlink(p))) return(TRUE)
   if (!file.exists(p)) return(FALSE)
   real <- normalizePath(p, winslash = "/", mustWork = TRUE)
   own <- file.path(normalizePath(dirname(p), winslash = "/", mustWork = TRUE), basename(p))
-  if (.Platform$OS.type == "windows") {
+  if (.Platform$OS.type == "windows" || identical(Sys.info()[["sysname"]], "Darwin")) {
     real <- tolower(real)
     own <- tolower(own)
   }
@@ -409,27 +415,13 @@ check_file_unchanged <- function(id, rec, signal) {
   NULL
 }
 
-## Refuse a websocket upgrade outright, as a server without a socket (no
-## jsonlite) does. Without onWSOpen, httpuv would accept any upgrade and
-## print "attempt to apply non-function" to the console, which any web page
-## can trigger. A refusal in onHeaders alone is not enough: httpuv 1.6.17
-## still switches protocols and calls onWSOpen afterwards, so that closes
-## the socket at once and keeps nothing. Other requests go on to `call`
-## (NULL). See serve-ws.R for the socket itself.
-refuse_upgrade <- function(req) {
-  if (is_upgrade(req)) not_found() else NULL
-}
-
+## Whether a request asks for a websocket upgrade (see serve-ws.R for the
+## socket and its checks).
 is_upgrade <- function(req) {
   u <- req$HTTP_UPGRADE
   ## The header is a comma-separated list of protocols, case-insensitive.
   is.character(u) && length(u) == 1L &&
     grepl("(^|,)[[:space:]]*websocket[[:space:]]*(/[^,]*)?(,|$)", tolower(u))
-}
-
-close_websocket <- function(ws) {
-  try(ws$close(), silent = TRUE)
-  invisible(NULL)
 }
 
 ## HEAD answers with the headers of the matching GET, an explicit
@@ -495,9 +487,19 @@ host_allowed <- function(state, host) {
 }
 
 ## The Host is the requester's bytes: escaped and cut short before it
-## reaches the console, and warned about once per server.
+## reaches the console, and warned about once per distinct value, for the
+## first 5 values per server, then once more (so a client cycling through
+## names can neither flood the console nor grow the record).
 warn_host <- function(state, host) {
   if (host %in% state$warned_hosts) return(invisible())
+  if (length(state$warned_hosts) >= 5L) {
+    if (!isTRUE(state$hosts_capped)) {
+      state$hosts_capped <- TRUE
+      warning("aobcore server ", state$url, " refused another request for its Host; ",
+              "further refusals not shown.", call. = FALSE)
+    }
+    return(invisible())
+  }
   state$warned_hosts <- c(state$warned_hosts, host)
   shown <- safe_text(host, 80L)
   warning("aobcore server ", state$url, " refused a request with Host ", shown,

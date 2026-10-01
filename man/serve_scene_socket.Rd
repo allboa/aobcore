@@ -73,14 +73,21 @@ httpuv 1.6.17 switches protocols even after a refusal, so the same checks
 run again, first, when the socket opens, which closes a refused socket at
 once (1008) and keeps nothing of it. A client that hangs up during a
 refused upgrade can make httpuv print \verb{Warning in rm(list = wsconn_address(handle), envir = private$wsconns) : object '...' not found}; it comes from httpuv's own bookkeeping, is harmless and leaves no
-state.
+state. A refused socket is closed by R at once, but httpuv keeps the
+connection until the client hangs up.
 
 \strong{Close codes.} 1000 normal; 1001 the server is stopping; 1003 a binary
 frame; 1007 not UTF-8, not JSON, or not an object with a string \code{type};
 1008 refused, or a message before \code{hello}; 1009 a message over
-\code{getOption("aobcore.ws_max_message", 2^20)} bytes (with a warning); 1011
-an error in R (with a warning); 1013 more than 8 pages at once (with a
-warning); 4000 a protocol other than 1.
+\code{getOption("aobcore.ws_max_message", 2^20)} bytes; 1011 an error in R;
+1013 more than 8 pages at once; 4000 a protocol other than 1. Each
+closing but 1000, 1001 and a refusal warns in R; these warnings, a
+spec mismatch and dropped messages are given for the first 5 per
+server, then once more to say further ones are not shown. The 1013 cap
+warns once per server. Eight sockets that open and never send \code{hello}
+hold the cap until they close. httpuv ends a text frame at its first NUL byte, so R
+never sees what follows one; the rest of the message is checked as
+usual.
 
 A socket message only sets R's record of the selection and view; it
 never evaluates anything, names a file or reaches the scene.

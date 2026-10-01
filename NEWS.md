@@ -19,8 +19,10 @@
     `getOption("aobcore.ws_max_message", 2^20)` bytes (1009, warned),
     UTF-8 JSON objects with a string `type` (else 1007, never httpuv's
     1011), `hello` first (else 1008), protocol 1 (else 4000), at most 8
-    pages at once (1013, warned). An error in R closes with 1011 and a
-    warning. `stop()` closes every socket with 1001.
+    pages at once (1013, warned once per server). An error in R closes
+    with 1011 and a warning. `stop()` closes every socket with 1001.
+    Warnings about pages (closes, dropped messages, a spec mismatch) are
+    given for the first 5 per server, then once more.
   - Protocol 1: the page sends `hello`, `select` (its whole selection, as
     0-based Arrow rows per layer) and `view`; R answers `hello` (connection
     number, scene serial, spec version, selectable layers and size cap) and
@@ -37,8 +39,16 @@
     `serve_scene(select = )` names the selectable layers (default every
     vector layer). `wait()` inside an `on()` callback is an error, and the
     reads there skip running the event loop.
-  - 'later' (already a dependency of httpuv) joins Suggests, for the
-    tests that queue a message with `later::later()`.
+  - 'later' (already a dependency of httpuv) joins Suggests. The selection
+    reads run every callback that is due (`later::run_now(0, all = TRUE)`),
+    so messages queued while R was busy are all counted.
+
+* `serve_scene()` follow-ups from the #37 review (#38): refused-`Host`
+  warnings are given for the first 5 distinct values per server, then once
+  more, and the record of them stops growing; `own = "."` (or any
+  directory) is refused as not a regular file rather than as a link; and
+  on macOS, as on Windows, an `own` path given in another case than the
+  file's is not taken for a link.
 
 * `serve_scene()` serves a scene from a local HTTP server (decision 0006 in
   allboa/design; #33, #34, #35), with httpuv in Suggests. The browser

@@ -69,14 +69,21 @@
 #' refused upgrade can make httpuv print `Warning in rm(list =
 #' wsconn_address(handle), envir = private$wsconns) : object '...' not
 #' found`; it comes from httpuv's own bookkeeping, is harmless and leaves no
-#' state.
+#' state. A refused socket is closed by R at once, but httpuv keeps the
+#' connection until the client hangs up.
 #'
 #' **Close codes.** 1000 normal; 1001 the server is stopping; 1003 a binary
 #' frame; 1007 not UTF-8, not JSON, or not an object with a string `type`;
 #' 1008 refused, or a message before `hello`; 1009 a message over
-#' `getOption("aobcore.ws_max_message", 2^20)` bytes (with a warning); 1011
-#' an error in R (with a warning); 1013 more than 8 pages at once (with a
-#' warning); 4000 a protocol other than 1.
+#' `getOption("aobcore.ws_max_message", 2^20)` bytes; 1011 an error in R;
+#' 1013 more than 8 pages at once; 4000 a protocol other than 1. Each
+#' closing but 1000, 1001 and a refusal warns in R; these warnings, a
+#' spec mismatch and dropped messages are given for the first 5 per
+#' server, then once more to say further ones are not shown. The 1013 cap
+#' warns once per server. Eight sockets that open and never send `hello`
+#' hold the cap until they close. httpuv ends a text frame at its first NUL byte, so R
+#' never sees what follows one; the rest of the message is checked as
+#' usual.
 #'
 #' A socket message only sets R's record of the selection and view; it
 #' never evaluates anything, names a file or reaches the scene.
@@ -139,6 +146,22 @@ select_layers <- function(scene, select) {
   unique(select)
 }
 
+## A warning about a page or a socket, from the server at `state`: the
+## first 5 per server are given, then one saying further ones are not
+## shown, so a page that misbehaves in a loop cannot flood the console.
+## Origin refusals have their own record (warn_origin()).
+ws_warn <- function(state, ...) {
+  n <- state$ws_warnings %||% 0L
+  state$ws_warnings <- n + 1L
+  if (n < 5L) {
+    warning("aobcore server ", state$url, " ", ..., call. = FALSE)
+  } else if (n == 5L) {
+    warning("aobcore server ", state$url, " has more websocket warnings; ",
+            "further ones not shown.", call. = FALSE)
+  }
+  invisible()
+}
+
 ws_init <- function(state) {
   state$conns <- new.env(parent = emptyenv())
   state$next_conn <- 0L
@@ -148,6 +171,7 @@ ws_init <- function(state) {
   state$warned_origins <- character()
   state$origins_capped <- FALSE
   state$warned_cap <- FALSE
+  state$ws_warnings <- 0L
   state$view <- NULL
   invisible(state)
 }
@@ -249,8 +273,8 @@ ws_on_headers <- function(state, req) {
     if (identical(r$what, "origin")) warn_origin(state, r$value)
     if (r$status == 404L) not_found() else serve_response(403L, "Forbidden")
   }, error = function(e) {
-    warning("aobcore server ", state$url, " refused a websocket after an error in R: ",
-            safe_text(conditionMessage(e), 200L), call. = FALSE)
+    ws_warn(state, "refused a websocket after an error in R: ",
+            safe_text(conditionMessage(e), 200L))
     serve_response(403L, "Forbidden")
   })
 }
@@ -265,8 +289,8 @@ ws_on_open <- function(state, ws) {
     return(invisible())
   }
   tryCatch(ws_accept(state, ws), error = function(e) {
-    warning("aobcore server ", state$url, " closed a websocket after an error in R: ",
-            safe_text(conditionMessage(e), 200L), call. = FALSE)
+    ws_warn(state, "closed a websocket after an error in R: ",
+            safe_text(conditionMessage(e), 200L))
     ws_try_close(ws, 1011L, "error in R")
   })
   invisible()
@@ -279,10 +303,12 @@ ws_try_close <- function(ws, code, reason) {
 
 ws_accept <- function(state, ws) {
   if (length(state$conns) >= ws_max_connections) {
+    ## Once per server: a page that retries would otherwise warn each time.
     if (!isTRUE(state$warned_cap)) {
       state$warned_cap <- TRUE
       warning("aobcore server ", state$url, " refused a page: at most ", ws_max_connections,
-              " pages can be connected at once. Close a tab showing it.", call. = FALSE)
+              " pages can be connected at once. Close a tab showing it. Further pages ",
+              "refused for this are not reported.", call. = FALSE)
     }
     ws_try_close(ws, 1013L, "too many connections")
     return(invisible())
@@ -307,7 +333,6 @@ ws_forget <- function(state, conn) {
     key <- as.character(conn$id)
     if (is.environment(state$conns) && exists(key, envir = state$conns, inherits = FALSE)) {
       rm(list = key, envir = state$conns)
-      state$warned_cap <- FALSE
     }
   }, error = function(e) NULL)
   invisible()
@@ -319,8 +344,7 @@ ws_close <- function(state, conn, code, reason, why = NULL) {
   ws_forget(state, conn)
   ws_try_close(conn$ws, code, reason)
   if (!is.null(why)) {
-    warning("aobcore server ", state$url, " closed the socket of page ", conn$id, " (",
-            code, "): ", why, call. = FALSE)
+    ws_warn(state, "closed the socket of page ", conn$id, " (", code, "): ", why)
   }
   invisible()
 }
@@ -402,8 +426,8 @@ ws_hello <- function(state, conn, msg) {
       all(vapply(specs, function(s) is.character(s) && length(s) == 1L, TRUE)) &&
       !is.na(state$spec) && !state$spec %in% unlist(specs)) {
     shown <- vapply(utils::head(unlist(specs), 10L), safe_text, "", max = 20L)
-    warning("aobcore server ", state$url, ": page ", conn$id, "'s renderer draws scene spec ",
-            paste(shown, collapse = ", "), ", but the scene is ", state$spec, ".", call. = FALSE)
+    ws_warn(state, "page ", conn$id, "'s renderer draws scene spec ",
+            paste(shown, collapse = ", "), ", but the scene is ", state$spec, ".")
   }
   ws_send(conn, list(type = "hello", protocol = ws_protocol, connection = conn$id,
                      scene = state$serial, spec = state$spec, select = as.list(state$select),
@@ -418,9 +442,9 @@ ws_hello <- function(state, conn, msg) {
 ws_drop <- function(state, conn, type, why) {
   if (!type %in% conn$warned) {
     conn$warned <- c(conn$warned, type)
-    warning("aobcore server ", state$url, " dropped a ", type, " message from page ", conn$id,
+    ws_warn(state, "dropped a ", type, " message from page ", conn$id,
             ": ", why, ". Further bad ", type, " messages from that page are dropped ",
-            "without a warning.", call. = FALSE)
+            "without a warning.")
   }
   invisible()
 }
@@ -585,12 +609,16 @@ ws_usable <- function(state) {
   invisible()
 }
 
-## Run the loop once without blocking, unless an on() callback is running
-## (the loop is then already running it). In httpuv 1.6.17 that is
-## service(NA): service(0) runs the loop until something pauses it, which
-## from here would never return.
+## Run every callback that is due, without blocking, unless an on()
+## callback is running (the loop is then already running it), so that all
+## the messages queued while R was busy are counted, not only the first.
+## httpuv::service() will not do: service(NA) runs one callback, and
+## service(0) runs the loop until something pauses it, which from here
+## would never return. The loop is later's, which httpuv uses; the cap
+## keeps a page that sends without pause from holding R here.
 ws_service0 <- function() {
-  if (ws_flags$depth == 0L) httpuv::service(NA)
+  if (ws_flags$depth > 0L) return(invisible())
+  for (i in seq_len(1000L)) if (!later::run_now(0, all = TRUE)) break
   invisible()
 }
 
@@ -631,6 +659,9 @@ ws_wait <- function(state, type = c("select", "view"), timeout = Inf) {
       stop("The server stopped while waiting for a ", type, " message.", call. = FALSE)
     }
     if (state$received[[type]] > start) {
+      ## Take in whatever else was queued with it, so the answer is the
+      ## latest, as selection() would give.
+      ws_service0()
       return(if (type == "select") state$selection else state$view)
     }
     left <- timeout - as.numeric(Sys.time() - t0, units = "secs")
