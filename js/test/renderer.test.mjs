@@ -36,6 +36,15 @@
 //    and a network failure names the key and URL); rendering again into
 //    the same element aborts the first render's blob fetches. A listed tile
 //    blob that answers 404 or has the wrong length is a layer error.
+// 8. Selections over a websocket (decision 0007): in Node, the socket
+//    channel's backoff and final close codes, protocol 1 from the page's
+//    side (hello first, whole selections, settled views, the size cap,
+//    the not-connected note, reload) and the click rules; in the browser,
+//    a served page with data-aob-socket against an R stand-in
+//    (test/ws-server.mjs) in an EPSG:3031 view: click, Shift and Cmd
+//    toggles, clearing, a pan's one view, reload keeping the camera, the
+//    note and reconnecting, another origin refused, and a page without
+//    data-aob-socket opening no socket.
 // Also in Node: the range reader keeps a whole-file (200) response, and the
 // tile cache evicts least recently used idle tiles.
 // Set CHROMIUM_PATH to pick a browser; SKIP_BROWSER=1 runs only part 1.
@@ -50,6 +59,10 @@ import { decodeTile, decodeSamples, jpegStream, samplesFromRGBA, colorizeRGB, en
 import { selectLevel, rangeReader, tilesToEvict } from "../src/tiles.js";
 import { cellText } from "../src/popup.js";
 import { stopsGradient, rangeLabel, rgbaCss } from "../src/legend.js";
+import { socketChannel, socketUrl, RETRY_MAX_MS } from "../src/channel.js";
+import { linkToR, utf8Length, NOT_CONNECTED } from "../src/link.js";
+import { selectionState, clickSelection, selectionText } from "../src/selection.js";
+import { rStandIn } from "./ws-server.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -219,6 +232,191 @@ console.log("ok   level selection");
   assert.equal(stopsGradient([{ at: 0, color: [0, 0, 0, 0] }, { at: 1, color: [255, 0, 0, 255] }]),
     "linear-gradient(90deg, rgba(0, 0, 0, 0) 0%, rgba(255, 0, 0, 1) 100%)");
   console.log("ok   popup cell text and legend helpers");
+}
+
+// ---- 8a. the link to R (decision 0007) in Node -------------------------------
+{
+  // Timers that run only when told to.
+  const fakeTimers = () => {
+    let t = 0;
+    let id = 0;
+    const q = new Map();
+    return {
+      setTimeout: (f, ms) => {
+        q.set(++id, { f, at: t + ms, ms });
+        return id;
+      },
+      clearTimeout: (i) => q.delete(i),
+      now: () => t,
+      delays: () => [...q.values()].map((x) => x.ms),
+      advance(ms) {
+        const end = t + ms;
+        for (;;) {
+          const due = [...q.entries()].filter(([, x]) => x.at <= end).sort((a, b) => a[1].at - b[1].at)[0];
+          if (!due) break;
+          q.delete(due[0]);
+          t = due[1].at;
+          due[1].f();
+        }
+        t = end;
+      },
+    };
+  };
+
+  assert.equal(socketUrl("ws", "http://127.0.0.1:8123/abc/"), "ws://127.0.0.1:8123/abc/ws");
+  assert.equal(socketUrl("ws", "https://proxy.example/p/8123/abc/index.html"), "wss://proxy.example/p/8123/abc/ws");
+
+  // The channel retries with backoff, 1 s doubling to 30 s, reset by an
+  // open; a close that says retrying cannot help is final.
+  {
+    const made = [];
+    class FakeWS {
+      constructor(url) {
+        this.url = url;
+        this.sent = [];
+        made.push(this);
+      }
+      send(t) {
+        this.sent.push(t);
+      }
+      close() {}
+    }
+    const timers = fakeTimers();
+    const states = [];
+    const ch = socketChannel("ws://h/t/ws", { WebSocket: FakeWS, timers, onState: (s, i) => states.push([s, i.delay || i.code || null]) });
+    assert.equal(made.length, 1);
+    assert.equal(ch.send({ type: "x" }), false, "nothing is sent before the socket opens");
+    const delays = [];
+    for (let i = 0; i < 7; i++) {
+      made[made.length - 1].onclose({ code: 1006 });
+      delays.push(timers.delays()[0]);
+      timers.advance(delays[delays.length - 1]);
+    }
+    assert.deepEqual(delays, [1000, 2000, 4000, 8000, 16000, RETRY_MAX_MS, RETRY_MAX_MS]);
+    assert.equal(made.length, 8);
+    const got = [];
+    ch.onMessage((m) => got.push(m));
+    const w = made[made.length - 1];
+    w.onopen();
+    assert.ok(ch.connected);
+    assert.equal(ch.send({ type: "hello" }), true);
+    assert.deepEqual(JSON.parse(w.sent[0]), { type: "hello" });
+    w.onmessage({ data: "not json" });
+    w.onmessage({ data: "[1]" });
+    w.onmessage({ data: JSON.stringify({ type: "reload", scene: 2 }) });
+    assert.deepEqual(got, [{ type: "reload", scene: 2 }], "only objects with a type reach listeners");
+    w.onclose({ code: 1001 });
+    assert.deepEqual(timers.delays(), [1000], "an open resets the backoff");
+    timers.advance(1000);
+    for (const code of [1003, 1007, 1008, 4000]) {
+      const before = made.length;
+      made[made.length - 1].onclose({ code, reason: "r" });
+      assert.deepEqual(timers.delays(), [], `no retry after ${code}`);
+      assert.deepEqual(states[states.length - 1], ["refused", code]);
+      // Start again for the next code.
+      if (code !== 4000) {
+        socketChannel("ws://h/t/ws", { WebSocket: FakeWS, timers, onState: (s, i) => states.push([s, i.delay || i.code || null]) });
+        assert.equal(made.length, before + 1);
+      }
+    }
+    ch.close();
+    console.log("ok   socket channel: backoff 1 s doubling to 30 s, reset on open; 1003, 1007, 1008 and 4000 are final");
+  }
+
+  // Protocol 1 from the page's side.
+  {
+    const timers = fakeTimers();
+    const sent = [];
+    let listener = null;
+    const channel = { send: (m) => sent.push(JSON.parse(typeof m === "string" ? m : JSON.stringify(m))) || true,
+      onMessage: (f) => { listener = f; return () => { listener = null; }; }, close() {} };
+    const sel = selectionState();
+    const page = { serial: 3, renderer: "0.0.5", specs: ["0.1", "0.5"], selectable: null, reloaded: null, notes: [], states: [],
+      selection: () => sel.items(), view: () => ({ extent: [0, 1, 0, 1], zoom: 0, units_per_pixel: 1, size_px: [10, 10] }),
+      setSelectable: (ids) => { page.selectable = ids; }, reload: (n) => { page.reloaded = n; },
+      note: (t) => page.notes.push(t), state: (s) => page.states.push(s) };
+    const link = linkToR(channel, page, { timers, now: timers.now });
+    link.open();
+    assert.deepEqual(sent.shift(), { type: "hello", protocol: 1, renderer: "0.0.5", specs: ["0.1", "0.5"], scene: 3 });
+    // Nothing but hello before R's hello.
+    link.viewChanged();
+    assert.equal(link.selected("click", [1, 2]), false);
+    timers.advance(1000);
+    assert.deepEqual(sent, []);
+    listener({ type: "hello", protocol: 1, connection: 1, scene: 3, spec: "0.5", select: ["a", 7, "b"], max_message: 300 });
+    assert.deepEqual(page.selectable, ["a", "b"]);
+    assert.equal(page.states[page.states.length - 1], "ready");
+    // R's hello is answered with the camera, and no select: nothing selected.
+    assert.deepEqual(sent.map((m) => m.type), ["view"]);
+    assert.deepEqual(sent.shift(), { type: "view", scene: 3, seq: 1, extent: [0, 1, 0, 1], zoom: 0, units_per_pixel: 1, size_px: [10, 10] });
+    clickSelection(sel, { layer: "a", row: 4 }, false);
+    link.selected("click", [5, 6]);
+    assert.deepEqual(sent.shift(), { type: "select", scene: 3, seq: 2, trigger: "click", items: [{ layer: "a", rows: [4] }], at: [5, 6] });
+    // The camera settles: one view 250 ms after the last change.
+    for (let i = 0; i < 5; i++) {
+      link.viewChanged();
+      timers.advance(100);
+    }
+    assert.deepEqual(sent, []);
+    timers.advance(150);
+    assert.deepEqual(sent.map((m) => [m.type, m.seq]), [["view", 3]]);
+    sent.length = 0;
+    // A selection larger than R takes stays in the page, with a note.
+    for (let r = 0; r < 100; r++) sel.add("b", r);
+    assert.equal(link.selected("toggle"), false);
+    assert.deepEqual(sent, []);
+    assert.match(page.notes[page.notes.length - 1], /This selection \(101 features\) is too large to send to R; it stays in this page/);
+    sel.clear();
+    clickSelection(sel, { layer: "b", row: 1 }, false);
+    link.selected("click");
+    assert.equal(page.notes[page.notes.length - 1], null, "the note goes with the next selection sent");
+    assert.deepEqual(sent.shift().items, [{ layer: "b", rows: [1] }]);
+    // Lost: the note; back: hello, then the whole selection again.
+    link.lost("closed", { code: 1006, delay: 1000 });
+    assert.equal(page.notes[page.notes.length - 1], NOT_CONNECTED);
+    assert.equal(NOT_CONNECTED, "Not connected to R: selections stay in this page");
+    clickSelection(sel, { layer: "b", row: 9 }, true);
+    assert.equal(link.selected("toggle"), false, "nothing is sent while not connected");
+    link.open();
+    assert.equal(page.notes[page.notes.length - 1], null);
+    assert.equal(sent.shift().type, "hello");
+    listener({ type: "hello", protocol: 1, connection: 2, scene: 3, spec: "0.5", select: ["b"], max_message: 1048576 });
+    const again = sent.shift();
+    assert.deepEqual([again.type, again.trigger, again.items], ["select", "toggle", [{ layer: "b", rows: [1, 9] }]]);
+    // The camera follows, no sooner than 250 ms after the last view.
+    assert.deepEqual(sent, []);
+    timers.advance(250);
+    assert.equal(sent.shift().type, "view");
+    link.lost("refused", { code: 4000, reason: "protocol" });
+    assert.equal(page.notes[page.notes.length - 1], "Not connected to R (this page needs a newer aobcore): selections stay in this page");
+    listener({ type: "reload", scene: 4 });
+    assert.equal(page.reloaded, 4);
+    assert.equal(utf8Length("a\u00e9\u20ac\ud83d\ude00"), 1 + 2 + 3 + 4);
+    console.log("ok   protocol 1: hello first, whole selections, settled views, the size cap, notes and reload");
+  }
+
+  // Selection rules: a click selects one, Shift or Cmd toggles, a click on
+  // nothing clears.
+  {
+    const sel = selectionState();
+    assert.equal(clickSelection(sel, { layer: "a", row: 3 }, false), "click");
+    assert.equal(clickSelection(sel, { layer: "a", row: 1 }, true), "toggle");
+    assert.equal(clickSelection(sel, { layer: "b", row: 0 }, true), "toggle");
+    assert.deepEqual(sel.items(), [{ layer: "a", rows: [1, 3] }, { layer: "b", rows: [0] }]);
+    assert.equal(selectionText(sel.items()), "a:1,3;b:0");
+    clickSelection(sel, { layer: "a", row: 3 }, true);
+    clickSelection(sel, { layer: "a", row: 1 }, true);
+    assert.deepEqual(sel.items(), [{ layer: "b", rows: [0] }]);
+    assert.equal(clickSelection(sel, { layer: "a", row: 2 }, false), "click");
+    assert.deepEqual(sel.items(), [{ layer: "a", rows: [2] }]);
+    sel.add("b", 5);
+    sel.keepLayers(new Set(["b"]));
+    assert.deepEqual(sel.items(), [{ layer: "b", rows: [5] }]);
+    assert.equal(clickSelection(sel, null, true), "click");
+    assert.equal(sel.size, 0);
+    assert.equal(sel.clear(), false);
+    console.log("ok   selection: click selects one, Shift or Cmd adds and removes, a click on nothing clears");
+  }
 }
 
 if (process.env.SKIP_BROWSER) process.exit(0);
@@ -476,6 +674,7 @@ try {
 }
 
 // ---- 6b. legends and popups in an EPSG:3031 view (scene spec 0.5) -------------
+let part6 = null; // the scene and blobs, again in part 8
 {
   const geoField = (name, type, ext) => new Field(name, type, false, new Map([["ARROW:extension:name", ext]]));
   const xyType = () => new FixedSizeList(2, new Field("xy", new Float64(), false));
@@ -533,6 +732,7 @@ try {
     ],
   };
   const blobs6 = { values, zones: zoneBlob, stations: stationsBlob };
+  part6 = { scene, blobs: blobs6, pts };
   const browser4 = await chromium.launch({
     executablePath: process.env.CHROMIUM_PATH || undefined,
     args: ["--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--ignore-gpu-blocklist"],
@@ -960,6 +1160,257 @@ ${keys === null ? "" : `<script type="application/json" data-aob-blob-keys data-
     assert.deepEqual(seen.other, []);
   } finally {
     await browser7.close();
+    server.close();
+  }
+}
+
+// ---- 8b. selections over a websocket (decision 0007) in the browser ----------
+// A served page with data-aob-socket talks protocol 1 to an R stand-in
+// (ws-server.mjs) on the same server: in an EPSG:3031 view a click selects,
+// Shift and Cmd click add and remove, a click on nothing and Escape clear,
+// a layer without a popup is selectable when R names it, a pan sends one
+// view once it settles, reload keeps the camera, a lost socket shows the
+// note and reconnects with the whole selection, and a page on another
+// origin cannot connect. A page without data-aob-socket opens no socket.
+{
+  const { createServer } = await import("node:http");
+  const sc = JSON.parse(JSON.stringify(part6.scene));
+  // Zones lose their popup (selectable all the same); "broken" goes.
+  delete sc.layers.find((L) => L.id === "zones").popup;
+  sc.layers = sc.layers.filter((L) => L.id !== "broken");
+  const pts = part6.pts;
+  const blobBytes = Object.fromEntries(Object.entries(part6.blobs).map(([k, v]) => [k, Buffer.from(v, "base64")]));
+  let serial = 1;
+  const page8 = (socket) => `<!DOCTYPE html><html><head><meta charset="utf-8"></head><body style="margin:0;height:100vh">
+<div class="aob-page" data-aob-scene="aob-scene" data-aob-blob-base="blob/"${socket ? ` data-aob-socket="ws" data-aob-scene-serial="${serial}"` : ""} style="height:100%"></div>
+<script type="application/json" id="aob-scene">${JSON.stringify(sc)}</script>
+<script type="application/json" data-aob-blob-keys data-aob-scene="aob-scene">${JSON.stringify(Object.keys(blobBytes))}</script>
+<script src="aob-renderer.min.js"></script></body></html>`;
+  const server = createServer((req, res) => {
+    const u = new URL(req.url, "http://x");
+    const m = /^\/(tok|embedded)\/(.*)$/.exec(u.pathname);
+    if (!m) {
+      res.writeHead(404);
+      return res.end();
+    }
+    if (m[2] === "") {
+      res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+      return res.end(page8(m[1] === "tok"));
+    }
+    if (m[2] === "aob-renderer.min.js") {
+      res.writeHead(200, { "content-type": "text/javascript" });
+      return res.end(bundle);
+    }
+    const b = m[2].startsWith("blob/") && blobBytes[decodeURIComponent(m[2].slice(5))];
+    if (b) {
+      res.writeHead(200, { "content-type": "application/vnd.apache.arrow.stream" });
+      return res.end(b);
+    }
+    res.writeHead(404);
+    res.end();
+  });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  const port = server.address().port;
+  const base = `http://127.0.0.1:${port}`;
+  const r = rStandIn({ serial: 1, select: ["zones", "stations", "sst", "nope"], origins: [base], path: "/tok/ws" });
+  server.on("upgrade", (req, sock) => r.upgrade(req, sock));
+  const browser8 = await chromium.launch({
+    executablePath: process.env.CHROMIUM_PATH || undefined,
+    args: ["--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--ignore-gpu-blocklist"],
+  });
+  try {
+    const ctx = await browser8.newContext({ viewport: { width: 900, height: 700 } });
+    // Count the sockets every page opens.
+    await ctx.addInitScript(() => {
+      window.socketsOpened = [];
+      const WS = window.WebSocket;
+      window.WebSocket = function (url, p) {
+        window.socketsOpened.push(String(url));
+        return new WS(url, p);
+      };
+      window.WebSocket.prototype = WS.prototype;
+    });
+    const page = await ctx.newPage();
+    const cdiv = () => document.querySelector("div[data-aob-scene]");
+    await page.goto(`${base}/tok/`);
+    await page.waitForFunction(() => document.querySelector("div[data-aob-scene]").dataset.aobLink === "ready", null, { timeout: 60000 });
+    const hello = r.of("hello")[0];
+    assert.deepEqual(hello, { type: "hello", protocol: 1, renderer: "0.0.5", specs: ["0.1", "0.2", "0.3", "0.4", "0.5"], scene: 1 });
+    assert.deepEqual(await page.evaluate(() => window.socketsOpened), [`ws://127.0.0.1:${port}/tok/ws`]);
+    assert.equal(await page.evaluate(() => document.querySelector("div[data-aob-scene]").dataset.aobSelectable), "zones,stations",
+      "only vector layers in the scene are selectable");
+    await r.until(() => r.of("view").length >= 1);
+    console.log("ok   served page: the socket opens once drawn, hello both ways, the camera follows hello");
+
+    const screen = (x, y) => page.evaluate(([x, y]) => {
+      const rc = document.querySelector(".aob-canvas").getBoundingClientRect();
+      const v = document.querySelector("div[data-aob-scene]").aob.view();
+      const k = Math.pow(2, v.zoom);
+      return [rc.left + rc.width / 2 + (x - v.target[0]) * k, rc.top + rc.height / 2 - (y - v.target[1]) * k];
+    }, [x, y]);
+    const nSel = () => r.of("select").length;
+    const lastSel = () => r.of("select").at(-1);
+    const click = async (x, y, mod) => {
+      const n = nSel();
+      await page.waitForTimeout(350);
+      if (mod) await page.keyboard.down(mod);
+      await page.mouse.click(x, y);
+      if (mod) await page.keyboard.up(mod);
+      await r.until(() => nSel() > n);
+      return lastSel();
+    };
+    const [x0, y0] = await screen(...pts[0]);
+    const [x2, y2] = await screen(...pts[2]);
+    const [xz, yz] = await screen(-1.7e6, -1.7e6);
+    const [xe, ye] = await screen(0, 2.5e6);
+    let s = await click(x0, y0);
+    assert.equal(s.trigger, "click");
+    assert.equal(s.scene, 1);
+    assert.deepEqual(s.items, [{ layer: "stations", rows: [0] }]);
+    assert.ok(Math.abs(s.at[0] - pts[0][0]) < 2e4 && Math.abs(s.at[1] - pts[0][1]) < 2e4, `at is the pressed point (${s.at})`);
+    const pop = await page.evaluate(() => document.querySelector(".aob-popup").dataset.aobRow);
+    assert.equal(pop, "0", "the row sent is the row the popup shows");
+    s = await click(x2, y2, "Shift");
+    assert.deepEqual([s.trigger, s.items], ["toggle", [{ layer: "stations", rows: [0, 2] }]]);
+    s = await click(xz, yz, "Meta");
+    assert.deepEqual([s.trigger, s.items], ["toggle", [{ layer: "stations", rows: [0, 2] }, { layer: "zones", rows: [0] }]],
+      "Cmd adds; a layer with no popup is selectable");
+    assert.equal(await page.evaluate(() => document.querySelector("div[data-aob-scene]").dataset.aobSelection), "stations:0,2;zones:0");
+    const hlIds = await page.evaluate(() => document.querySelector("div[data-aob-scene]").aob.deck.props.layers.map((l) => l.id).filter((id) => id.includes("-sel")));
+    assert.ok(hlIds.some((id) => id.startsWith("stations--0-sel")) && hlIds.some((id) => id.startsWith("zones--0-sel")), `highlight layers: ${hlIds}`);
+    s = await click(x0, y0, "Shift");
+    assert.deepEqual([s.trigger, s.items], ["toggle", [{ layer: "stations", rows: [2] }, { layer: "zones", rows: [0] }]], "Shift removes");
+    s = await click(xe, ye);
+    assert.deepEqual([s.trigger, s.items], ["click", []], "a click on nothing clears");
+    assert.ok(Array.isArray(s.at), "a click on nothing still says where");
+    await click(xz, yz);
+    const n = nSel();
+    await page.keyboard.press("Escape");
+    await r.until(() => nSel() > n);
+    s = lastSel();
+    assert.deepEqual([s.trigger, s.items, s.at], ["clear", [], undefined], "Escape clears");
+    assert.equal(await page.evaluate(() => document.querySelector("div[data-aob-scene]").dataset.aobSelection), undefined);
+    const seqs = r.messages.map((m) => m.msg.seq).filter((q) => q !== undefined);
+    assert.deepEqual(seqs, [...seqs].sort((a, b) => a - b), "seq counts up");
+    console.log("ok   selection mode in EPSG:3031: click, Shift and Cmd toggle, a click on nothing and Escape clear");
+
+    // A pan sends one view, after it settles.
+    await page.waitForTimeout(600);
+    const nv = r.of("view").length;
+    await page.mouse.move(450, 350);
+    await page.mouse.down();
+    for (let i = 1; i <= 10; i++) {
+      await page.mouse.move(450 + i * 12, 350 + i * 6);
+      await page.waitForTimeout(40);
+    }
+    await page.mouse.up();
+    await page.waitForTimeout(1200);
+    const views = r.of("view").slice(nv);
+    assert.equal(views.length, 1, `one view per settled pan (got ${views.length})`);
+    const vs = await page.evaluate(() => document.querySelector("div[data-aob-scene]").aob.view());
+    const v = views[0];
+    const k = Math.pow(2, -vs.zoom);
+    assert.ok(Math.abs((v.extent[0] + v.extent[1]) / 2 - vs.target[0]) < k && Math.abs((v.extent[2] + v.extent[3]) / 2 - vs.target[1]) < k);
+    assert.equal(v.zoom, vs.zoom);
+    assert.ok(v.units_per_pixel > 0 && v.size_px.length === 2);
+    console.log("ok   a pan sends one view message once the camera settles");
+
+    // R replaces the scene: the page reloads with its camera.
+    const before = await page.evaluate(() => {
+      const h = document.querySelector("div[data-aob-scene]").aob;
+      return h.setView({ ...h.view(), zoom: h.view().zoom + 1.5, target: [-1.2e6, 4e5, 0] });
+    });
+    await page.evaluate(() => document.querySelector("div[data-aob-scene]").aob.deck.setProps({ initialViewState: document.querySelector("div[data-aob-scene]").aob.view() }));
+    serial = 2;
+    const hellos = r.of("hello").length;
+    r.reload(2);
+    await r.until(() => r.of("hello").length > hellos, 60000);
+    await page.waitForFunction(() => document.querySelector("div[data-aob-scene]").dataset.aobLink === "ready", null, { timeout: 60000 });
+    assert.equal(r.of("hello").at(-1).scene, 2);
+    const after = await page.evaluate(() => ({ v: document.querySelector("div[data-aob-scene]").aob.view(),
+      kept: document.querySelector("div[data-aob-scene]").dataset.aobCameraKept, opened: window.socketsOpened.length }));
+    assert.equal(after.kept, "true");
+    assert.ok(Math.abs(after.v.zoom - before.zoom) < 1e-9 && Math.abs(after.v.target[0] + 1.2e6) < 1 && Math.abs(after.v.target[1] - 4e5) < 1,
+      `camera kept across reload (${JSON.stringify(after.v.target)} at ${after.v.zoom})`);
+    assert.equal(after.opened, 1, "the reloaded page opens one socket");
+    console.log("ok   reload from R reloads the page with its camera kept");
+
+    // R stops: the note shows, the selection stays, and the page reconnects
+    // with its whole selection.
+    const [ax, ay] = await screen(...pts[1]);
+    await click(ax, ay);
+    const closes = r.closes.length;
+    r.stop();
+    await page.waitForFunction(() => {
+      const n = document.querySelector(".aob-link");
+      return n && !n.hidden && n.textContent === "Not connected to R: selections stay in this page";
+    }, null, { timeout: 5000 });
+    assert.ok(r.closes.length > closes);
+    assert.equal(await page.evaluate(() => document.querySelector("div[data-aob-scene]").dataset.aobSelection), "stations:1", "the selection stays");
+    const nh = r.of("hello").length;
+    const ns = nSel();
+    await r.until(() => r.of("hello").length > nh && nSel() > ns, 10000);
+    assert.deepEqual(lastSel().items, [{ layer: "stations", rows: [1] }], "the whole selection again on reconnecting");
+    await page.waitForFunction(() => document.querySelector(".aob-link").hidden, null, { timeout: 5000 });
+    console.log("ok   a lost socket shows the note, keeps the selection, and reconnects with it");
+
+    // Another origin (localhost, not 127.0.0.1) cannot connect.
+    const other = await ctx.newPage();
+    const refused = r.refused.length;
+    const nmsg = r.messages.length;
+    await other.goto(`http://localhost:${port}/tok/`);
+    await other.waitForFunction(() => {
+      const n = document.querySelector(".aob-link");
+      return n && !n.hidden;
+    }, null, { timeout: 60000 });
+    assert.ok(r.refused.length > refused);
+    assert.equal(r.refused.at(-1).origin, `http://localhost:${port}`);
+    assert.equal(r.messages.length, nmsg, "nothing from the refused page");
+    assert.equal(await other.evaluate(() => document.querySelector("div[data-aob-scene]").dataset.aobLink), "closed");
+    await other.close();
+    console.log("ok   a page on another origin cannot connect, and says it is not connected");
+
+    // No data-aob-socket: no socket, no selection mode.
+    const emb = await ctx.newPage();
+    await emb.goto(`${base}/embedded/`);
+    await emb.waitForFunction(() => document.querySelector("div[data-aob-scene]").dataset.aobStatus === "ready", null, { timeout: 60000 });
+    const ex = await emb.evaluate(() => {
+      const c = document.querySelector("div[data-aob-scene]");
+      return { sockets: window.socketsOpened.length, state: c.dataset.aobLink, note: !!c.querySelector(".aob-link") };
+    });
+    await emb.waitForTimeout(350);
+    const [ex0, ey0] = await emb.evaluate(([x, y]) => {
+      const rc = document.querySelector(".aob-canvas").getBoundingClientRect();
+      const v = document.querySelector("div[data-aob-scene]").aob.view();
+      const k = Math.pow(2, v.zoom);
+      return [rc.left + rc.width / 2 + (x - v.target[0]) * k, rc.top + rc.height / 2 - (y - v.target[1]) * k];
+    }, pts[0]);
+    await emb.mouse.click(ex0, ey0);
+    await emb.waitForFunction(() => !document.querySelector(".aob-popup").hidden, null, { timeout: 5000 });
+    const [zx, zy] = await emb.evaluate(([x, y]) => {
+      const rc = document.querySelector(".aob-canvas").getBoundingClientRect();
+      const v = document.querySelector("div[data-aob-scene]").aob.view();
+      const k = Math.pow(2, v.zoom);
+      return [rc.left + rc.width / 2 + (x - v.target[0]) * k, rc.top + rc.height / 2 - (y - v.target[1]) * k];
+    }, [-1.7e6, -1.7e6]);
+    await emb.waitForTimeout(350);
+    await emb.mouse.click(zx, zy);
+    await emb.waitForTimeout(800);
+    const ey = await emb.evaluate(() => {
+      const c = document.querySelector("div[data-aob-scene]");
+      return { selection: c.dataset.aobSelection, items: c.aob.selection(), popup: c.dataset.aobSelected,
+        pickable: c.aob.deck.props.layers.filter((l) => l.props.pickable).map((l) => l.id) };
+    });
+    assert.deepEqual(ex, { sockets: 0, state: undefined, note: false });
+    assert.equal(ey.selection, undefined);
+    assert.deepEqual(ey.items, []);
+    assert.equal(ey.popup, undefined, "a layer without a popup is not picked");
+    assert.deepEqual(ey.pickable, ["stations--0"], "only the popup layer is pickable, as before");
+    await emb.close();
+    console.log("ok   a page without data-aob-socket opens no socket and has no selection mode");
+    await ctx.close();
+  } finally {
+    await browser8.close();
     server.close();
   }
 }

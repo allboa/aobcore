@@ -1,10 +1,12 @@
 // Page chrome for the renderer: light and dark tokens, the map, a layer
-// panel with legends, feature popups, and a status line. Dark follows prefers-color-scheme
+// panel with legends, feature popups, a status line, and (served pages
+// linked to R) the selection highlight colours and the link note. Dark follows prefers-color-scheme
 // unless the root element has data-theme="light" or data-theme="dark".
 export const CSS = `
 :root {
   --aob-bg: #eef2f4; --aob-panel: #f8fafb; --aob-ink: #1d2a33; --aob-muted: #5b6b76;
   --aob-rule: #d3dce1; --aob-accent: #1f6f8b; --aob-map: #dfe7eb; --aob-error: #a3322b;
+  --aob-sel: #c2185b; --aob-sel-halo: #ffffff; --aob-sel-fill: #c2185b4d;
   --aob-font: system-ui, -apple-system, "Segoe UI", sans-serif;
   --aob-mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
   color-scheme: light;
@@ -13,12 +15,14 @@ export const CSS = `
   :root:not([data-theme="light"]) {
     --aob-bg: #0f171c; --aob-panel: #152029; --aob-ink: #e3ebef; --aob-muted: #93a4ae;
     --aob-rule: #26343e; --aob-accent: #6cc0dd; --aob-map: #0b1216; --aob-error: #f08a80;
+    --aob-sel: #ff7ab8; --aob-sel-halo: #000000; --aob-sel-fill: #ff7ab84d;
     color-scheme: dark;
   }
 }
 :root[data-theme="dark"] {
   --aob-bg: #0f171c; --aob-panel: #152029; --aob-ink: #e3ebef; --aob-muted: #93a4ae;
   --aob-rule: #26343e; --aob-accent: #6cc0dd; --aob-map: #0b1216; --aob-error: #f08a80;
+  --aob-sel: #ff7ab8; --aob-sel-halo: #000000; --aob-sel-fill: #ff7ab84d;
   color-scheme: dark;
 }
 .aob-root {
@@ -95,6 +99,12 @@ export const CSS = `
   padding: 4px 10px; font-size: 12px; color: var(--aob-muted);
 }
 .aob-status[hidden] { display: none; }
+.aob-link {
+  position: absolute; right: 12px; bottom: 12px; max-width: min(360px, 70%); z-index: 1;
+  background: var(--aob-panel); border: 1px solid var(--aob-rule); border-left: 3px solid var(--aob-error);
+  border-radius: 4px; padding: 4px 10px; font-size: 12px; color: var(--aob-ink);
+}
+.aob-link[hidden] { display: none; }
 .aob-status.aob-error { color: var(--aob-error); border-color: var(--aob-error); }
 @media (max-width: 640px) {
   .aob-root { grid-template-columns: 1fr; grid-template-rows: minmax(0, 1fr) auto; }
