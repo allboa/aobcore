@@ -354,6 +354,13 @@ ws_close_all <- function(state, code, reason) {
   invisible()
 }
 
+## Forget every page without calling its socket: for the exit finalizer,
+## when a socket's handle may already be gone.
+ws_forget_all <- function(state) {
+  for (conn in ws_conn_list(state)) ws_forget(state, conn)
+  invisible()
+}
+
 ws_send <- function(conn, x) {
   tryCatch(conn$ws$send(json_value(x)), error = function(e) NULL)
   invisible()

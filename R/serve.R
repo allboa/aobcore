@@ -63,7 +63,8 @@
 #' losing the handle does not stop one; [scene_servers()] lists them,
 #' [stop_scene_servers()] stops them all, and all stop when the R session
 #' ends or aobcore is unloaded. `stop()` first closes every page's socket
-#' (code 1001). `serve_scene(scene, server = srv)` gives the new scene a new
+#' (code 1001), as does unloading aobcore; when the session ends the
+#' sockets are dropped without a close frame. `serve_scene(scene, server = srv)` gives the new scene a new
 #' serial number, clears the selection and tells each connected page to
 #' reload itself. httpuv answers requests only while R is idle
 #' at the prompt, so a long computation stalls the page; in `Rscript` the
@@ -590,10 +591,13 @@ safe_text <- function(x, max) {
   paste0("\"", paste(chars, collapse = ""), if (cut) "...", "\"")
 }
 
-server_stop <- function(state) {
+## `close_sockets = FALSE` is for the exit finalizer only: the sockets are
+## forgotten without touching them (see .onLoad()), and httpuv drops them
+## when the server stops.
+server_stop <- function(state, close_sockets = TRUE) {
   if (isTRUE(state$running)) {
     state$running <- FALSE
-    ws_close_all(state, 1001L, "server stopping")
+    if (close_sockets) ws_close_all(state, 1001L, "server stopping") else ws_forget_all(state)
     keep_seed(try(httpuv::stopServer(state$httpuv), silent = TRUE))
   }
   if (exists(state$token, envir = servers, inherits = FALSE)) rm(list = state$token, envir = servers)

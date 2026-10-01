@@ -123,7 +123,8 @@ running one: its scene is then replaced, with the same URL. The handle has
 losing the handle does not stop one; \code{\link[=scene_servers]{scene_servers()}} lists them,
 \code{\link[=stop_scene_servers]{stop_scene_servers()}} stops them all, and all stop when the R session
 ends or aobcore is unloaded. \code{stop()} first closes every page's socket
-(code 1001). \code{serve_scene(scene, server = srv)} gives the new scene a new
+(code 1001), as does unloading aobcore; when the session ends the
+sockets are dropped without a close frame. \code{serve_scene(scene, server = srv)} gives the new scene a new
 serial number, clears the selection and tells each connected page to
 reload itself. httpuv answers requests only while R is idle
 at the prompt, so a long computation stalls the page; in \code{Rscript} the
