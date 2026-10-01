@@ -512,7 +512,14 @@ test_that("without jsonlite the page is served with no socket", {
   on.exit(ws_flags$told_jsonlite <- old, add = TRUE)
   expect_message(srv <- serve_test(probe_scene()), "without the 'jsonlite' package")
   on.exit(srv$stop(), add = TRUE)
-  expect_message(srv2 <- serve_test(probe_scene()), NA)
+  ## Said once per session (other messages, such as the weaker token
+  ## source on Windows, may still come).
+  said <- character()
+  srv2 <- withCallingHandlers(serve_test(probe_scene()), message = function(m) {
+    said <<- c(said, conditionMessage(m))
+    invokeRestart("muffleMessage")
+  })
+  expect_false(any(grepl("jsonlite", said, fixed = TRUE)))
   srv2$stop()
   page <- rawToChar(http_req(srv$port, paste0("/", srv$token, "/"))$body)
   expect_false(grepl("data-aob-socket", page, fixed = TRUE))
@@ -540,28 +547,33 @@ test_that("real upgrades answer 101, 403 and 404, and protocol 1 runs over the w
   info <- file.path(d, "info")
   stop_file <- file.path(d, "stop")
   sel_file <- file.path(d, "sel")
-  log <- file.path(d, "log")
+  log <- file.path(d, "out.log")
+  err <- file.path(d, "err.log")
   script <- file.path(d, "child.R")
   writeLines(c(
     "suppressWarnings(library(aobcore))",
     "srv <- suppressWarnings(serve_scene(probe_scene(), open = FALSE))",
     sprintf("srv$on('select', function(m) writeLines(paste(srv$selection()$row, collapse = ','), %s))",
             deparse(sel_file)),
-    sprintf("writeLines(c(srv$port, srv$token), %s)", deparse(info)),
+    ## Written whole, then renamed, so the parent never reads half of it.
+    sprintf("writeLines(c(srv$port, srv$token), %s)", deparse(paste0(info, ".tmp"))),
+    sprintf("file.rename(%s, %s)", deparse(paste0(info, ".tmp")), deparse(info)),
     "t0 <- Sys.time()",
-    sprintf("while (!file.exists(%s) && Sys.time() - t0 < 60) httpuv::service(20)", deparse(stop_file)),
+    sprintf(paste0("while (!file.exists(%s) && ",
+                   "as.numeric(difftime(Sys.time(), t0, units = 'secs')) < 60) httpuv::service(20)"),
+            deparse(stop_file)),
     "srv$stop()",
     "cat('stopped\\n')"
   ), script)
   old <- Sys.getenv("R_LIBS")
   Sys.setenv(R_LIBS = paste(.libPaths(), collapse = .Platform$path.sep))
-  system2(file.path(R.home("bin"), "Rscript"), shQuote(script), stdout = log, stderr = log, wait = FALSE)
+  system2(file.path(R.home("bin"), "Rscript"), shQuote(script), stdout = log, stderr = err, wait = FALSE)
   Sys.setenv(R_LIBS = old)
   on.exit(writeLines("stop", stop_file), add = TRUE, after = FALSE)
   t0 <- Sys.time()
-  while (length(readLines_safe(info)) < 2L && Sys.time() - t0 < 30) Sys.sleep(0.1)
+  while (length(readLines_safe(info)) < 2L && secs_since(t0) < 60) Sys.sleep(0.1)
   x <- readLines_safe(info)
-  skip_if(length(x) < 2L, paste("child server did not start:", paste(readLines_safe(log), collapse = "\n")))
+  skip_if(length(x) < 2L, paste("child server did not start:", paste(c(readLines_safe(log), readLines_safe(err)), collapse = "\n")))
   port <- as.integer(x[1])
   token <- x[2]
   path <- paste0("/", token, "/ws")
@@ -614,7 +626,7 @@ test_that("real upgrades answer 101, 403 and 404, and protocol 1 runs over the w
   writeBin(ws_frame(paste0("{\"type\":\"select\",\"scene\":1,\"seq\":1,\"trigger\":\"click\",",
                            "\"items\":[{\"layer\":\"coast\",\"rows\":[0,4,99]}]}")), con)
   t0 <- Sys.time()
-  while (!file.exists(sel_file) && Sys.time() - t0 < 10) Sys.sleep(0.05)
+  while (!file.exists(sel_file) && secs_since(t0) < 20) Sys.sleep(0.05)
   expect_identical(readLines_safe(sel_file), "1,5,100")
   ## A binary frame is closed with 1003.
   writeBin(ws_frame(as.raw(1:3), opcode = 2L), con)
@@ -635,8 +647,8 @@ test_that("real upgrades answer 101, 403 and 404, and protocol 1 runs over the w
   if (length(fr)) expect_identical(close_code(fr[[1]]), 1001L)
   close(con)
   t0 <- Sys.time()
-  while (!any(grepl("stopped", readLines_safe(log))) && Sys.time() - t0 < 10) Sys.sleep(0.1)
-  out <- readLines_safe(log)
+  while (!any(grepl("stopped", readLines_safe(log))) && secs_since(t0) < 20) Sys.sleep(0.1)
+  out <- c(readLines_safe(log), readLines_safe(err))
   expect_true(any(grepl("stopped", out)), label = paste(out, collapse = "\n"))
   ## Nothing printed by httpuv's own try().
   expect_false(any(grepl("Error in try|attempt to apply", out)), label = paste(out, collapse = "\n"))

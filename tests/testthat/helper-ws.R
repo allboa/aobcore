@@ -121,5 +121,9 @@ ws_upgrade_raw <- function(port, path, host = paste0("127.0.0.1:", port), origin
 
 readLines_safe <- function(f) {
   if (!file.exists(f)) return(character())
-  tryCatch(readLines(f, warn = FALSE), error = function(e) character())
+  ## A file another process still holds open may not be readable on
+  ## Windows: that is "nothing yet".
+  tryCatch(suppressWarnings(readLines(f, warn = FALSE)), error = function(e) character())
 }
+
+secs_since <- function(t0) as.numeric(difftime(Sys.time(), t0, units = "secs"))
