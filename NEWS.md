@@ -1,5 +1,10 @@
 # aobcore 0.0.0.9000
 
+* `vector_densify()` densifies lines and polygon edges of any wk-handleable
+  input, linearly in its own coordinates, with no GDAL: the wk densify that
+  allboa/design decision 0004 names as the default for in-memory data.
+  aobview uses it before reprojecting with PROJ.
+
 * `write_scene_html()` encodes blobs as base64 about five times faster and
 with about a third of the peak memory: a 32 MB blob took 8.2 s and 1.2 GB
 (process high-water mark) and now takes 1.6 s and 0.4 GB. The text is
