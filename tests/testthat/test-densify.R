@@ -58,3 +58,30 @@ test_that("vector_densify() checks its arguments", {
   expect_error(vector_densify(x, NA_real_), "max_length")
   expect_error(vector_densify(1:3, 1), "cannot be read by wk")
 })
+
+test_that("vector_densify() densifies geometries whose first part or ring is empty", {
+  x <- wk::wkt(c("MULTIPOLYGON (EMPTY, ((0 0, 2 0, 2 2, 0 0)))",
+                 "MULTILINESTRING (EMPTY, (0 0, 3 0))"))
+  d <- vector_densify(x, 1)
+  expect_identical(nrow(wk::wk_coords(d[1])), 8L)
+  expect_identical(nrow(wk::wk_coords(d[2])), 4L)
+})
+
+test_that("vector_densify() splits the edges of holes, keeps NA and takes an sfc", {
+  p <- wk::wkt("POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0), (2 2, 4 2, 4 4, 2 4, 2 2))")
+  co <- wk::wk_coords(vector_densify(p, 1))
+  expect_identical(nrow(co[co$ring_id == 2, ]), 9L)
+  na <- vector_densify(wk::wkb(list(NULL)), 1)
+  expect_true(is.na(na))
+  skip_if_not_installed("sf")
+  g <- sf::st_sfc(sf::st_linestring(rbind(c(0, -60), c(90, -60))), crs = "OGC:CRS84")
+  d <- vector_densify(g, 0.25)
+  expect_s3_class(d, "wk_wkb")
+  expect_identical(nrow(wk::wk_coords(d)), 361L)
+  expect_true(wk::wk_crs_equal(wk::wk_crs(d), sf::st_crs(g)))
+})
+
+test_that("vector_densify() refuses non-finite coordinates and runaway sizes", {
+  expect_error(vector_densify(wk::wkt("LINESTRING (0 0, nan 0, 2 0)"), 1), "not finite")
+  expect_error(vector_densify(wk::wkt("LINESTRING (0 0, 1e9 0)"), 1e-3), "larger `max_length`")
+})

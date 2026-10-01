@@ -29,9 +29,12 @@ along a parallel in a polar view.
 This is the wk densify that allboa/design decision 0004 names as the
 default home for in-memory data: it works on any 'wk' handleable input
 and needs no GDAL. Points and multipoints are returned unchanged, as are
-geometry collections (flatten them first, with \code{\link[wk:wk_flatten]{wk::wk_flatten()}}) and
-empty geometries. Z and M values are dropped from the geometries that
-are densified.
+geometry collections (flatten them first, with \code{\link[wk:wk_flatten]{wk::wk_flatten()}}),
+empty geometries and missing ones. Empty parts and rings inside a
+geometry that is densified are dropped, and so are its Z and M values.
+The result is always \code{\link[wk:wkb]{wk::wkb()}}, whatever the class of \code{x} (an \code{sfc}
+becomes wkb with the same CRS). Non-finite coordinates are an error, as
+is a densify that would make more than 100 million vertices.
 }
 \examples{
 x <- wk::wkt("LINESTRING (0 -60, 90 -60)", crs = "OGC:CRS84")

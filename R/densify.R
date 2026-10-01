@@ -11,9 +11,12 @@
 #' This is the wk densify that allboa/design decision 0004 names as the
 #' default home for in-memory data: it works on any 'wk' handleable input
 #' and needs no GDAL. Points and multipoints are returned unchanged, as are
-#' geometry collections (flatten them first, with [wk::wk_flatten()]) and
-#' empty geometries. Z and M values are dropped from the geometries that
-#' are densified.
+#' geometry collections (flatten them first, with [wk::wk_flatten()]),
+#' empty geometries and missing ones. Empty parts and rings inside a
+#' geometry that is densified are dropped, and so are its Z and M values.
+#' The result is always [wk::wkb()], whatever the class of `x` (an `sfc`
+#' becomes wkb with the same CRS). Non-finite coordinates are an error, as
+#' is a densify that would make more than 100 million vertices.
 #'
 #' @param x Geometry: anything 'wk' can handle, such as an `sfc`,
 #'   [wk::wkb()] or [wk::wkt()].
@@ -37,15 +40,21 @@ vector_densify <- function(x, max_length) {
   crs <- wk::wk_crs(x)
   g <- wk::wk_set_crs(wk::as_wkb(x), NULL)
   meta <- wk::wk_meta(g)
+  ## Not wk_meta()'s is_empty, which is TRUE when only the first part or
+  ## ring is empty.
+  has_coords <- wk::wk_count(g)$n_coord > 0
   out <- unclass(g)
   ## 2 linestring, 3 polygon, 5 multilinestring, 6 multipolygon.
   for (type in c(2L, 3L, 5L, 6L)) {
-    idx <- which(meta$geometry_type == type & !meta$is_empty)
+    idx <- which(meta$geometry_type == type & has_coords)
     if (!length(idx)) next
     out[idx] <- unclass(densify_type(g[idx], type, max_length))
   }
   wk::wkb(out, crs = crs)
 }
+
+## The most vertices vector_densify() makes in one call.
+densify_max <- 1e8
 
 ## Densify geometries that are all of one type (2, 3, 5 or 6), none empty,
 ## and rebuild them as that type, one feature per input.
@@ -62,8 +71,17 @@ densify_type <- function(g, type, max_length) {
   dy <- c(diff(co$y), 0)
   dx[!same] <- 0
   dy[!same] <- 0
+  if (!all(is.finite(co$x) & is.finite(co$y))) {
+    stop("`x` has coordinates that are not finite, so it cannot be densified.", call. = FALSE)
+  }
+  pieces <- ceiling(sqrt(dx[same]^2 + dy[same]^2) / max_length)
+  if (sum(pieces) > densify_max) {
+    stop("Densifying every ", max_length, " would make more than ",
+         format(densify_max, big.mark = ",", scientific = FALSE),
+         " vertices; use a larger `max_length`.", call. = FALSE)
+  }
   k <- rep(1L, n)
-  k[same] <- pmax(1L, as.integer(ceiling(sqrt(dx[same]^2 + dy[same]^2) / max_length)))
+  k[same] <- pmax(1L, as.integer(pieces))
   i <- rep(seq_len(n), k)
   t <- (sequence(k) - 1) / rep(k, k)
   xy <- wk::xy(co$x[i] + t * dx[i], co$y[i] + t * dy[i])
