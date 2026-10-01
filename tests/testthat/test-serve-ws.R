@@ -509,7 +509,7 @@ test_that("without jsonlite the page is served with no socket", {
   local_mocked_bindings(has_jsonlite = function() FALSE)
   old <- ws_flags$told_jsonlite
   ws_flags$told_jsonlite <- FALSE
-  on.exit(ws_flags$told_jsonlite <- old)
+  on.exit(ws_flags$told_jsonlite <- old, add = TRUE)
   expect_message(srv <- serve_test(probe_scene()), "without the 'jsonlite' package")
   on.exit(srv$stop(), add = TRUE)
   expect_message(srv2 <- serve_test(probe_scene()), NA)

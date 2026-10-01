@@ -37,6 +37,8 @@
     `serve_scene(select = )` names the selectable layers (default every
     vector layer). `wait()` inside an `on()` callback is an error, and the
     reads there skip running the event loop.
+  - 'later' (already a dependency of httpuv) joins Suggests, for the
+    tests that queue a message with `later::later()`.
 
 * `serve_scene()` serves a scene from a local HTTP server (decision 0006 in
   allboa/design; #33, #34, #35), with httpuv in Suggests. The browser
