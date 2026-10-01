@@ -1,5 +1,13 @@
 # aobcore 0.0.0.9000
 
+* An R session that ended with a page's websocket connected crashed (exit
+  status 139), at the end of a script or on an error: the exit finalizer
+  that stops the servers closed each socket, and httpuv 1.6.17 may already
+  have finalized the socket's handle by then. At exit the sockets are now
+  dropped without a close frame and the server stopped; `srv$stop()`,
+  `stop_scene_servers()` and unloading aobcore still close each socket with
+  1001.
+
 * Selections from a served page come back to R over a websocket (decision
   0007 in allboa/design; #39, #40). It needs 'jsonlite' (in Suggests);
   without it pages are served as before, with no socket, and
