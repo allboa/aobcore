@@ -290,7 +290,7 @@ owned_records <- function(own) {
   out <- list()
   for (p in own) {
     if (!file.exists(p)) stop("`own` path \"", p, "\" does not exist.", call. = FALSE)
-    if (nzchar(Sys.readlink(p))) {
+    if (is_link(p)) {
       stop("`own` path \"", p, "\" is a symbolic link; give the file itself.", call. = FALSE)
     }
     if (!utils::file_test("-f", p)) stop("`own` path \"", p, "\" is not a regular file.", call. = FALSE)
@@ -301,13 +301,29 @@ owned_records <- function(own) {
   out
 }
 
+## Whether `p` is a symbolic link (or, on Windows, any link or junction
+## that resolves elsewhere): Sys.readlink() reports links on Unix but
+## always returns "" on Windows, so the file is also resolved and compared
+## with its own directory plus its name.
+is_link <- function(p) {
+  if (nzchar(Sys.readlink(p))) return(TRUE)
+  if (!file.exists(p)) return(FALSE)
+  real <- normalizePath(p, winslash = "/", mustWork = TRUE)
+  own <- file.path(normalizePath(dirname(p), winslash = "/", mustWork = TRUE), basename(p))
+  if (.Platform$OS.type == "windows") {
+    real <- tolower(real)
+    own <- tolower(own)
+  }
+  !identical(real, own)
+}
+
 ## Delete owned files that are as recorded; warn about the others.
 delete_owned <- function(owned) {
   for (rec in owned) {
     p <- rec$path
-    if (!file.exists(p) && !nzchar(Sys.readlink(p))) next
+    if (!file.exists(p) && !is_link(p)) next
     info <- file.info(p, extra_cols = FALSE)
-    if (nzchar(Sys.readlink(p)) || !utils::file_test("-f", p) ||
+    if (is_link(p) || !utils::file_test("-f", p) ||
         !identical(info$size, rec$size) || !identical(info$mtime, rec$mtime)) {
       warning("Left \"", p, "\" in place: it has changed since the server was given it.",
               call. = FALSE)

@@ -560,3 +560,20 @@ test_that("only Unix reads /dev/urandom", {
   body <- paste(deparse(random_bytes), collapse = "\n")
   expect_match(body, ".Platform$OS.type == \"unix\"", fixed = TRUE)
 })
+
+test_that("a link is found by resolving it where Sys.readlink() cannot see it", {
+  d <- tempfile("aob-link-")
+  dir.create(d)
+  on.exit(unlink(d, recursive = TRUE))
+  f <- file.path(d, "a.tif")
+  writeLines("x", f)
+  l <- file.path(d, "l.tif")
+  skip_if_not(isTRUE(suppressWarnings(file.symlink(f, l))), "no symbolic links here")
+  ## As on Windows, where Sys.readlink() always returns "".
+  no_readlink <- is_link
+  environment(no_readlink) <- list2env(list(Sys.readlink = function(p) ""),
+                                       parent = asNamespace("aobcore"))
+  expect_true(no_readlink(l))
+  expect_false(no_readlink(f))
+  expect_false(no_readlink(file.path(d, "..", basename(d), "a.tif")))
+})
