@@ -525,7 +525,9 @@ ws_select <- function(state, conn, msg) {
     return(ws_drop(state, conn, "select", "its trigger is not a string"))
   }
   conn$seq <- msg[["seq"]]
-  layers <- intersect(state$select, names(rows))
+  ## intersect() with NULL (no items) is NULL, which would drop the layer
+  ## column from an empty selection.
+  layers <- intersect(state$select, names(rows) %||% character())
   rows <- lapply(rows[layers], function(r) sort(unique(r)) + 1)
   rr <- unlist(rows, use.names = FALSE) %||% numeric()
   if (all(rr <= .Machine$integer.max)) rr <- as.integer(rr)

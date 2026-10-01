@@ -21,6 +21,22 @@
 // server has (a <script type="application/json" data-aob-blob-keys>); a
 // tiled raster fetches a tile from the blob base only when its key is
 // listed, and otherwise reads the cog by range requests as before.
+//
+// Selections (decision 0007). A served page whose element also has
+// data-aob-socket (a URL relative to the page, "ws") and
+// data-aob-scene-serial (an integer) opens a websocket to R once the scene
+// is drawn (options.socket and options.serial; see link.js for protocol 1).
+// The layers R names in its hello become selectable: a click selects a
+// feature, Shift or Cmd click adds or removes one (and closes the popup),
+// a click on nothing or Escape clears (with Shift or Cmd held a click on
+// nothing keeps the selection), and every change sends the whole selection; the settled
+// camera is sent as a view message. R's reload reloads the page with its
+// camera kept (sessionStorage, under the page's path). A page without
+// options.socket (every embedded page) opens no socket and has no
+// selection mode. For tools and tests the element carries the link's state
+// (data-aob-link: connecting, open, ready, closed, refused or reloading),
+// the selectable layer ids (data-aob-selectable) and the selection
+// (data-aob-selection, "layer:row,row;layer:row").
 import { Deck, OrthographicView, _GlobeView as GlobeView, COORDINATE_SYSTEM } from "@deck.gl/core";
 import { decodeBase64, readTable } from "./arrow.js";
 import { buildLayer } from "./layers.js";
@@ -30,6 +46,9 @@ import { cssGradient } from "./palettes.js";
 import { legendElement } from "./legend.js";
 import { popupBox, popupRows } from "./popup.js";
 import { CSS } from "./style.js";
+import { socketChannel, socketUrl } from "./channel.js";
+import { connectLink } from "./link.js";
+import { selectionState, clickSelection, selectionText } from "./selection.js";
 
 const VERSION = "0.0.5";
 const SPECS = ["0.1", "0.2", "0.3", "0.4", "0.5"];
@@ -121,7 +140,7 @@ function checkScene(scene) {
 
 // Theme: follows prefers-color-scheme unless the root element carries
 // data-theme="light" or "dark". The button cycles auto, light, dark.
-function themeButton() {
+function themeButton(onChange) {
   const root = document.documentElement;
   const order = ["auto", "light", "dark"];
   const b = el("button", "aob-theme", "");
@@ -137,9 +156,55 @@ function themeButton() {
     if (next === "auto") delete root.dataset.theme;
     else root.dataset.theme = next;
     show();
+    if (onChange) onChange();
   });
   show();
   return b;
+}
+
+// A CSS colour token as RGBA 0-255: "#rgb", "#rrggbb" or "#rrggbbaa".
+function tokenColor(node, name, fallback) {
+  const v = getComputedStyle(node).getPropertyValue(name).trim();
+  let m = /^#([0-9a-f]{6})([0-9a-f]{2})?$/i.exec(v);
+  if (m) {
+    const n = parseInt(m[1], 16);
+    return [(n >> 16) & 255, (n >> 8) & 255, n & 255, m[2] ? parseInt(m[2], 16) : 255];
+  }
+  m = /^#([0-9a-f])([0-9a-f])([0-9a-f])$/i.exec(v);
+  if (m) return [1, 2, 3].map((i) => parseInt(m[i] + m[i], 16)).concat(255);
+  return fallback;
+}
+
+// Where a served page keeps its camera across a reload from R: under a
+// hash of the page's path (which holds the server's token), not the path.
+function hashText(s) {
+  let h1 = 0xdeadbeef;
+  let h2 = 0x41c6ce57;
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    h1 = Math.imul(h1 ^ c, 2654435761);
+    h2 = Math.imul(h2 ^ c, 1597334677);
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  return (h2 >>> 0).toString(16).padStart(8, "0") + (h1 >>> 0).toString(16).padStart(8, "0");
+}
+const cameraKey = () => `aob-camera:${hashText(new URL(".", location.href).pathname)}`;
+function readCamera() {
+  try {
+    const s = sessionStorage.getItem(cameraKey());
+    sessionStorage.removeItem(cameraKey());
+    return s ? JSON.parse(s) : null;
+  } catch (err) {
+    return null;
+  }
+}
+function writeCamera(v) {
+  try {
+    sessionStorage.setItem(cameraKey(), JSON.stringify(v));
+  } catch (err) {
+    // no storage: the reloaded page starts from the scene's view
+  }
 }
 
 function fmt(v, span) {
@@ -167,6 +232,8 @@ export async function render(container, scene, options = {}) {
   const blobs = options.blobs || {};
   const blobBase = typeof options.blobBase === "string" ? options.blobBase : null;
   const blobKeys = new Set(blobBase !== null && options.blobKeys ? options.blobKeys : []);
+  const socketRel = typeof options.socket === "string" && options.socket ? options.socket : null;
+  const serial = socketRel !== null && Number.isInteger(options.serial) ? options.serial : null;
   const warnings = [];
   const errors = [];
   const warn = (m) => {
@@ -189,6 +256,13 @@ export async function render(container, scene, options = {}) {
   status.setAttribute("role", "status");
   const panel = el("aside", "aob-panel");
   map.append(canvasHost, tag, readout);
+  // The link to R's note (served pages with a socket only).
+  const linkNote = socketRel !== null ? el("div", "aob-link") : null;
+  if (linkNote) {
+    linkNote.setAttribute("role", "status");
+    linkNote.hidden = true;
+    map.append(linkNote);
+  }
   container.append(map, panel, status);
   const setStatus = (msg, isError) => {
     status.textContent = msg;
@@ -221,6 +295,8 @@ export async function render(container, scene, options = {}) {
     const layerStatus = {};
     // deck layer id -> how its picked parts map to feature rows (0.5 popups).
     const picks = new Map();
+    // scene layer id -> functions drawing its selected rows, per batch.
+    const highlights = new Map();
     const ctx = {
       scene,
       tables,
@@ -240,6 +316,10 @@ export async function render(container, scene, options = {}) {
       coordinateSystem: globe ? COORDINATE_SYSTEM.LNGLAT : COORDINATE_SYSTEM.CARTESIAN,
       bounds: [Infinity, -Infinity, Infinity, -Infinity],
       pickable: (deckId, info) => picks.set(deckId, info),
+      highlight: socketRel !== null ? (layerId, f) => {
+        if (!highlights.has(layerId)) highlights.set(layerId, []);
+        highlights.get(layerId).push(f);
+      } : null,
     };
     const built = scene.layers.map((L) => {
       if (globe && (L.kind === "raster" || L.kind === "tiled_raster")) {
@@ -301,7 +381,7 @@ export async function render(container, scene, options = {}) {
       legends.setAttribute("role", "group");
       legends.setAttribute("aria-label", "Legends");
     }
-    panel.append(list, legends, themeButton());
+    panel.append(list, legends, themeButton(() => update()));
 
     // 0.5 popups. "point" shows while the pointer is over a feature; a
     // pointer that cannot hover (touch) makes it act as select. Decided per
@@ -322,9 +402,11 @@ export async function render(container, scene, options = {}) {
       if (!info || !info.picked || !info.layer) return null;
       const p = picks.get(info.layer.id);
       if (!p || info.index < 0 || info.index >= p.feature.length) return null;
-      return { layer: p.layer, table: p.table, row: p.rowOffset + p.feature[info.index] };
+      return { layer: p.layer, table: p.table, row: p.rowOffset + p.feature[info.index], popup: p.popup };
     };
+    // A feature of a layer picked only for selection has no popup.
     const showFeature = (f, x, y, trigger, focus) => {
+      if (!f.popup) return;
       const rows = popupRows(f.table, f.layer.popup.columns, f.row);
       popup.show({ layer: f.layer, row: f.row, rows, x, y, trigger }, focus);
       container.dataset.aobSelected = `${f.layer.id}:${f.row}`;
@@ -347,16 +429,34 @@ export async function render(container, scene, options = {}) {
       const h = canvasHost.clientHeight || 600;
       return Math.log2(Math.min(w / (ext[1] - ext[0]), h / (ext[3] - ext[2])) * 0.95);
     };
+    // A camera kept by a reload from R (item 5): only from an older scene
+    // serial of this page, in the same view CRS.
+    let kept = null;
+    if (serial !== null) {
+      const c = readCamera();
+      if (c && Number.isInteger(c.serial) && c.serial < serial && c.type === view.type &&
+          c.crs === JSON.stringify(view.crs === undefined ? null : view.crs)) {
+        const z = Number(c.zoom);
+        if (globe && Array.isArray(c.center) && c.center.every(isFinite) && isFinite(z)) {
+          kept = { globe: { longitude: c.center[0], latitude: c.center[1], zoom: z } };
+        } else if (!globe && Array.isArray(c.target) && c.target.every(isFinite) && isFinite(z)) {
+          kept = { ortho: { target: [c.target[0], c.target[1], 0], zoom: z } };
+        }
+        if (kept) container.dataset.aobCameraKept = "true";
+      }
+    }
     let deckView;
     let initialViewState;
     if (globe) {
       deckView = new GlobeView({ id: "aob", controller: true });
       const z = ext ? Math.log2(360 / Math.max(ext[1] - ext[0], (ext[3] - ext[2]) * 2)) : 0;
       initialViewState = { longitude: center[0], latitude: center[1], zoom: Math.max(0, z) };
+      if (kept && kept.globe) initialViewState = { ...initialViewState, ...kept.globe };
     } else {
       deckView = new OrthographicView({ id: "aob", flipY: false, controller: true });
       const z = fitZoom();
       initialViewState = { target: [center[0], center[1], 0], zoom: z, minZoom: z - 4, maxZoom: z + 12 };
+      if (kept && kept.ortho) initialViewState = { ...initialViewState, ...kept.ortho };
       if (limits) initialViewState = clampView(initialViewState);
     }
 
@@ -391,6 +491,19 @@ export async function render(container, scene, options = {}) {
       };
     };
 
+    // Selection mode (served pages with a socket): the layers R lets the
+    // viewer select, the selection, and the link to R.
+    let selectable = new Set();
+    const selection = selectionState();
+    let link = null;
+    const selectionChanged = (trigger, at) => {
+      const items = selection.items();
+      if (items.length) container.dataset.aobSelection = selectionText(items);
+      else delete container.dataset.aobSelection;
+      update();
+      if (link) link.selected(trigger, at);
+    };
+
     let ready = false;
     let frames = 0;
     let deck = null;
@@ -421,6 +534,8 @@ export async function render(container, scene, options = {}) {
           ready = true;
           container.dataset.aobStatus = "ready";
           if (options.onReady) options.onReady(handle);
+          // The socket opens once the scene is drawn, so it never delays it.
+          if (socketRel !== null && !finalized) startLink();
         }
       },
     };
@@ -430,6 +545,7 @@ export async function render(container, scene, options = {}) {
       viewState = limits ? clampView(vs) : vs;
       if (limits && deck) deck.setProps({ viewState });
       update();
+      if (link) link.viewChanged();
       return viewState;
     }
     function update() {
@@ -439,8 +555,27 @@ export async function render(container, scene, options = {}) {
       built.forEach((B, i) => {
         // A tiled raster's layers depend on the view; a hidden one loads nothing.
         const ls = B.dynamic ? (visible[i] ? B.dynamic(view) : []) : B.layers;
-        ls.forEach((l) => layers.push(l.clone({ visible: visible[i] })));
+        const sel = selectable.has(scene.layers[i].id);
+        ls.forEach((l) => {
+          // A layer R lets the viewer select is pickable, popup or not.
+          const p = picks.get(l.id);
+          const more = sel && p && !p.popup ? { pickable: true, autoHighlight: true } : {};
+          layers.push(l.clone({ visible: visible[i], ...more }));
+        });
       });
+      // Selected features, over every layer.
+      if (selection.size) {
+        const colors = {
+          line: tokenColor(container, "--aob-sel", [194, 24, 91, 255]),
+          halo: tokenColor(container, "--aob-sel-halo", [255, 255, 255, 255]),
+          fill: tokenColor(container, "--aob-sel-fill", [194, 24, 91, 77]),
+        };
+        scene.layers.forEach((L, i) => {
+          const rows = selection.rowsOf(L.id);
+          if (!visible[i] || !rows || !highlights.has(L.id)) return;
+          for (const f of highlights.get(L.id)) layers.push(...f(rows, colors));
+        });
+      }
       deck.setProps({ layers });
       const tiled = Object.entries(layerStatus).map(([id, t]) => `${id}: ${t}`).join("; ");
       if (tiled) container.dataset.aobTiles = tiled;
@@ -482,9 +617,32 @@ export async function render(container, scene, options = {}) {
       const y = cy - r.top;
       const info = deck.pickObject({ x, y, radius: deck.props.pickingRadius || 0 });
       const f = featureAt(info);
-      if (f && triggerOf(f.layer, { srcEvent }) === "select") showFeature(f, x, y, "select", true);
+      const multi = selectable.size > 0 && !!(srcEvent && (srcEvent.shiftKey || srcEvent.metaKey));
+      // A Shift or Cmd click edits the selection: no popup over the next
+      // feature to pick.
+      if (multi) popup.hide();
+      else if (f && triggerOf(f.layer, { srcEvent }) === "select") showFeature(f, x, y, "select", true);
       else if (!f) popup.hide();
+      if (selectable.size) {
+        const hit = f && selectable.has(f.layer.id) ? { layer: f.layer.id, row: f.row } : null;
+        selectionChanged(clickSelection(selection, hit, multi), pointAt(x, y));
+      }
     };
+    // The pressed point in view CRS units, or [lon, lat] on a globe.
+    const pointAt = (x, y) => {
+      const vp = deck.getViewports()[0];
+      const c = vp ? vp.unproject([x, y]) : null;
+      return c && isFinite(c[0]) && isFinite(c[1]) ? [c[0], c[1]] : undefined;
+    };
+    // Escape clears the selection (a popup with focus takes Escape first).
+    const onKey = (e) => {
+      if (e.key !== "Escape" || !selectable.size || e.defaultPrevented) return;
+      if (e.type === "keydown" && e.currentTarget === window &&
+          e.target !== document.body && e.target !== document.documentElement) return;
+      if (selection.clear()) selectionChanged("clear");
+    };
+    container.addEventListener("keydown", onKey);
+    window.addEventListener("keydown", onKey);
     function onPressMove(e) {
       if (press && e.pointerId === press.id &&
           Math.hypot(e.clientX - press.x, e.clientY - press.y) >= slop) press.moved = true;
@@ -538,6 +696,10 @@ export async function render(container, scene, options = {}) {
       }
       update();
     };
+    // Highlight colours follow the theme.
+    const darkQuery = typeof matchMedia === "function" ? matchMedia("(prefers-color-scheme: dark)") : null;
+    const onScheme = () => update();
+    if (darkQuery) darkQuery.addEventListener("change", onScheme);
     let observer = null;
     if (typeof ResizeObserver !== "undefined") {
       observer = new ResizeObserver(onResize);
@@ -545,9 +707,56 @@ export async function render(container, scene, options = {}) {
     } else {
       window.addEventListener("resize", onResize);
     }
+    // The link to R (decision 0007): protocol 1 over the page's socket.
+    const viewMessage = () => {
+      const w = canvasHost.clientWidth || 800;
+      const h = canvasHost.clientHeight || 600;
+      const z = Array.isArray(viewState.zoom) ? viewState.zoom[0] : viewState.zoom;
+      if (globe) return { center: [viewState.longitude, viewState.latitude], zoom: z, size_px: [w, h] };
+      const v = currentView();
+      return { extent: v.bounds, zoom: z, units_per_pixel: v.unitsPerPixel, size_px: [w, h] };
+    };
+    const reloadPage = () => {
+      const z = Array.isArray(viewState.zoom) ? viewState.zoom[0] : viewState.zoom;
+      const cam = { serial, type: view.type, crs: JSON.stringify(view.crs === undefined ? null : view.crs), zoom: z };
+      if (globe) cam.center = [viewState.longitude, viewState.latitude];
+      else cam.target = [viewState.target[0], viewState.target[1]];
+      writeCamera(cam);
+      container.dataset.aobLink = "reloading";
+      location.reload();
+    };
+    function startLink() {
+      if (link) return;
+      link = connectLink((onState) => socketChannel(socketUrl(socketRel, location.href), { onState }), {
+        serial,
+        renderer: VERSION,
+        specs: SPECS,
+        selection: () => selection.items(),
+        view: viewMessage,
+        setSelectable: (ids) => {
+          const vector = new Set(scene.layers.filter((L) => ["polygon", "path", "point"].includes(L.kind)).map((L) => L.id));
+          selectable = new Set(ids.filter((id) => vector.has(id)));
+          container.dataset.aobSelectable = [...selectable].join(",");
+          selection.keepLayers(selectable);
+          update();
+        },
+        reload: reloadPage,
+        note: (text) => {
+          linkNote.textContent = text || "";
+          linkNote.hidden = !text;
+        },
+        state: (st) => {
+          container.dataset.aobLink = st;
+        },
+      });
+    }
     const finalize = () => {
       if (finalized) return;
       finalized = true;
+      if (link) link.close();
+      container.removeEventListener("keydown", onKey);
+      window.removeEventListener("keydown", onKey);
+      if (darkQuery) darkQuery.removeEventListener("change", onScheme);
       loading.abort();
       offPress();
       clearTimeout(pendingSelect);
@@ -573,8 +782,10 @@ export async function render(container, scene, options = {}) {
     // view.bounds as interaction is, and returns where it ended up.
     // handle.selected() is the feature whose popup is open, as
     // {layer, row}, or null; handle.closePopup() dismisses it.
+    // handle.selection() is the selection mode's selection, [{layer, rows}]
+    // (empty on a page with no link to R).
     const handle = { deck, scene, tables, decodeMs, bytes: total, warnings, errors, finalize,
-                     view: () => viewState, setView,
+                     view: () => viewState, setView, selection: () => selection.items(),
                      selected: () => (popup.current ? { layer: popup.current.layer.id, row: popup.current.row } : null),
                      closePopup: () => popup.hide() };
     container.dataset.aobInfo = `${kib} KiB Arrow decoded in ${decodeMs.toFixed(1)} ms`;
@@ -610,6 +821,17 @@ export function fromPage(sceneId, container) {
     [...document.querySelectorAll("[data-aob-scene]:not(script)")].find((e) => e.getAttribute("data-aob-scene") === sceneId);
   const out = { scene, blobs };
   if (host && host.hasAttribute("data-aob-blob-base")) out.blobBase = host.getAttribute("data-aob-blob-base");
+  // A served page with a link to R (decision 0007).
+  // (Read through dataset, so the bundle inlined in an embedded page holds
+  // no "data-aob-socket" text.)
+  const ds = host ? host.dataset : null;
+  if (ds && typeof ds.aobSocket === "string" && typeof ds.aobSceneSerial === "string" && ds.aobSceneSerial.trim() !== "") {
+    const n = Number(ds.aobSceneSerial);
+    if (Number.isInteger(n)) {
+      out.socket = ds.aobSocket;
+      out.serial = n;
+    }
+  }
   if (blobKeys !== undefined) {
     if (!Array.isArray(blobKeys)) throw new Error(`scene ${sceneId}: data-aob-blob-keys is not an array`);
     out.blobKeys = blobKeys;
@@ -624,9 +846,9 @@ export function boot() {
     c.dataset.aobStatus = "loading";
     let p;
     try {
-      const { scene, blobs, blobBase, blobKeys } = fromPage(c.getAttribute("data-aob-scene"), c);
+      const { scene, blobs, blobBase, blobKeys, socket, serial } = fromPage(c.getAttribute("data-aob-scene"), c);
       // The handle is kept on the element for tools and tests.
-      p = render(c, scene, { blobs, blobBase, blobKeys }).then((h) => {
+      p = render(c, scene, { blobs, blobBase, blobKeys, socket, serial }).then((h) => {
         c.aob = h;
         return h;
       });

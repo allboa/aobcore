@@ -365,6 +365,8 @@ test_that("a selection arrives as 1-based Arrow rows with its attributes", {
   ws_say(ws, list(type = "select", scene = 1L, seq = 13L, trigger = "clear", items = list()))
   sel <- srv$selection()
   expect_identical(nrow(sel), 0L)
+  expect_identical(names(sel), c("layer", "row"))
+  expect_type(sel$layer, "character")
   expect_null(attr(sel, "at"))
   expect_identical(attr(sel, "trigger"), "clear")
   ## Last message wins across pages.

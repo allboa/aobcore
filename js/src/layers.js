@@ -1,7 +1,9 @@
 // Scene spec 0.1 layers to deck.gl layers. This file is the only place where
 // spec concepts meet deck.gl names. A 0.5 popup makes a vector layer's
 // features pickable; ctx.pickable() records how a picked part maps to its
-// feature row.
+// feature row, for every vector layer, since a served page may make a layer
+// without a popup selectable (decision 0007). ctx.highlight() receives, per
+// record batch, a function that draws the selected rows of that batch.
 import { COORDINATE_SYSTEM } from "@deck.gl/core";
 import { SolidPolygonLayer, PathLayer, ScatterplotLayer, BitmapLayer } from "@deck.gl/layers";
 import { SimpleMeshLayer } from "@deck.gl/mesh-layers";
@@ -85,7 +87,11 @@ export function buildLayer(L, ctx) {
     // A picked object's index is a part (a member linestring, polygon or
     // point); its feature row in the table is rowOffset + feature[index].
     const pick = (deckId, feature) => {
-      if (popup) ctx.pickable(deckId, { layer: L, table, feature, rowOffset });
+      ctx.pickable(deckId, { layer: L, table, feature, rowOffset, popup });
+    };
+    // Selected rows (absolute, 0-based) of this batch, drawn over the scene.
+    const hl = (kind, parts) => {
+      if (ctx.highlight) ctx.highlight(L.id, highlighter(`${id}-sel`, kind, g, parts, rowOffset, b.numRows, L, ctx.coordinateSystem));
     };
     const what = `layer ${L.id}`;
     const widthPx = L.stroke_width_px === undefined ? 1 : L.stroke_width_px;
@@ -95,6 +101,7 @@ export function buildLayer(L, ctx) {
       const starts = g.levels[multi ? 1 : 0];
       count += g.rows;
       pick(id, parts.feature);
+      hl("path", { feature: parts.feature, count: parts.count, starts });
       out.push(new PathLayer({
         ...base,
         id,
@@ -115,6 +122,7 @@ export function buildLayer(L, ctx) {
       const polyRings = g.levels[multi ? 1 : 0];
       const ringVerts = g.levels[multi ? 2 : 1];
       count += g.rows;
+      hl("polygon", { feature: polys.feature, count: polys.count, polyRings, ringVerts });
       const hasFill = L.fill !== undefined || L.stroke === undefined;
       if (hasFill) {
         const starts = new Uint32Array(polys.count + 1);
@@ -195,6 +203,7 @@ export function buildLayer(L, ctx) {
       const filled = L.fill !== undefined || L.stroke === undefined;
       const stroked = L.stroke !== undefined;
       pick(id, feature);
+      hl("point", { feature, count: g.count });
       out.push(new ScatterplotLayer({
         ...base,
         id,
@@ -213,6 +222,73 @@ export function buildLayer(L, ctx) {
   });
   const noun = { path: "line", polygon: "polygon", point: "point" }[L.kind];
   return { layers: out, summary: `${count.toLocaleString("en-US")} ${noun}${count === 1 ? "" : "s"}` };
+}
+
+// The highlight of selected features in one record batch: a function of
+// (rows, colors) that returns deck.gl layers drawing only the parts whose
+// feature row is in `rows` (a Set of absolute rows), or none. colors has
+// line, halo and fill RGBA arrays. Polygons get a translucent fill and an
+// outline over a halo; lines a wider line over a halo; points a ring.
+function highlighter(id, kind, g, parts, rowOffset, numRows, L, coordinateSystem) {
+  const size = g.size;
+  const positionFormat = size === 3 ? "XYZ" : "XY";
+  const widthPx = L.stroke_width_px === undefined ? 1 : L.stroke_width_px;
+  const lineW = Math.max(2.5, widthPx + 2);
+  const base = { coordinateSystem, pickable: false };
+  return (rows, colors) => {
+    let any = false;
+    for (const r of rows) {
+      if (r >= rowOffset && r < rowOffset + numRows) {
+        any = true;
+        break;
+      }
+    }
+    if (!any) return [];
+    const on = (p) => rows.has(rowOffset + parts.feature[p]);
+    const lines = (paths, key) => [
+      // Rounded joints and caps: mitred ones spike at sharp turns (a
+      // detailed coastline).
+      new PathLayer({ ...base, id: `${id}-${key}-halo`, data: paths, getPath: (d) => d, positionFormat, _pathType: "open",
+                      getColor: colors.halo, getWidth: lineW + 3, widthUnits: "pixels", jointRounded: true, capRounded: true }),
+      new PathLayer({ ...base, id: `${id}-${key}`, data: paths, getPath: (d) => d, positionFormat, _pathType: "open",
+                      getColor: colors.line, getWidth: lineW, widthUnits: "pixels", jointRounded: true, capRounded: true }),
+    ];
+    if (kind === "path") {
+      const paths = [];
+      for (let p = 0; p < parts.count; p++) {
+        if (on(p)) paths.push(g.coords.subarray(parts.starts[p] * size, parts.starts[p + 1] * size));
+      }
+      return lines(paths, "line");
+    }
+    if (kind === "polygon") {
+      const polys = [];
+      const rings = [];
+      for (let p = 0; p < parts.count; p++) {
+        if (!on(p)) continue;
+        const r0 = parts.polyRings[p];
+        const r1 = parts.polyRings[p + 1];
+        const v0 = parts.ringVerts[r0];
+        const v1 = parts.ringVerts[r1];
+        if (v1 - v0 < 3) continue;
+        const holeIndices = [];
+        for (let r = r0 + 1; r < r1; r++) holeIndices.push((parts.ringVerts[r] - v0) * size);
+        polys.push({ positions: g.coords.subarray(v0 * size, v1 * size), holeIndices });
+        for (let r = r0; r < r1; r++) rings.push(g.coords.subarray(parts.ringVerts[r] * size, parts.ringVerts[r + 1] * size));
+      }
+      return [
+        new SolidPolygonLayer({ ...base, id: `${id}-fill`, data: polys, getPolygon: (d) => d, positionFormat,
+                                getFillColor: colors.fill }),
+        ...lines(rings, "ring"),
+      ];
+    }
+    const pts = [];
+    for (let p = 0; p < parts.count; p++) if (on(p)) pts.push(g.coords.subarray(p * size, (p + 1) * size));
+    const radius = (L.radius_px === undefined ? 3 : L.radius_px) + 3;
+    return [new ScatterplotLayer({ ...base, id: `${id}-point`, data: pts, getPosition: (d) => d,
+                                   radiusUnits: "pixels", getRadius: radius, filled: true, stroked: true,
+                                   lineWidthUnits: "pixels", getLineWidth: 2.5,
+                                   getFillColor: colors.fill, getLineColor: colors.line })];
+  };
 }
 
 function buildRaster(L, ctx) {
