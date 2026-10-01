@@ -36,8 +36,9 @@
 #' until none is left, at most 1000 rounds), so a selection made just
 #' before the call is counted, as are all the messages queued while R was
 #' busy. Inside an `on()` callback they skip that and read the state as it
-#' is. All are errors once the server has stopped: the selection lives
-#' in the server and goes with it. Selections from several pages (tabs) on
+#' is. `selection()` and `view_state()` (and `wait()` and `on()`) are
+#' errors once the server has stopped, and `connections()` returns 0: the
+#' selection lives in the server and goes with it. Selections from several pages (tabs) on
 #' one server are the server's: the last message wins.
 #'
 #' **Protocol 1.** Each message is one JSON object in a text frame, with a
