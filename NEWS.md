@@ -1,5 +1,10 @@
 # aobcore 0.0.0.9000
 
+* `vector_densify()` densifies lines and polygon edges of any wk-handleable
+  input, linearly in its own coordinates, with no GDAL: the wk densify that
+  allboa/design decision 0004 names as the default for in-memory data.
+  aobview uses it before reprojecting with PROJ.
+
 * An R session that ended with a page's websocket connected crashed (exit
   status 139), at the end of a script or on an error: the exit finalizer
   that stops the servers closed each socket, and httpuv 1.6.17 may already
