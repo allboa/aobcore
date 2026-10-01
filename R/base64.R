@@ -3,21 +3,37 @@
 
 b64_alphabet <- c(LETTERS, letters, as.character(0:9), "+", "/")
 
-b64_encode <- function(x) {
-  stopifnot(is.raw(x))
+## Encoded a chunk at a time, through raw bytes rather than one string per
+## character: the page's blobs can be hundreds of MB, and a character
+## vector of 4/3 n one-letter strings (with the integer matrices beside it)
+## took about 40 bytes of R memory per input byte.
+b64_encode <- function(x, chunk = 3L * 2^20) {
+  stopifnot(is.raw(x), chunk >= 3, chunk %% 3 == 0)
   n <- length(x)
   if (n == 0L) {
     return("")
   }
+  starts <- seq(1, n, by = chunk)
+  out <- vapply(starts, function(s) b64_chunk(x[s:min(n, s + chunk - 1)]), "")
+  paste(out, collapse = "")
+}
+
+b64_bytes <- charToRaw(paste(b64_alphabet, collapse = ""))
+
+## One chunk; every chunk but the last is a whole number of 3-byte groups.
+b64_chunk <- function(x) {
+  n <- length(x)
   pad <- (3L - n %% 3L) %% 3L
   v <- matrix(c(as.integer(x), integer(pad)), nrow = 3L)
   w <- v[1L, ] * 65536L + v[2L, ] * 256L + v[3L, ]
+  rm(v)
   idx <- rbind(w %/% 262144L, (w %/% 4096L) %% 64L, (w %/% 64L) %% 64L, w %% 64L)
-  chars <- b64_alphabet[idx + 1L]
+  rm(w)
+  chars <- b64_bytes[idx + 1L]
   if (pad > 0L) {
-    chars[(length(chars) - pad + 1L):length(chars)] <- "="
+    chars[(length(chars) - pad + 1L):length(chars)] <- charToRaw("=")
   }
-  paste(chars, collapse = "")
+  rawToChar(chars)
 }
 
 b64_decode <- function(s) {
