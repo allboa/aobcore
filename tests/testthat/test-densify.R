@@ -67,18 +67,19 @@ test_that("vector_densify() densifies geometries whose first part or ring is emp
   expect_identical(nrow(wk::wk_coords(d[2])), 4L)
 })
 
-test_that("vector_densify() splits the edges of holes, keeps NA and takes an sfc", {
+test_that("vector_densify() splits the edges of holes, keeps NA and keeps a CRS object", {
   p <- wk::wkt("POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0), (2 2, 4 2, 4 4, 2 4, 2 2))")
   co <- wk::wk_coords(vector_densify(p, 1))
   expect_identical(nrow(co[co$ring_id == 2, ]), 9L)
   na <- vector_densify(wk::wkb(list(NULL)), 1)
   expect_true(is.na(na))
-  skip_if_not_installed("sf")
-  g <- sf::st_sfc(sf::st_linestring(rbind(c(0, -60), c(90, -60))), crs = "OGC:CRS84")
+  ## A CRS that is an object (as an sfc's is) is carried as it is.
+  crs <- structure(list(input = "OGC:CRS84"), class = "my_crs")
+  g <- wk::wkt("LINESTRING (0 -60, 90 -60)", crs = crs)
   d <- vector_densify(g, 0.25)
   expect_s3_class(d, "wk_wkb")
   expect_identical(nrow(wk::wk_coords(d)), 361L)
-  expect_true(wk::wk_crs_equal(wk::wk_crs(d), sf::st_crs(g)))
+  expect_identical(wk::wk_crs(d), crs)
 })
 
 test_that("vector_densify() refuses non-finite coordinates and runaway sizes", {
