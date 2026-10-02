@@ -51,6 +51,8 @@
 //    data-aob-socket opening no socket.
 // 9. Fragments (decision 0009): several scenes in one host document with
 //    one renderer, each fragment's theme its own.
+// 10. A host's channel (decision 0009): protocol 1 over a channel the page
+//    makes (as a Shiny binding does), with no socket.
 // Also in Node: the range reader keeps a whole-file (200) response, and the
 // tile cache evicts least recently used idle tiles.
 // Set CHROMIUM_PATH to pick a browser; SKIP_BROWSER=1 runs only part 1.
@@ -1683,5 +1685,73 @@ ${keys === null ? "" : `<script type="application/json" data-aob-blob-keys data-
     console.log("ok   fragments in one document draw, each with its own theme");
   } finally {
     await browser9.close();
+  }
+}
+
+// ---- 10. a host's channel instead of a socket (decision 0009) ----------------
+// aob.render(el, scene, {channel}) with a channel made in the page, as a
+// Shiny output binding makes one: no socket is opened, the page's hello
+// goes to the channel, the host's hello makes layers selectable, and a
+// click sends protocol 1's select through it (serial 0 when none is given).
+{
+  const sc = JSON.parse(JSON.stringify(part6.scene));
+  sc.layers = sc.layers.filter((L) => L.id !== "broken");
+  const browser10 = await chromium.launch({
+    executablePath: process.env.CHROMIUM_PATH || undefined,
+    args: ["--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--ignore-gpu-blocklist"],
+  });
+  try {
+    const page = await browser10.newPage({ viewport: { width: 900, height: 700 } });
+    await page.setContent(`<!DOCTYPE html><html><head><meta charset="utf-8"></head><body style="margin:0;height:100vh">
+<div id="c" class="aob-fragment" style="height:100%;width:100%"></div><script>${bundle}</script></body></html>`);
+    await page.evaluate(async ([sc, blobs]) => {
+      window.socketsOpened = 0;
+      const WS = window.WebSocket;
+      window.WebSocket = function (url, p) {
+        window.socketsOpened++;
+        return new WS(url, p);
+      };
+      window.sent = [];
+      const channel = (onState) => {
+        const listeners = [];
+        setTimeout(() => onState("open", {}), 0);
+        return {
+          get connected() { return true; },
+          send(m) {
+            const msg = typeof m === "string" ? JSON.parse(m) : m;
+            window.sent.push(msg);
+            if (msg.type === "hello") {
+              setTimeout(() => listeners.forEach((f) => f({ type: "hello", protocol: 1, select: ["stations"] })), 0);
+            }
+            return true;
+          },
+          onMessage(f) { listeners.push(f); return () => {}; },
+          close() {},
+        };
+      };
+      const c = document.getElementById("c");
+      c.aob = await aob.render(c, sc, { blobs, channel });
+    }, [sc, part6.blobs]);
+    await page.waitForFunction(() => document.getElementById("c").dataset.aobLink === "ready", null, { timeout: 60000 });
+    const hello = await page.evaluate(() => window.sent[0]);
+    assert.deepEqual(hello, { type: "hello", protocol: 1, renderer: "0.0.5", specs: ["0.1", "0.2", "0.3", "0.4", "0.5"], scene: 0 });
+    assert.equal(await page.evaluate(() => document.getElementById("c").dataset.aobSelectable), "stations");
+    await page.waitForTimeout(400);
+    const [x0, y0] = await page.evaluate(([x, y]) => {
+      const rc = document.querySelector(".aob-canvas").getBoundingClientRect();
+      const v = document.getElementById("c").aob.view();
+      const k = Math.pow(2, v.zoom);
+      return [rc.left + rc.width / 2 + (x - v.target[0]) * k, rc.top + rc.height / 2 - (y - v.target[1]) * k];
+    }, part6.pts[0]);
+    await page.mouse.click(x0, y0);
+    await page.waitForFunction(() => window.sent.some((m) => m.type === "select"), null, { timeout: 5000 });
+    const sel = await page.evaluate(() => window.sent.find((m) => m.type === "select"));
+    assert.equal(sel.scene, 0);
+    assert.equal(sel.trigger, "click");
+    assert.deepEqual(sel.items, [{ layer: "stations", rows: [0] }]);
+    assert.equal(await page.evaluate(() => window.socketsOpened), 0, "no socket");
+    console.log("ok   a host's channel carries protocol 1 instead of a socket");
+  } finally {
+    await browser10.close();
   }
 }

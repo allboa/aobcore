@@ -1,5 +1,15 @@
 # aobcore 0.0.0.9000
 
+* `renderer_dependency()` is exported: the renderer as an HTML dependency,
+  for hosts that call `aob.render()` themselves, such as aobview's Shiny
+  output binding (decision 0009).
+
+* Renderer: `aob.render(el, scene, {channel})` takes a channel made by the
+  host (`send()`, `onMessage()`, `close()`, and "open" reported through
+  `onState`) instead of a websocket, and speaks protocol 1 over it; a
+  Shiny output binding passes one that forwards the page's messages to
+  input values (decision 0009). Pages are unchanged.
+
 * `scene_tag()` returns a scene as an htmltools fragment (a sized `<div>`,
   the scene JSON and its blobs embedded as `write_scene_html()` embeds
   them) with the renderer attached as an `htmlDependency()` named

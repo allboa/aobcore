@@ -33,7 +33,10 @@
 // camera is sent as a view message. R's reload reloads the page with its
 // camera kept (sessionStorage, under the page's path). A page without
 // options.socket (every embedded page) opens no socket and has no
-// selection mode. For tools and tests the element carries the link's state
+// selection mode. Instead of a socket a host may pass options.channel, a
+// function of onState that returns a channel with the websocket channel's
+// send(), onMessage() and close() (channel.js): a Shiny output binding does
+// (decision 0009), and protocol 1 runs over it unchanged. For tools and tests the element carries the link's state
 // (data-aob-link: connecting, open, ready, closed, refused or reloading),
 // the selectable layer ids (data-aob-selectable) and the selection
 // (data-aob-selection, "layer:row,row;layer:row").
@@ -235,7 +238,12 @@ export async function render(container, scene, options = {}) {
   const blobBase = typeof options.blobBase === "string" ? options.blobBase : null;
   const blobKeys = new Set(blobBase !== null && options.blobKeys ? options.blobKeys : []);
   const socketRel = typeof options.socket === "string" && options.socket ? options.socket : null;
-  const serial = socketRel !== null && Number.isInteger(options.serial) ? options.serial : null;
+  // Or a channel made by the host (a Shiny output binding, decision 0009):
+  // options.channel(onState) returns {send, onMessage, close} and reports
+  // "open" (never synchronously), "closed" or "refused" through onState.
+  const channelMaker = typeof options.channel === "function" ? options.channel : null;
+  const linked = socketRel !== null || channelMaker !== null;
+  const serial = linked && Number.isInteger(options.serial) ? options.serial : channelMaker !== null ? 0 : null;
   const warnings = [];
   const errors = [];
   const warn = (m) => {
@@ -259,7 +267,7 @@ export async function render(container, scene, options = {}) {
   const panel = el("aside", "aob-panel");
   map.append(canvasHost, tag, readout);
   // The link to R's note (served pages with a socket only).
-  const linkNote = socketRel !== null ? el("div", "aob-link") : null;
+  const linkNote = linked ? el("div", "aob-link") : null;
   if (linkNote) {
     linkNote.setAttribute("role", "status");
     linkNote.hidden = true;
@@ -318,7 +326,7 @@ export async function render(container, scene, options = {}) {
       coordinateSystem: globe ? COORDINATE_SYSTEM.LNGLAT : COORDINATE_SYSTEM.CARTESIAN,
       bounds: [Infinity, -Infinity, Infinity, -Infinity],
       pickable: (deckId, info) => picks.set(deckId, info),
-      highlight: socketRel !== null ? (layerId, f) => {
+      highlight: linked ? (layerId, f) => {
         if (!highlights.has(layerId)) highlights.set(layerId, []);
         highlights.get(layerId).push(f);
       } : null,
@@ -434,7 +442,7 @@ export async function render(container, scene, options = {}) {
     // A camera kept by a reload from R (item 5): only from an older scene
     // serial of this page, in the same view CRS.
     let kept = null;
-    if (serial !== null) {
+    if (serial !== null && socketRel !== null) {
       const c = readCamera();
       if (c && Number.isInteger(c.serial) && c.serial < serial && c.type === view.type &&
           c.crs === JSON.stringify(view.crs === undefined ? null : view.crs)) {
@@ -542,7 +550,7 @@ export async function render(container, scene, options = {}) {
           container.dataset.aobStatus = "ready";
           if (options.onReady) options.onReady(handle);
           // The socket opens once the scene is drawn, so it never delays it.
-          if (socketRel !== null && !finalized) startLink();
+          if (linked && !finalized) startLink();
         }
       },
     };
@@ -802,7 +810,8 @@ export async function render(container, scene, options = {}) {
     };
     function startLink() {
       if (link) return;
-      link = connectLink((onState) => socketChannel(socketUrl(socketRel, location.href), { onState }), {
+      const makeChannel = channelMaker || ((onState) => socketChannel(socketUrl(socketRel, location.href), { onState }));
+      link = connectLink(makeChannel, {
         serial,
         renderer: VERSION,
         specs: SPECS,

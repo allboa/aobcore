@@ -57,8 +57,25 @@ scene_tag <- function(scene, blobs = attr(scene, "blobs"), width = "100%", heigh
   )
 }
 
-## The bundled renderer as an htmltools dependency: hosts that resolve
-## dependencies include it once per document, by name.
+#' The bundled renderer as an HTML dependency
+#'
+#' The renderer that [scene_tag()] attaches, as an
+#' [htmltools::htmlDependency()] named `"aob-renderer"`, for a host that
+#' draws scenes itself: a Shiny output binding, say, which calls the
+#' renderer's `aob.render(element, scene, options)` (allboa/design decision
+#' 0009). Hosts that resolve dependencies include it once per page, by name.
+#'
+#' `aob.render()` options a host may pass: `blobs` (blob keys to Arrow IPC
+#' bytes or base64 text), and `channel`, a function of `onState` returning
+#' an object with `send(message)`, `onMessage(f)` and `close()`, over which
+#' the page speaks protocol 1 (decision 0007) instead of opening a
+#' websocket; `serial` is then the scene serial its messages carry (0 when
+#' not given).
+#'
+#' @return An `html_dependency` object.
+#' @export
+#' @examples
+#' renderer_dependency()$name
 renderer_dependency <- function() {
   htmltools::htmlDependency(
     name = "aob-renderer", version = renderer_version(),

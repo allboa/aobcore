@@ -69,3 +69,9 @@ test_that("scene_tag() saves to a page with the renderer beside it", {
   expect_identical(lengths(regmatches(page, gregexpr("aob-renderer.min.js", page, fixed = TRUE))), 1L)
   expect_length(list.files(d, "aob-renderer.min.js", recursive = TRUE), 1L)
 })
+
+test_that("renderer_dependency() is the renderer scene_tag() attaches", {
+  d <- renderer_dependency()
+  expect_s3_class(d, "html_dependency")
+  expect_identical(d, htmltools::findDependencies(scene_tag(probe_scene()))[[1]])
+})
