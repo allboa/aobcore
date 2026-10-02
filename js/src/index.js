@@ -461,7 +461,9 @@ export async function render(container, scene, options = {}) {
     }
 
     // Keep an orthographic camera within `limits`: zooming out stops when
-    // they fill the canvas, and panning stops at their edges.
+    // they fill the canvas, and panning stops at their edges. deck's
+    // controller reads zoomX and zoomY before zoom, so those follow zoom
+    // when present, and the target keeps its length (deck compares it).
     function clampView(vs) {
       const w = canvasHost.clientWidth || 800;
       const h = canvasHost.clientHeight || 600;
@@ -471,8 +473,11 @@ export async function render(container, scene, options = {}) {
       const u = Math.pow(2, -zoom);
       const axis = (t, lo, hi, half) => (hi - lo <= 2 * half ? (lo + hi) / 2 : Math.min(Math.max(t, lo + half), hi - half));
       const t = vs.target || [0, 0, 0];
-      const target = [axis(t[0], limits[0], limits[1], (w / 2) * u), axis(t[1], limits[2], limits[3], (h / 2) * u), t[2] || 0];
-      return { ...vs, zoom, target, minZoom };
+      const target = [axis(t[0], limits[0], limits[1], (w / 2) * u), axis(t[1], limits[2], limits[3], (h / 2) * u)];
+      if (t.length !== 2) target.push(t[2] || 0);
+      const out = { ...vs, zoom, target, minZoom };
+      if ("zoomX" in vs) Object.assign(out, { zoomX: zoom, zoomY: zoom, minZoomX: minZoom, minZoomY: minZoom });
+      return out;
     }
 
     // The part of the view CRS on screen and the size of one device pixel
@@ -513,7 +518,7 @@ export async function render(container, scene, options = {}) {
       views: deckView,
       initialViewState,
       layers: [],
-      onViewStateChange: ({ viewState: vs }) => setView(vs),
+      onViewStateChange: ({ viewState: vs, interactionState }) => setView(vs, interactionState),
       onHover: (info, event) => {
         const c = info.coordinate;
         readout.textContent = c ? `x ${fmt(c[0], span)}   y ${fmt(c[1], span)}` : "";
@@ -540,9 +545,14 @@ export async function render(container, scene, options = {}) {
       },
     };
     // Every camera change goes through here, so view.bounds hold for
-    // interaction, resize and handle.setView() alike.
-    function setView(vs) {
-      viewState = limits ? clampView(vs) : vs;
+    // interaction, resize and handle.setView() alike. The one exception is
+    // a frame of one of deck's own transitions (a double click or a key
+    // zooms over 300 ms): its end was clamped when it started, and deck
+    // carries on only while it is handed its own frames back unchanged; a
+    // frame it does not recognise ends the transition where it is (#28).
+    function setView(vs, interaction) {
+      const frame = !!(interaction && interaction.inTransition && !vs.transitionDuration);
+      viewState = limits && !frame ? clampView(vs) : vs;
       if (limits && deck) deck.setProps({ viewState });
       update();
       if (link) link.viewChanged();
@@ -596,10 +606,16 @@ export async function render(container, scene, options = {}) {
     // that never moves more than `slop` pixels, of any duration. A drag
     // moves further, so it pans and never selects. The pick runs once,
     // after the release, at the pressed point. Like deck's click, it waits
-    // for the double-click interval, and a second press there (a double
-    // click, which zooms) cancels it.
+    // for the double-click interval, and a double click (which zooms)
+    // cancels it. Whether two clicks are a double click is decided at the
+    // second release by deck's own rules (#29): both presses shorter than
+    // `tapMs`, released within `dblMs` of each other, `near` pixels apart.
+    // Two clicks that are not a double click both select, and a third
+    // click after a double click is a first click again, as it is to deck.
     const slop = 9; // px, deck's tap threshold
-    const dblMs = 300; // deck's double-tap interval
+    const dblMs = 300; // deck's double-tap interval, release to release
+    const tapMs = 250; // deck's longest tap
+    const near = 10; // px, deck's double-tap distance
     let press = null;
     let pendingSelect = null;
     let lastUp = null;
@@ -610,7 +626,6 @@ export async function render(container, scene, options = {}) {
       press = null;
     };
     const selectAt = (cx, cy, srcEvent) => {
-      pendingSelect = null;
       if (finalized) return;
       const r = (deck.getCanvas() || canvasHost).getBoundingClientRect();
       const x = cx - r.left;
@@ -651,10 +666,28 @@ export async function render(container, scene, options = {}) {
       if (!press || e.pointerId !== press.id) return;
       const p = press;
       offPress();
-      if (p.moved || Math.hypot(e.clientX - p.x, e.clientY - p.y) >= slop) return;
-      lastUp = { t: performance.now(), x: p.x, y: p.y };
-      if (p.second) return;
-      pendingSelect = setTimeout(() => selectAt(p.x, p.y, e), dblMs);
+      if (p.moved || Math.hypot(e.clientX - p.x, e.clientY - p.y) >= slop) {
+        lastUp = null;
+        return;
+      }
+      const t = e.timeStamp;
+      const short = t - p.t < tapMs;
+      const prev = lastUp;
+      if (short && prev && prev.short && t - prev.t < dblMs &&
+          Math.hypot(e.clientX - prev.x, e.clientY - prev.y) < near) {
+        // A double click: deck zooms, and neither click selects.
+        clearTimeout(pendingSelect);
+        pendingSelect = null;
+        lastUp = null;
+        return;
+      }
+      lastUp = { t, x: e.clientX, y: e.clientY, short };
+      // An earlier click whose select is still waiting keeps it.
+      const id = setTimeout(() => {
+        if (pendingSelect === id) pendingSelect = null;
+        selectAt(p.x, p.y, e);
+      }, dblMs);
+      pendingSelect = id;
     }
     function onPressCancel(e) {
       if (press && e.pointerId === press.id) offPress();
@@ -669,24 +702,34 @@ export async function render(container, scene, options = {}) {
         return;
       }
       offPress();
-      // A press near the last click, soon after it, is a double click.
-      const second = !!lastUp && performance.now() - lastUp.t < dblMs &&
-        Math.hypot(e.clientX - lastUp.x, e.clientY - lastUp.y) < slop + 1;
-      if (second && pendingSelect) {
-        clearTimeout(pendingSelect);
-        pendingSelect = null;
-      }
-      lastUp = null;
-      press = { id: e.pointerId, x: e.clientX, y: e.clientY, moved: false, second };
+      press = { id: e.pointerId, x: e.clientX, y: e.clientY, t: e.timeStamp, moved: false };
       window.addEventListener("pointermove", onPressMove, true);
       window.addEventListener("pointerup", onPressUp, true);
       window.addEventListener("pointercancel", onPressCancel, true);
     };
     const onDownBubble = () => {
-      if (deck.props._pickable === false) deck.setProps({ _pickable: true });
+      // Also run from a timer, which can come after finalize() (#29).
+      if (!finalized && deck.props._pickable === false) deck.setProps({ _pickable: true });
     };
     canvasHost.addEventListener("pointerdown", onDownCapture, true);
     canvasHost.addEventListener("pointerdown", onDownBubble);
+    // Leaving the canvas ends the hover (#45). deck calls onHover with
+    // nothing, but picks no layers for a point outside every viewport, so
+    // an autoHighlight outline would stay on the last feature hovered. Clear
+    // it as deck's own hover pick does, and forget that feature, so the
+    // next hover over it highlights it again.
+    const leaveCanvas = deck.getCanvas() || canvasHost;
+    const onLeave = () => {
+      const last = deck.deckPicker && deck.deckPicker.lastPickedInfo;
+      if (finalized || !last || last.layerId === null) return;
+      let layer = deck.layerManager.getLayers().find((l) => l.props.id === last.layerId);
+      while (layer && layer.parent) layer = layer.parent;
+      if (layer) layer.updateAutoHighlight({ picked: false, color: null, index: -1, layer, object: null });
+      last.layerId = null;
+      last.index = -1;
+      last.info = null;
+    };
+    leaveCanvas.addEventListener("pointerleave", onLeave);
     // The view's extent and pixel size change with the element's size, so
     // tiled rasters choose their level and tiles again on resize.
     const onResize = () => {
@@ -762,6 +805,7 @@ export async function render(container, scene, options = {}) {
       clearTimeout(pendingSelect);
       canvasHost.removeEventListener("pointerdown", onDownCapture, true);
       canvasHost.removeEventListener("pointerdown", onDownBubble);
+      leaveCanvas.removeEventListener("pointerleave", onLeave);
       if (observer) observer.disconnect();
       else window.removeEventListener("resize", onResize);
       popup.hide();

@@ -88,7 +88,7 @@ vector_ipc <- function(x) {
     stop("Geometry column \"", geom$column, "\" does not have interleaved coordinates; ",
          "convert it with vector_stream().", call. = FALSE)
   }
-  ipc_bytes(stream)
+  ipc_bytes(undictionary(stream))
 }
 
 ## ---- internals -------------------------------------------------------------
@@ -99,6 +99,24 @@ native_encodings <- c(
 )
 
 crs_pattern <- "^[A-Za-z][A-Za-z0-9_]*:[A-Za-z0-9_.-]+$"
+
+## The IPC writer has no dictionary types, and a factor column becomes one.
+## Factors are written as character: each row keeps its label, and a
+## legend that lists the levels in their order is built from the levels,
+## not from the data (#25).
+unfactor <- function(df) {
+  fac <- vapply(df, is.factor, TRUE)
+  df[fac] <- lapply(df[fac], as.character)
+  df
+}
+
+## A stream with a dictionary-encoded column is read into R (where the
+## column is a factor) and written back with that column as character.
+undictionary <- function(stream) {
+  dict <- vapply(stream$get_schema()$children, function(ch) !is.null(ch$dictionary), TRUE)
+  if (!any(dict)) return(stream)
+  nanoarrow::as_nanoarrow_array_stream(unfactor(stream_data_frame(stream)))
+}
 
 ipc_bytes <- function(stream) {
   con <- rawConnection(raw(), open = "wb")
@@ -169,7 +187,7 @@ native_stream <- function(x, crs, geometry = NULL, check_crs = TRUE, type = NULL
   if (is.null(attrs)) {
     out <- data.frame(row.names = seq_along(native))
   } else {
-    out <- attrs
+    out <- unfactor(attrs)
     rownames(out) <- NULL
   }
   out[[col]] <- native

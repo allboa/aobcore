@@ -106,6 +106,35 @@ test_that("vector_ipc() writes IPC bytes that read back as native GeoArrow", {
                    "POLYGON ((0 0, 10 0, 0 10, 0 0))")
 })
 
+test_that("factor columns are written as character (#25)", {
+  df <- data.frame(zone = factor(c("b", "a", NA, "b"), levels = c("b", "a", "c")), n = 1:4)
+  df$geometry <- wk::wkt(sprintf("POINT (%d 0)", 1:4), crs = "EPSG:3031")
+  check <- function(bytes) {
+    back <- nanoarrow::read_nanoarrow(bytes)
+    sch <- back$get_schema()
+    expect_identical(sch$children$zone$format, "u")
+    expect_null(sch$children$zone$dictionary)
+    expect_identical(geometry_info(sch)$ext, "geoarrow.point")
+    out <- as.data.frame(back)
+    expect_identical(out$zone, c("b", "a", NA, "b"))
+    expect_identical(out$n, 1:4)
+  }
+  # From a data frame, through vector_stream() and scene_add_vector().
+  check(vector_ipc(vector_stream(df, "EPSG:3031")))
+  s <- scene_add_vector(scene(), "pts", df, popup = c("zone", "n"))
+  check(scene_blobs(s)[[1]])
+  # A native stream that already has a dictionary column.
+  g <- vector_stream(df["geometry"], "EPSG:3031")
+  native <- as.data.frame(g)
+  native$zone <- df$zone
+  native$n <- df$n
+  stream <- nanoarrow::as_nanoarrow_array_stream(native)
+  expect_false(is.null(stream$get_schema()$children$zone$dictionary))
+  check(vector_ipc(stream))
+  # The caller's data frame keeps its factor and its level order.
+  expect_identical(levels(df$zone), c("b", "a", "c"))
+})
+
 test_that("vector_ipc() refuses WKB, separated coordinates and missing geometry", {
   df <- data.frame(id = 1)
   df$geometry <- geoarrow::as_geoarrow_vctr(wk::wkt("POINT (1 2)"), schema = geoarrow::geoarrow_wkb())
