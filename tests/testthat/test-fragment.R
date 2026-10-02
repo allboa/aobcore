@@ -14,6 +14,8 @@ test_that("scene_tag() embeds the scene and blobs and attaches the renderer once
     open <- sprintf("<script type=\"application/octet-stream\" data-aob-blob=\"%s\" data-aob-scene=\"s1\">", k)
     expect_true(grepl(open, html, fixed = TRUE))
   }
+  # It ends with the script that draws a fragment inserted late.
+  expect_true(endsWith(html, "<script>if (window.aob && window.aob.boot) window.aob.boot();</script>"))
   # No renderer inlined, no socket, no blob base.
   expect_false(grepl("aob-renderer", html, fixed = TRUE))
   expect_false(grepl("data-aob-socket|data-aob-blob-base", html))

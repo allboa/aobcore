@@ -1682,7 +1682,35 @@ ${keys === null ? "" : `<script type="application/json" data-aob-blob-keys data-
     }));
     assert.deepEqual(after, { root: undefined, a: "dark", label: "Theme: dark" });
     assert.deepEqual(await bg(), ["#0f171c", "#0f171c", "#0f171c"]);
-    console.log("ok   fragments in one document draw, each with its own theme");
+    // The host's own colours are left alone in a dark browser: no
+    // color-scheme on its root, its text and inputs as the browser draws them.
+    const host = await page.evaluate(() => {
+      const input = document.createElement("input");
+      document.body.append(input);
+      return { root: getComputedStyle(document.documentElement).colorScheme,
+               text: getComputedStyle(document.querySelector("p")).color,
+               input: getComputedStyle(input).backgroundColor,
+               fragment: getComputedStyle(document.querySelector(".aob-fragment")).colorScheme };
+    });
+    assert.deepEqual(host, { root: "normal", text: "rgb(0, 0, 0)", input: "rgb(255, 255, 255)", fragment: "dark" });
+    // A fragment inserted later (as Shiny's renderUI() inserts one) draws
+    // through its trailing boot script.
+    await page.evaluate((sc) => {
+      const d = document.createElement("div");
+      d.className = "aob-fragment";
+      d.dataset.aobScene = "late";
+      d.style.height = "300px";
+      const j = document.createElement("script");
+      j.type = "application/json";
+      j.id = "late";
+      j.textContent = JSON.stringify(sc);
+      const b = document.createElement("script");
+      b.textContent = "if (window.aob && window.aob.boot) window.aob.boot();";
+      document.body.append(d, j, b);
+    }, scene);
+    await page.waitForFunction(() => document.querySelector('.aob-fragment[data-aob-scene="late"]').dataset.aobStatus === "ready",
+      null, { timeout: 60000 });
+    console.log("ok   fragments in one document draw, each with its own theme, and the host's colours are its own");
   } finally {
     await browser9.close();
   }
