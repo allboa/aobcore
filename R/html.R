@@ -93,20 +93,6 @@ scene_page <- function(scene, blobs, title, theme, mode = c("inline", "linked"),
   mode <- match.arg(mode)
   sid <- "aob-scene"
   linked <- mode == "linked"
-  blob_tags <- if (linked) {
-    keys <- as.list(names(blobs) %||% character())
-    htmltools::tags$script(
-      type = "application/json", `data-aob-blob-keys` = NA, `data-aob-scene` = sid,
-      htmltools::HTML(gsub("<", "\\u003c", json_value(keys), fixed = TRUE))
-    )
-  } else {
-    lapply(names(blobs), function(k) {
-      htmltools::tags$script(
-        type = "application/octet-stream", `data-aob-blob` = k, `data-aob-scene` = sid,
-        htmltools::HTML(b64_encode(blobs[[k]]))
-      )
-    })
-  }
   renderer <- if (linked) {
     htmltools::tags$script(src = "aob-renderer.min.js")
   } else {
@@ -127,16 +113,42 @@ scene_page <- function(scene, blobs, title, theme, mode = c("inline", "linked"),
       htmltools::tags$style(htmltools::HTML(page_css))
     ),
     htmltools::tags$body(
-      htmltools::tags$div(class = "aob-page", `data-aob-scene` = sid,
-                          `data-aob-blob-base` = if (linked) "blob/",
-                          `data-aob-scene-serial` = if (linked && !is.null(serial)) format(serial),
-                          `data-aob-socket` = if (linked && isTRUE(socket)) "ws"),
-      htmltools::tags$script(type = "application/json", id = sid, htmltools::HTML(page_json(scene))),
-      blob_tags,
+      scene_element(scene, blobs, sid, linked = linked, serial = serial, socket = socket,
+                    class = "aob-page"),
       renderer
     )
   )
   enc2utf8(as.character(htmltools::doRenderTags(page)))
+}
+
+## The scene's element, its JSON script and its blob scripts (or, linked,
+## the list of blob keys), tied together by `sid`: the part of a page that
+## draws one scene, shared by scene_page() and scene_tag(). `...` are more
+## attributes of the element (class, style, data-theme).
+scene_element <- function(scene, blobs, sid, linked = FALSE, serial = NULL, socket = FALSE,
+                          ...) {
+  blob_tags <- if (linked) {
+    keys <- as.list(names(blobs) %||% character())
+    htmltools::tags$script(
+      type = "application/json", `data-aob-blob-keys` = NA, `data-aob-scene` = sid,
+      htmltools::HTML(gsub("<", "\\u003c", json_value(keys), fixed = TRUE))
+    )
+  } else {
+    lapply(names(blobs), function(k) {
+      htmltools::tags$script(
+        type = "application/octet-stream", `data-aob-blob` = k, `data-aob-scene` = sid,
+        htmltools::HTML(b64_encode(blobs[[k]]))
+      )
+    })
+  }
+  htmltools::tagList(
+    htmltools::tags$div(..., `data-aob-scene` = sid,
+                        `data-aob-blob-base` = if (linked) "blob/",
+                        `data-aob-scene-serial` = if (linked && !is.null(serial)) format(serial),
+                        `data-aob-socket` = if (linked && isTRUE(socket)) "ws"),
+    htmltools::tags$script(type = "application/json", id = sid, htmltools::HTML(page_json(scene))),
+    blob_tags
+  )
 }
 
 ## A page written to disk cannot range-request a local file, so a scene
@@ -167,7 +179,11 @@ page_json <- function(scene) {
   gsub("<", "\\u003c", scene_json(scene), fixed = TRUE)
 }
 
+## A whole page is the renderer's own: its root takes the renderer's colour
+## scheme (--aob-scheme, light or dark with the theme). A fragment in a host
+## page leaves the host's root alone (decision 0009).
 page_css <- paste(
+  "html { color-scheme: var(--aob-scheme, light); }",
   "html, body { height: 100%; margin: 0; }",
   "body { background: var(--aob-bg, #eef2f4); }",
   ".aob-page { height: 100%; }",

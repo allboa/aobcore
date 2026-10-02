@@ -49,6 +49,8 @@
 //    toggles, clearing, a pan's one view, reload keeping the camera, the
 //    note and reconnecting, another origin refused, and a page without
 //    data-aob-socket opening no socket.
+// 9. Fragments (decision 0009): several scenes in one host document with
+//    one renderer, each fragment's theme its own.
 // Also in Node: the range reader keeps a whole-file (200) response, and the
 // tile cache evicts least recently used idle tiles.
 // Set CHROMIUM_PATH to pick a browser; SKIP_BROWSER=1 runs only part 1.
@@ -1641,5 +1643,73 @@ ${keys === null ? "" : `<script type="application/json" data-aob-blob-keys data-
   } finally {
     await browser8.close();
     server.close();
+  }
+}
+
+// ---- 9. fragments in a host document (decision 0009) --------------------------
+// Two scenes as aobcore scene_tag() writes them, in one document with one
+// copy of the renderer in the head: both draw, each fragment's data-theme
+// fixes its own colours whatever the browser prefers, a fragment without one
+// follows prefers-color-scheme, and the theme button changes its own
+// fragment and not the host's root element.
+{
+  const scene = { version: "0.4", view: { type: "projected", crs: "EPSG:3031", extent: [-1e6, 1e6, -1e6, 1e6] },
+                  data: {}, layers: [] };
+  const frag = (id, theme) => `<div class="aob-fragment" data-aob-scene="${id}"${theme ? ` data-theme="${theme}"` : ""} style="width:100%;height:360px"></div>
+<script type="application/json" id="${id}">${JSON.stringify(scene)}</script>`;
+  const browser9 = await chromium.launch({
+    executablePath: process.env.CHROMIUM_PATH || undefined,
+    args: ["--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--ignore-gpu-blocklist"],
+  });
+  try {
+    const page = await browser9.newPage({ viewport: { width: 900, height: 1200 }, colorScheme: "dark" });
+    await page.setContent(`<!DOCTYPE html><html><head><meta charset="utf-8"><script>${bundle}</script></head>
+<body><p>Text</p>${frag("a", "light")}<p>More text</p>${frag("b", "dark")}${frag("c", null)}</body></html>`);
+    await page.waitForFunction(() => [...document.querySelectorAll(".aob-fragment")].every((e) =>
+      e.dataset.aobStatus === "ready" || e.dataset.aobStatus === "error"), null, { timeout: 60000 });
+    const bg = () => page.evaluate(() => [...document.querySelectorAll(".aob-fragment")].map((e) =>
+      getComputedStyle(e).getPropertyValue("--aob-bg").trim()));
+    const r = await page.evaluate(() => [...document.querySelectorAll(".aob-fragment")].map((e) => e.dataset.aobStatus));
+    assert.deepEqual(r, ["ready", "ready", "ready"], "every fragment draws");
+    assert.deepEqual(await bg(), ["#eef2f4", "#0f171c", "#0f171c"], "light, dark, and auto in a dark browser");
+    await page.click('.aob-fragment[data-aob-scene="a"] .aob-theme');
+    const after = await page.evaluate(() => ({
+      root: document.documentElement.dataset.theme,
+      a: document.querySelector('.aob-fragment[data-aob-scene="a"]').dataset.theme,
+      label: document.querySelector('.aob-fragment[data-aob-scene="a"] .aob-theme').textContent,
+    }));
+    assert.deepEqual(after, { root: undefined, a: "dark", label: "Theme: dark" });
+    assert.deepEqual(await bg(), ["#0f171c", "#0f171c", "#0f171c"]);
+    // The host's own colours are left alone in a dark browser: no
+    // color-scheme on its root, its text and inputs as the browser draws them.
+    const host = await page.evaluate(() => {
+      const input = document.createElement("input");
+      document.body.append(input);
+      return { root: getComputedStyle(document.documentElement).colorScheme,
+               text: getComputedStyle(document.querySelector("p")).color,
+               input: getComputedStyle(input).backgroundColor,
+               fragment: getComputedStyle(document.querySelector(".aob-fragment")).colorScheme };
+    });
+    assert.deepEqual(host, { root: "normal", text: "rgb(0, 0, 0)", input: "rgb(255, 255, 255)", fragment: "dark" });
+    // A fragment inserted later (as Shiny's renderUI() inserts one) draws
+    // through its trailing boot script.
+    await page.evaluate((sc) => {
+      const d = document.createElement("div");
+      d.className = "aob-fragment";
+      d.dataset.aobScene = "late";
+      d.style.height = "300px";
+      const j = document.createElement("script");
+      j.type = "application/json";
+      j.id = "late";
+      j.textContent = JSON.stringify(sc);
+      const b = document.createElement("script");
+      b.textContent = "if (window.aob && window.aob.boot) window.aob.boot();";
+      document.body.append(d, j, b);
+    }, scene);
+    await page.waitForFunction(() => document.querySelector('.aob-fragment[data-aob-scene="late"]').dataset.aobStatus === "ready",
+      null, { timeout: 60000 });
+    console.log("ok   fragments in one document draw, each with its own theme, and the host's colours are its own");
+  } finally {
+    await browser9.close();
   }
 }

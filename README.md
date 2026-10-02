@@ -12,7 +12,7 @@ Early (phase 1), following [scene spec 0.1, 0.2 and 0.3](https://github.com/allb
 - `vector_stream(x, crs)` turns any wk-handleable input (sf, sfc, wk vectors, data frames with a geometry column, or a WKB Arrow stream) into a nanoarrow stream with a native, interleaved GeoArrow geometry column. The core does not reproject: coordinates must already be in the view CRS.
 - `gdal_vector_stream(dsn, crs, ...)` reads, clips, densifies and reprojects any GDAL vector source to native GeoArrow (gdalraster, in Suggests; decision 0002). It uses GDAL's Arrow driver when present (`gdal_has_arrow()`), otherwise converts in R.
 - `vector_ipc()` writes Arrow IPC bytes; `scene_add_data()`, `scene_add_layer()` and `scene_add_vector()` add data references and layers; `scene_blobs()` returns the bytes; `scene_json()` writes the scene document.
-- `write_scene_html(scene)` writes a self-contained page that draws the scene (the embed transport); `probe_scene()` is the polar probe conformance scene with its data.
+- `write_scene_html(scene)` writes a self-contained page that draws the scene (the embed transport); `probe_scene()` is the polar probe conformance scene with its data. `scene_tag(scene)` is the same scene as an htmltools fragment for a knitted document or a Shiny app, with the renderer attached once as an HTML dependency (design decision 0009).
 - Tiled COGs, R-planned (gate A, design decision 0003): `cog_info()` reads a COG's levels and tile byte ranges through GDAL, `cog_plan()` plans tiles and projected meshes for a view CRS, `scene_add_tiled_raster()` adds a scene spec 0.2 `tiled_raster` layer (0.3 for a colour image or JPEG tiles), and `view_cog()` does it all and writes the page in one call (gdalraster, in Suggests).
 
 ```r
