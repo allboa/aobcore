@@ -29,8 +29,8 @@ test_that("scene_tag() embeds the scene and blobs and attaches the renderer once
   # Two scenes in one document: the renderer once, two ids.
   both <- htmltools::renderTags(htmltools::tagList(scene_tag(p), scene_tag(p)))
   expect_length(both$dependencies, 1L)
-  ids <- regmatches(both$html, gregexpr("(?<=<div class=\"aob-fragment\" style=\"[^\"]{1,40}\" data-aob-scene=\")[^\"]+",
-                                        both$html, perl = TRUE))[[1]]
+  divs <- regmatches(both$html, gregexpr("<div class=\"aob-fragment\"[^>]*>", both$html))[[1]]
+  ids <- sub(".* data-aob-scene=\"([^\"]+)\".*", "\\1", divs)
   expect_length(ids, 2L)
   expect_false(ids[1] == ids[2])
 })
