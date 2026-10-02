@@ -26,7 +26,11 @@
 //    popup follows the pointer over a polygon, and a missing popup column
 //    is a layer error. A click still selects when its press is held 1.5 s
 //    or every pick takes 1.5 s, and a drag or a double click (which zooms)
-//    does not select. In Node, cell text and legend helpers.
+//    does not select. In Node, cell text and legend helpers. The same
+//    scene with view.bounds: leaving the canvas clears the hover highlight,
+//    a double click zooms in one level about the pointer, a slow double
+//    click is two clicks and the third click of a triple click selects, and
+//    a press just before finalize() leaves the finalized deck alone.
 // 7. Served pages (decision 0006) in the browser: a page whose element
 //    names a blob base fetches a blob it does not carry from the base plus
 //    encodeURIComponent(key) (a key with "/", "@" and "+" round-trips),
@@ -996,6 +1000,141 @@ let part6 = null; // the scene and blobs, again in part 8
     console.log("ok   0.5 hiding a layer hides its legend and popup");
   } finally {
     await browser4.close();
+  }
+}
+
+// ---- 6c. double-click zoom and hover in a view with bounds (#28, #45) ---------
+// The 0.5 scene again, now with view.bounds (as a CCAMLR areas scene has):
+// moving the pointer off the canvas clears the hover highlight (and a point
+// popup), and a double click zooms in one level about the pointer, which
+// stays over the same point.
+{
+  const { scene, blobs } = part6;
+  const bounded = { ...scene, view: { ...scene.view, bounds: [-4e6, 4e6, -4e6, 4e6] } };
+  const browser6 = await chromium.launch({
+    executablePath: process.env.CHROMIUM_PATH || undefined,
+    args: ["--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--ignore-gpu-blocklist"],
+  });
+  try {
+    const page = await browser6.newPage({ viewport: { width: 900, height: 700 } });
+    await page.setContent(`<!DOCTYPE html><html><head><meta charset="utf-8"></head><body style="margin:0;height:100vh">
+<div id="c" style="height:100%;width:100%"></div><script>${bundle}</script></body></html>`);
+    await page.evaluate(async ([sc, bl]) => {
+      window.h = await new Promise((resolve, reject) => {
+        aob.render(document.getElementById("c"), sc, { blobs: bl, onReady: resolve }).catch(reject);
+      });
+    }, [bounded, blobs]);
+    // The view CRS point under a page position, from deck's viewport.
+    const under = (x, y) => page.evaluate(([x, y]) => {
+      const r = window.h.deck.getCanvas().getBoundingClientRect();
+      return window.h.deck.getViewports()[0].unproject([x - r.left, y - r.top]);
+    }, [x, y]);
+    const screen = (x, y) => page.evaluate(([x, y]) => {
+      const r = window.h.deck.getCanvas().getBoundingClientRect();
+      const p = window.h.deck.getViewports()[0].project([x, y]);
+      return [r.left + p[0], r.top + p[1]];
+    }, [x, y]);
+    // Hover the zone (trigger point: a popup and the highlight), then leave
+    // the canvas for the side panel.
+    const highlighted = () => page.evaluate(() => {
+      const l = window.h.deck.layerManager.getLayers().find((l) => l.id.startsWith("zones") && l.props.autoHighlight);
+      const m = l && l.getModels()[0];
+      const c = m && m.shaderInputs.getUniformValues().picking;
+      return c ? !!c.isHighlightActive : null;
+    });
+    const [xz, yz] = await screen(-1.7e6, -1.7e6);
+    await page.waitForTimeout(350);
+    await page.mouse.move(xz, yz, { steps: 4 });
+    await page.waitForFunction(() => !document.querySelector(".aob-popup").hidden, null, { timeout: 5000 });
+    assert.equal(await highlighted(), true, "hovering the zone highlights it");
+    const panel = await page.evaluate(() => {
+      const r = document.querySelector(".aob-panel").getBoundingClientRect();
+      return [r.left + r.width / 2, r.bottom - 20];
+    });
+    await page.mouse.move(panel[0], panel[1]); // one jump: no move over the canvas between
+    await page.waitForFunction(() => document.querySelector(".aob-popup").hidden, null, { timeout: 5000 });
+    await page.waitForTimeout(300);
+    assert.equal(await highlighted(), false, "leaving the canvas clears the hover highlight");
+    console.log("ok   leaving the canvas clears the hover highlight and the point popup");
+
+    // Off the stations and the zone, within the bounds.
+    const [xd, yd] = await screen(1.5e6, -1e6);
+    const z0 = (await page.evaluate(() => window.h.view())).zoom;
+    const at0 = await under(xd, yd);
+    await page.mouse.move(xd, yd);
+    await page.waitForTimeout(350);
+    await page.mouse.dblclick(xd, yd);
+    await page.waitForFunction((z) => Math.abs(window.h.view().zoom - (z + 1)) < 1e-6, z0, { timeout: 5000 });
+    await page.waitForTimeout(500); // the transition is over: nothing moves on
+    const v1 = await page.evaluate(() => window.h.view());
+    assert.ok(Math.abs(v1.zoom - (z0 + 1)) < 1e-6, `a double click zooms in one level (${z0} to ${v1.zoom})`);
+    const deckZoom = await page.evaluate(() => window.h.deck.getViewports()[0].zoom);
+    assert.ok(Math.abs(deckZoom - (z0 + 1)) < 1e-6, `deck draws the new zoom (${deckZoom})`);
+    const at1 = await under(xd, yd);
+    const px = Math.pow(2, -v1.zoom); // view units per CSS pixel
+    assert.ok(Math.hypot(at1[0] - at0[0], at1[1] - at0[1]) < 2 * px,
+      `the point under the pointer stays (${at0} then ${at1})`);
+    assert.ok(await page.evaluate(() => document.querySelector(".aob-popup").hidden), "a double click does not select");
+    console.log("ok   view.bounds: a double click zooms in one level about the pointer");
+
+    // Double clicks are decided by deck's rules (#29): a slow double click
+    // (the second press 250 ms after the first release, held 120 ms) is two
+    // clicks, so it selects and does not zoom; the third click of a triple
+    // click selects. (Its zoom is deck's: the third press stops the zoom
+    // transition the double click started.)
+    const { pts } = part6;
+    const [xs, ys] = await screen(...pts[2]);
+    const popupRow = (r) => !document.querySelector(".aob-popup").hidden &&
+      document.querySelector(".aob-popup").dataset.aobRow === String(r);
+    await page.mouse.move(xs, ys);
+    await page.waitForTimeout(350);
+    await page.mouse.down();
+    await page.mouse.up();
+    await page.waitForTimeout(250);
+    await page.mouse.down();
+    await page.waitForTimeout(120);
+    await page.mouse.up();
+    await page.waitForFunction(popupRow, 2, { timeout: 5000 });
+    await page.waitForTimeout(400);
+    const v2 = await page.evaluate(() => window.h.view());
+    assert.equal(v2.zoom, v1.zoom, "a slow double click does not zoom");
+    await page.keyboard.press("Escape");
+    await page.waitForTimeout(350);
+    const [xt, yt] = await screen(...pts[2]);
+    await page.mouse.click(xt, yt, { clickCount: 3 });
+    await page.waitForFunction(popupRow, 2, { timeout: 5000 });
+    await page.keyboard.press("Escape");
+    console.log("ok   a slow double click selects and does not zoom; a triple click selects");
+
+    // A pointer press just before teardown: its delayed restore does not
+    // touch the finalized deck (#29).
+    const torn = await page.evaluate(async () => {
+      const errs = [];
+      const onErr = (e) => errs.push(String(e.message || e));
+      window.addEventListener("error", onErr);
+      const canvas = window.h.deck.getCanvas();
+      const r = canvas.getBoundingClientRect();
+      const at = { clientX: r.left + 20, clientY: r.top + 20, isPrimary: true, button: 0, pointerId: 7, bubbles: true };
+      const setProps = window.h.deck.setProps.bind(window.h.deck);
+      let after = 0;
+      let done = false;
+      window.h.deck.setProps = (p) => { if (done) after++; return setProps(p); };
+      // A press that never bubbles back to the canvas's parent, so only the
+      // timer restores picking.
+      const stop = (e) => e.stopPropagation();
+      canvas.addEventListener("pointerdown", stop);
+      canvas.dispatchEvent(new PointerEvent("pointerdown", at));
+      canvas.removeEventListener("pointerdown", stop);
+      window.h.finalize();
+      done = true;
+      await new Promise((r) => setTimeout(r, 50));
+      window.removeEventListener("error", onErr);
+      return { after, errs };
+    });
+    assert.deepEqual(torn, { after: 0, errs: [] }, "no setProps after finalize");
+    console.log("ok   a press just before finalize() does not touch the finalized deck");
+  } finally {
+    await browser6.close();
   }
 }
 

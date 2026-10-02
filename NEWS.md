@@ -1,5 +1,29 @@
 # aobcore 0.0.0.9000
 
+* Renderer: a double click zooms in one level about the pointer in a
+  scene with `view.bounds` (#28). It did nothing: the bounds clamp handed
+  each frame of deck's zoom transition back with a changed target, which
+  ends the transition. A frame of a transition now passes through as it
+  is (its end is clamped when it starts), and the clamp keeps the target's
+  length and deck's `zoomX`/`zoomY`.
+
+* Renderer: moving the pointer off the map clears the amber hover outline
+  (#45). deck picks no layers for a point outside its viewport, so on
+  `pointerleave` the outline stayed on the last feature hovered.
+
+* Renderer: two clicks are a double click (zoom, no select) by deck's own
+  rules, decided at the second release: both presses under 250 ms and
+  released within 300 ms (#29 item 1). A slow double click selects instead
+  of doing nothing, and the third click of a triple click selects. A press
+  just before `finalize()` no longer calls `setProps()` on the finalized
+  deck (#29 item 5).
+
+* Factor columns are written as character in vector blobs (#25 item 3):
+  the IPC writer has no dictionary types and failed with "dictionary types
+  unsupported". This covers data frames given to `vector_stream()` or
+  `scene_add_vector()` and streams with a dictionary column given to
+  `vector_ipc()`. The caller's data keep their factors and level order.
+
 * `vector_densify()` densifies lines and polygon edges of any wk-handleable
   input, linearly in its own coordinates, with no GDAL: the wk densify that
   allboa/design decision 0004 names as the default for in-memory data.
