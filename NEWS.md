@@ -1,5 +1,18 @@
 # aobcore 0.0.0.9000
 
+* `scene_tag()` returns a scene as an htmltools fragment (a sized `<div>`,
+  the scene JSON and its blobs embedded as `write_scene_html()` embeds
+  them) with the renderer attached as an `htmlDependency()` named
+  `"aob-renderer"`, so a knitted document, a Shiny app or
+  `htmltools::save_html()` carries the renderer once however many scenes
+  it shows (allboa/design decision 0009). `write_scene_html()` and served
+  pages are byte-for-byte as before.
+
+* Renderer: an element with class `aob-fragment` takes its theme from its
+  own `data-theme` (`"light"` or `"dark"`), and its theme button sets the
+  fragment's theme rather than the host document's root element. Whole
+  pages are unchanged.
+
 * `serve_scene()` handles have `running()` (`TRUE` while the server runs,
   `FALSE` after `stop()`) and `status()`: `running`, `socket`, `serial`,
   `connections` and `received` (counts of accepted `hello`, `select` and

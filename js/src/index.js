@@ -139,9 +139,11 @@ function checkScene(scene) {
 }
 
 // Theme: follows prefers-color-scheme unless the root element carries
-// data-theme="light" or "dark". The button cycles auto, light, dark.
-function themeButton(onChange) {
-  const root = document.documentElement;
+// data-theme="light" or "dark". The button cycles auto, light, dark. In a
+// fragment (an element with class aob-fragment, decision 0009) the button
+// sets data-theme on the fragment, not on the host document's root.
+function themeButton(container, onChange) {
+  const root = container.classList.contains("aob-fragment") ? container : document.documentElement;
   const order = ["auto", "light", "dark"];
   const b = el("button", "aob-theme", "");
   b.type = "button";
@@ -381,7 +383,7 @@ export async function render(container, scene, options = {}) {
       legends.setAttribute("role", "group");
       legends.setAttribute("aria-label", "Legends");
     }
-    panel.append(list, legends, themeButton(() => update()));
+    panel.append(list, legends, themeButton(container, () => update()));
 
     // 0.5 popups. "point" shows while the pointer is over a feature; a
     // pointer that cannot hover (touch) makes it act as select. Decided per
