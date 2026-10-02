@@ -377,6 +377,15 @@ test_that("a selection arrives as 1-based Arrow rows with its attributes", {
   sel <- srv$selection()
   expect_identical(sel$row, 17L)
   expect_identical(attr(sel, "connection"), 2L)
+  ## status() counts the accepted messages (not the stale select), as
+  ## wait() compares, without running the loop.
+  st <- srv$status()
+  expect_identical(st[c("running", "socket", "serial", "connections")],
+                   list(running = TRUE, socket = TRUE, serial = 1L, connections = 2L))
+  expect_identical(names(st$received), c("hello", "select", "view"))
+  expect_identical(st$received[["hello"]], 2)
+  expect_identical(st$received[["select"]], 3)
+  expect_identical(st$received[["view"]], 0)
 })
 
 test_that("bad fields drop the message with one warning per page and type", {
@@ -464,6 +473,7 @@ test_that("replacing the scene gives a new serial, clears the selection and relo
   sel <- srv$selection()
   expect_identical(nrow(sel), 0L)
   expect_identical(attr(sel, "scene"), 2L)
+  expect_identical(srv$status()$serial, 2L)
   page <- rawToChar(http_req(srv$port, paste0("/", srv$token, "/"))$body)
   expect_match(page, "data-aob-scene-serial=\"2\"", fixed = TRUE)
   ## Messages for the old serial are dropped without a warning, and the
@@ -599,6 +609,8 @@ test_that("without jsonlite the page is served with no socket", {
   expect_error(srv$selection(), "needs the 'jsonlite' package")
   expect_error(srv$wait(), "needs the 'jsonlite' package")
   expect_identical(srv$connections(), 0L)
+  expect_false(srv$status()$socket)
+  expect_true(srv$running())
   ## `select` is still checked.
   expect_error(serve_test(probe_scene(), select = "nope"), "not a vector layer")
 })

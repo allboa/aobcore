@@ -59,8 +59,15 @@
 #'
 #' **Lifecycle.** Each call starts its own server, unless `server` names a
 #' running one: its scene is then replaced, with the same URL. The handle has
-#' `url`, `port`, `token` and `stop()`. Servers are kept in a registry, so
-#' losing the handle does not stop one; [scene_servers()] lists them,
+#' `url`, `port`, `token`, `stop()`, `running()` (`TRUE` while the server
+#' runs, `FALSE` once it has stopped) and `status()` (a list with
+#' `running`, `socket` (whether it takes a websocket), `serial` (the
+#' serial of the scene it serves), `connections` (pages connected) and
+#' `received` (counts of the `hello`, `select` and `view` messages
+#' accepted, a named numeric vector, which `wait()` compares against),
+#' read as they are, without running httpuv's event loop; it works on a
+#' stopped server too). Servers are kept in a registry, so losing the
+#' handle does not stop one; [scene_servers()] lists them,
 #' [stop_scene_servers()] stops them all, and all stop when the R session
 #' ends or aobcore is unloaded. `stop()` first closes every page's socket
 #' (code 1001), as does unloading aobcore; when the session ends the
@@ -99,9 +106,10 @@
 #'   a character vector of vector layer ids, or `character(0)` for none.
 #'   Checked, but has no effect without 'jsonlite'.
 #' @return A handle of class `"aob_server"`, invisibly: a list with `url`,
-#'   `port`, `token`, `stop()`, and the selection functions `selection()`,
-#'   `view_state()`, `wait()`, `on()` and `connections()` (see
-#'   [serve_scene_socket]).
+#'   `port`, `token`, `stop()`, `running()`, `status()` (see Lifecycle),
+#'   the selection functions `selection()`, `view_state()`, `wait()`,
+#'   `on()` and `connections()` (see [serve_scene_socket]), and `state`,
+#'   the server's internal environment, which is not part of the interface.
 #' @seealso [scene_servers()], [stop_scene_servers()], [serve_scene_socket].
 #' @export
 #' @examplesIf interactive() && requireNamespace("httpuv", quietly = TRUE)
@@ -184,6 +192,8 @@ serve_scene <- function(scene, blobs = attr(scene, "blobs"), files = attr(scene,
   state$running <- TRUE
   srv <- structure(list(url = state$url, port = state$port, token = token,
                         stop = function() server_stop(state),
+                        running = function() isTRUE(state$running),
+                        status = function() server_status(state),
                         selection = function() ws_selection(state),
                         view_state = function() ws_view_state(state),
                         wait = function(type = c("select", "view"), timeout = Inf)
@@ -607,6 +617,17 @@ server_stop <- function(state, close_sockets = TRUE) {
     delete_owned(owned)
   }
   invisible()
+}
+
+## The handle's status(): the server's state as it is, without running the
+## event loop, so it is safe anywhere (inside an on() callback, or after
+## stop()).
+server_status <- function(state) {
+  running <- isTRUE(state$running)
+  socket <- isTRUE(state$socket)
+  list(running = running, socket = socket, serial = state$serial,
+       connections = if (running && socket) length(state$conns) else 0L,
+       received = state$received)
 }
 
 open_url <- function(url) {

@@ -550,6 +550,10 @@ export async function render(container, scene, options = {}) {
     // zooms over 300 ms): its end was clamped when it started, and deck
     // carries on only while it is handed its own frames back unchanged; a
     // frame it does not recognise ends the transition where it is (#28).
+    // So a zoom-out transition can briefly pass view.bounds: its frames
+    // between the start and the clamped end may show the camera beyond the
+    // padded bounds, and only the end state is clamped; clamping every
+    // frame would bring back #28.
     function setView(vs, interaction) {
       const frame = !!(interaction && interaction.inTransition && !vs.transitionDuration);
       viewState = limits && !frame ? clampView(vs) : vs;
@@ -558,6 +562,24 @@ export async function render(container, scene, options = {}) {
       if (link) link.viewChanged();
       return viewState;
     }
+    // handle.view(): the camera in the shape of the initial view state
+    // (target, zoom, minZoom, maxZoom, or longitude, latitude, zoom), not
+    // deck's own, which after interaction carries its controller's fields
+    // and in a transition frame only what the transition interpolates (a
+    // 2-element target, no maxZoom).
+    const viewOut = () => {
+      const out = {};
+      for (const k of Object.keys(initialViewState)) {
+        const v = viewState[k];
+        out[k] = v === undefined ? initialViewState[k] : v;
+      }
+      if (Array.isArray(out.zoom)) out.zoom = out.zoom[0];
+      const t = viewState.target;
+      if (Array.isArray(t) && Array.isArray(initialViewState.target)) {
+        out.target = [t[0], t[1], t.length > 2 ? t[2] : initialViewState.target[2] || 0];
+      }
+      return limits ? clampView(out) : out;
+    };
     function update() {
       if (!deck || finalized) return;
       const layers = [];
@@ -693,6 +715,11 @@ export async function render(container, scene, options = {}) {
       if (press && e.pointerId === press.id) offPress();
     }
     const onDownCapture = (e) => {
+      // Only a press on deck's canvas is a click on the map: a press on
+      // anything else in the container (such as a deck widget, which deck
+      // puts beside the canvas) never selects the feature under it (#29).
+      const canvas = deck.getCanvas();
+      if (!canvas || e.target !== canvas) return;
       if (deck.props._pickable !== false) {
         deck.setProps({ _pickable: false });
         setTimeout(onDownBubble, 0); // in case the bubble listener is not reached
@@ -717,7 +744,10 @@ export async function render(container, scene, options = {}) {
     // nothing, but picks no layers for a point outside every viewport, so
     // an autoHighlight outline would stay on the last feature hovered. Clear
     // it as deck's own hover pick does, and forget that feature, so the
-    // next hover over it highlights it again.
+    // next hover over it highlights it again. The listener is on the
+    // canvas's container div (.aob-canvas), which the canvas fills:
+    // deck.getCanvas() is still null here, at construction (deck makes its
+    // canvas once its device is ready), so the fallback is what is taken.
     const leaveCanvas = deck.getCanvas() || canvasHost;
     const onLeave = () => {
       const last = deck.deckPicker && deck.deckPicker.lastPickedInfo;
@@ -822,14 +852,15 @@ export async function render(container, scene, options = {}) {
     };
     showNotes();
     // handle.finalize() stops the scene: resize tracking and the deck.
-    // handle.view() is the camera; handle.setView(vs) moves it, clamped to
-    // view.bounds as interaction is, and returns where it ended up.
+    // handle.view() is the camera (see viewOut()); handle.setView(vs) moves
+    // it, clamped to view.bounds as interaction is, and returns where it
+    // ended up, as handle.view() would.
     // handle.selected() is the feature whose popup is open, as
     // {layer, row}, or null; handle.closePopup() dismisses it.
     // handle.selection() is the selection mode's selection, [{layer, rows}]
     // (empty on a page with no link to R).
     const handle = { deck, scene, tables, decodeMs, bytes: total, warnings, errors, finalize,
-                     view: () => viewState, setView, selection: () => selection.items(),
+                     view: viewOut, setView: (vs) => { setView(vs); return viewOut(); }, selection: () => selection.items(),
                      selected: () => (popup.current ? { layer: popup.current.layer.id, row: popup.current.row } : null),
                      closePopup: () => popup.hide() };
     container.dataset.aobInfo = `${kib} KiB Arrow decoded in ${decodeMs.toFixed(1)} ms`;

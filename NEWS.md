@@ -1,5 +1,20 @@
 # aobcore 0.0.0.9000
 
+* `serve_scene()` handles have `running()` (`TRUE` while the server runs,
+  `FALSE` after `stop()`) and `status()`: `running`, `socket`, `serial`,
+  `connections` and `received` (counts of accepted `hello`, `select` and
+  `view` messages), read without running the event loop and on a stopped
+  server too. Callers such as aobview need not read `srv$state`.
+
+* Renderer: `handle.view()` has the shape of the initial view (`target`
+  of length 3, `zoom`, `minZoom`, `maxZoom`, clamped to `view.bounds`)
+  after a double-click zoom or any interaction, not deck's last transition
+  frame or controller state. `handle.setView()` returns the same shape.
+
+* Renderer: a press on anything in the map's container other than deck's
+  canvas (such as a future deck widget) never selects the feature under it
+  (#29 item 2).
+
 * Renderer: a double click zooms in one level about the pointer in a
   scene with `view.bounds` (#28). It did nothing: the bounds clamp handed
   each frame of deck's zoom transition back with a changed target, which
