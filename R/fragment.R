@@ -73,8 +73,39 @@ scene_tag <- function(scene, blobs = attr(scene, "blobs"), width = "100%", heigh
 
 fragment_boot_js <- "if (window.aob && window.aob.boot) window.aob.boot();"
 
-## The bundled renderer as an htmltools dependency: hosts that resolve
-## dependencies include it once per document, by name.
+#' The bundled renderer as an HTML dependency
+#'
+#' The renderer that [scene_tag()] attaches, as an
+#' [htmltools::htmlDependency()] named `"aob-renderer"`, for a host that
+#' draws scenes itself: a Shiny output binding, say, which calls the
+#' renderer's `aob.render(element, scene, options)` (allboa/design decision
+#' 0009). Hosts that resolve dependencies include it once per page, by name.
+#' `aob.boot()` draws every element with a `data-aob-scene` attribute not
+#' yet drawn, for scenes inserted after the page loaded.
+#'
+#' `aob.render()` options a host may pass:
+#' * `blobs`: blob keys to Arrow IPC bytes (`Uint8Array`) or base64 text.
+#' * `channel`: a function `channel(onState)` that returns an object with
+#'   `send(message)`, `onMessage(f)` (returning a function that removes `f`)
+#'   and `close()`. The page then speaks protocol 1 (decision 0007) over it
+#'   instead of opening a websocket. `send()` is always given a message
+#'   object (`hello`, `select` or `view`), never JSON text, and returns
+#'   `TRUE` when it was sent. The channel reports its state by calling
+#'   `onState("open")`, `onState("closed", info)` or `onState("refused",
+#'   info)`; `"open"` must never be reported synchronously, from inside
+#'   `channel()`. The page sends `hello` once the channel is open and waits
+#'   for the host's `hello` (with `select`, the selectable layer ids) before
+#'   it sends selections. A `reload` message is ignored over a channel.
+#' * `serial`: the scene serial its messages carry; 0 when not given.
+#'
+#' In a fragment or with a channel, Escape (which clears the selection)
+#' acts only on the view that has the keyboard focus, so one key press
+#' never clears every view on a page.
+#'
+#' @return An `html_dependency` object.
+#' @export
+#' @examples
+#' renderer_dependency()$name
 renderer_dependency <- function() {
   htmltools::htmlDependency(
     name = "aob-renderer", version = renderer_version(),
