@@ -1059,7 +1059,8 @@ let part6 = null; // the scene and blobs, again in part 8
 
     // Off the stations and the zone, within the bounds.
     const [xd, yd] = await screen(1.5e6, -1e6);
-    const z0 = (await page.evaluate(() => window.h.view())).zoom;
+    const vBefore = await page.evaluate(() => window.h.view());
+    const z0 = vBefore.zoom;
     const at0 = await under(xd, yd);
     await page.mouse.move(xd, yd);
     await page.waitForTimeout(350);
@@ -1075,6 +1076,14 @@ let part6 = null; // the scene and blobs, again in part 8
     assert.ok(Math.hypot(at1[0] - at0[0], at1[1] - at0[1]) < 2 * px,
       `the point under the pointer stays (${at0} then ${at1})`);
     assert.ok(await page.evaluate(() => document.querySelector(".aob-popup").hidden), "a double click does not select");
+    // After the transition handle.view() has the shape it had before: the
+    // clamped view with minZoom and maxZoom and a 3-element target, not
+    // deck's last frame.
+    assert.deepEqual(Object.keys(v1).sort(), Object.keys(vBefore).sort(),
+      `handle.view() keeps its fields after a transition (${Object.keys(v1)})`);
+    assert.equal(v1.target.length, vBefore.target.length, "the target keeps its length");
+    assert.ok(Number.isFinite(v1.minZoom) && Number.isFinite(v1.maxZoom), "minZoom and maxZoom are kept");
+    assert.equal(v1.maxZoom, vBefore.maxZoom, "maxZoom is unchanged");
     console.log("ok   view.bounds: a double click zooms in one level about the pointer");
 
     // Double clicks are decided by deck's rules (#29): a slow double click
@@ -1105,6 +1114,29 @@ let part6 = null; // the scene and blobs, again in part 8
     await page.waitForFunction(popupRow, 2, { timeout: 5000 });
     await page.keyboard.press("Escape");
     console.log("ok   a slow double click selects and does not zoom; a triple click selects");
+
+    // A press on something in the canvas's container other than the canvas
+    // (a stand-in for a deck widget) does not select what is under it (#29).
+    await page.waitForTimeout(350);
+    const [xw, yw] = await screen(...pts[2]);
+    await page.evaluate(([x, y]) => {
+      const host = document.querySelector(".aob-canvas");
+      const r = host.getBoundingClientRect();
+      const w = document.createElement("button");
+      w.id = "widget";
+      w.style.cssText = `position:absolute;z-index:5;left:${x - r.left - 15}px;top:${y - r.top - 15}px;width:30px;height:30px`;
+      host.append(w);
+    }, [xw, yw]);
+    assert.equal(await page.evaluate(([x, y]) => document.elementFromPoint(x, y).id, [xw, yw]), "widget");
+    await page.mouse.click(xw, yw);
+    await page.waitForTimeout(600);
+    assert.ok(await page.evaluate(() => document.querySelector(".aob-popup").hidden && window.h.selected() === null),
+      "a press on a widget over a feature does not select it");
+    await page.evaluate(() => document.getElementById("widget").remove());
+    await page.mouse.click(xw, yw);
+    await page.waitForFunction(popupRow, 2, { timeout: 5000 });
+    await page.keyboard.press("Escape");
+    console.log("ok   a press on a widget over the canvas does not select; on the canvas it does");
 
     // A pointer press just before teardown: its delayed restore does not
     // touch the finalized deck (#29).

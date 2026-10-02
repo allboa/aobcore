@@ -56,9 +56,10 @@ Checked, but has no effect without 'jsonlite'.}
 }
 \value{
 A handle of class \code{"aob_server"}, invisibly: a list with \code{url},
-\code{port}, \code{token}, \code{stop()}, and the selection functions \code{selection()},
-\code{view_state()}, \code{wait()}, \code{on()} and \code{connections()} (see
-\link{serve_scene_socket}).
+\code{port}, \code{token}, \code{stop()}, \code{running()}, \code{status()} (see Lifecycle),
+the selection functions \code{selection()}, \code{view_state()}, \code{wait()},
+\code{on()} and \code{connections()} (see \link{serve_scene_socket}), and \code{state},
+the server's internal environment, which is not part of the interface.
 }
 \description{
 Starts a small HTTP server on \verb{127.0.0.1} that answers the page for
@@ -119,8 +120,15 @@ session.
 
 \strong{Lifecycle.} Each call starts its own server, unless \code{server} names a
 running one: its scene is then replaced, with the same URL. The handle has
-\code{url}, \code{port}, \code{token} and \code{stop()}. Servers are kept in a registry, so
-losing the handle does not stop one; \code{\link[=scene_servers]{scene_servers()}} lists them,
+\code{url}, \code{port}, \code{token}, \code{stop()}, \code{running()} (\code{TRUE} while the server
+runs, \code{FALSE} once it has stopped) and \code{status()} (a list with
+\code{running}, \code{socket} (whether it takes a websocket), \code{serial} (the
+serial of the scene it serves), \code{connections} (pages connected) and
+\code{received} (counts of the \code{hello}, \code{select} and \code{view} messages
+accepted, a named numeric vector, which \code{wait()} compares against),
+read as they are, without running httpuv's event loop; it works on a
+stopped server too). Servers are kept in a registry, so losing the
+handle does not stop one; \code{\link[=scene_servers]{scene_servers()}} lists them,
 \code{\link[=stop_scene_servers]{stop_scene_servers()}} stops them all, and all stop when the R session
 ends or aobcore is unloaded. \code{stop()} first closes every page's socket
 (code 1001), as does unloading aobcore; when the session ends the
