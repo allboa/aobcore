@@ -689,7 +689,12 @@ export async function render(container, scene, options = {}) {
       if (selection.clear()) selectionChanged("clear");
     };
     container.addEventListener("keydown", onKey);
-    window.addEventListener("keydown", onKey);
+    // A whole page is one view, so Escape anywhere in it clears. In a host
+    // page (a fragment, or a host's channel) there may be several views:
+    // only the one with the keyboard focus (a click on its map focuses it)
+    // takes Escape.
+    const pageKeys = !container.classList.contains("aob-fragment") && channelMaker === null;
+    if (pageKeys) window.addEventListener("keydown", onKey);
     function onPressMove(e) {
       if (press && e.pointerId === press.id &&
           Math.hypot(e.clientX - press.x, e.clientY - press.y) >= slop) press.moved = true;
@@ -730,6 +735,10 @@ export async function render(container, scene, options = {}) {
       // puts beside the canvas) never selects the feature under it (#29).
       const canvas = deck.getCanvas();
       if (!canvas || e.target !== canvas) return;
+      // In a host page, a press on the map gives this view the keyboard
+      // focus (deck keeps the press from focusing anything), so Escape
+      // reaches this view and no other.
+      if (!pageKeys && !container.contains(document.activeElement)) map.focus({ preventScroll: true });
       if (deck.props._pickable !== false) {
         deck.setProps({ _pickable: false });
         setTimeout(onDownBubble, 0); // in case the bubble listener is not reached
@@ -824,7 +833,8 @@ export async function render(container, scene, options = {}) {
           selection.keepLayers(selectable);
           update();
         },
-        reload: reloadPage,
+        // A host's channel never reloads the host page (a whole Shiny app).
+        reload: channelMaker === null ? reloadPage : () => {},
         note: (text) => {
           linkNote.textContent = text || "";
           linkNote.hidden = !text;
@@ -839,7 +849,7 @@ export async function render(container, scene, options = {}) {
       finalized = true;
       if (link) link.close();
       container.removeEventListener("keydown", onKey);
-      window.removeEventListener("keydown", onKey);
+      if (pageKeys) window.removeEventListener("keydown", onKey);
       if (darkQuery) darkQuery.removeEventListener("change", onScheme);
       loading.abort();
       offPress();

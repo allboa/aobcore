@@ -67,6 +67,8 @@ export function linkToR(channel, page, opts = {}) {
   let sizeNote = null;
   const showNote = () => page.note([linkNote, sizeNote].filter(Boolean).join("; ") || null);
 
+  // The channel is always given a message object; a websocket channel
+  // writes it as JSON text (the size check above stringifies it itself).
   const send = (msg) => channel.send(msg);
   const next = (type, body) => ({ type, scene: page.serial, seq: ++seq, ...body });
 
@@ -87,7 +89,7 @@ export function linkToR(channel, page, opts = {}) {
       sizeNote = null;
       showNote();
     }
-    return send(text);
+    return send(msg);
   };
 
   const sendView = () => {

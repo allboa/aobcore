@@ -15,14 +15,29 @@ The renderer that \code{\link[=scene_tag]{scene_tag()}} attaches, as an
 draws scenes itself: a Shiny output binding, say, which calls the
 renderer's \code{aob.render(element, scene, options)} (allboa/design decision
 0009). Hosts that resolve dependencies include it once per page, by name.
+\code{aob.boot()} draws every element with a \code{data-aob-scene} attribute not
+yet drawn, for scenes inserted after the page loaded.
 }
 \details{
-\code{aob.render()} options a host may pass: \code{blobs} (blob keys to Arrow IPC
-bytes or base64 text), and \code{channel}, a function of \code{onState} returning
-an object with \code{send(message)}, \code{onMessage(f)} and \code{close()}, over which
-the page speaks protocol 1 (decision 0007) instead of opening a
-websocket; \code{serial} is then the scene serial its messages carry (0 when
-not given).
+\code{aob.render()} options a host may pass:
+\itemize{
+\item \code{blobs}: blob keys to Arrow IPC bytes (\code{Uint8Array}) or base64 text.
+\item \code{channel}: a function \code{channel(onState)} that returns an object with
+\code{send(message)}, \code{onMessage(f)} (returning a function that removes \code{f})
+and \code{close()}. The page then speaks protocol 1 (decision 0007) over it
+instead of opening a websocket. \code{send()} is always given a message
+object (\code{hello}, \code{select} or \code{view}), never JSON text, and returns
+\code{TRUE} when it was sent. The channel reports its state by calling
+\code{onState("open")}, \code{onState("closed", info)} or \code{onState("refused", info)}; \code{"open"} must never be reported synchronously, from inside
+\code{channel()}. The page sends \code{hello} once the channel is open and waits
+for the host's \code{hello} (with \code{select}, the selectable layer ids) before
+it sends selections. A \code{reload} message is ignored over a channel.
+\item \code{serial}: the scene serial its messages carry; 0 when not given.
+}
+
+In a fragment or with a channel, Escape (which clears the selection)
+acts only on the view that has the keyboard focus, so one key press
+never clears every view on a page.
 }
 \examples{
 renderer_dependency()$name

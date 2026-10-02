@@ -8,7 +8,12 @@
   host (`send()`, `onMessage()`, `close()`, and "open" reported through
   `onState`) instead of a websocket, and speaks protocol 1 over it; a
   Shiny output binding passes one that forwards the page's messages to
-  input values (decision 0009). Pages are unchanged.
+  input values (decision 0009). The channel is always given message
+  objects (the websocket channel writes them as JSON text), "open" is
+  never reported synchronously, and a `reload` over a channel is ignored
+  rather than reloading the host page. In a fragment or over a channel,
+  Escape clears only the view with the keyboard focus, so one key press
+  no longer clears every view on a page. Pages are unchanged.
 
 * `scene_tag()` returns a scene as an htmltools fragment (a sized `<div>`,
   the scene JSON and its blobs embedded as `write_scene_html()` embeds

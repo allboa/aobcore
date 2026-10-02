@@ -52,7 +52,9 @@
 // 9. Fragments (decision 0009): several scenes in one host document with
 //    one renderer, each fragment's theme its own.
 // 10. A host's channel (decision 0009): protocol 1 over a channel the page
-//    makes (as a Shiny binding does), with no socket.
+//    makes (as a Shiny binding does), with no socket; the channel gets
+//    message objects, and a reload over it is ignored.
+// 11. Escape in a host page with two views clears only the focused one.
 // Also in Node: the range reader keeps a whole-file (200) response, and the
 // tile cache evicts least recently used idle tiles.
 // Set CHROMIUM_PATH to pick a browser; SKIP_BROWSER=1 runs only part 1.
@@ -383,7 +385,8 @@ console.log("ok   level selection");
     const timers = fakeTimers();
     const sent = [];
     let listener = null;
-    const channel = { send: (m) => sent.push(JSON.parse(typeof m === "string" ? m : JSON.stringify(m))) || true,
+    // The channel is always handed message objects, never JSON text.
+    const channel = { send: (m) => { assert.equal(typeof m, "object", "channel.send() gets an object"); sent.push(JSON.parse(JSON.stringify(m))); return true; },
       onMessage: (f) => { listener = f; return () => { listener = null; }; }, close() {} };
     const sel = selectionState();
     const page = { serial: 3, renderer: "0.0.5", specs: ["0.1", "0.5"], selectable: null, reloaded: null, notes: [], states: [],
@@ -1746,14 +1749,15 @@ ${keys === null ? "" : `<script type="application/json" data-aob-blob-keys data-
         return {
           get connected() { return true; },
           send(m) {
-            const msg = typeof m === "string" ? JSON.parse(m) : m;
+            if (typeof m !== "object") throw new Error("channel.send() was given " + typeof m);
+            const msg = m;
             window.sent.push(msg);
             if (msg.type === "hello") {
               setTimeout(() => listeners.forEach((f) => f({ type: "hello", protocol: 1, select: ["stations"] })), 0);
             }
             return true;
           },
-          onMessage(f) { listeners.push(f); return () => {}; },
+          onMessage(f) { listeners.push(f); window.deliver = (m) => listeners.forEach((g) => g(m)); return () => {}; },
           close() {},
         };
       };
@@ -1779,7 +1783,82 @@ ${keys === null ? "" : `<script type="application/json" data-aob-blob-keys data-
     assert.deepEqual(sel.items, [{ layer: "stations", rows: [0] }]);
     assert.equal(await page.evaluate(() => window.socketsOpened), 0, "no socket");
     console.log("ok   a host's channel carries protocol 1 instead of a socket");
+    // A reload over a host channel does not reload the host page.
+    await page.evaluate(() => { window.notReloaded = true; });
+    await page.evaluate(() => window.deliver && window.deliver({ type: "reload", scene: 99 }));
+    await page.waitForTimeout(300);
+    assert.equal(await page.evaluate(() => window.notReloaded), true, "a reload over a channel is ignored");
+    console.log("ok   a reload over a host channel is ignored");
   } finally {
     await browser10.close();
+  }
+}
+
+// ---- 11. Escape in a host page with two views (decision 0009) ----------------
+// Two fragments with host channels, a feature selected in each: Escape
+// closes the focused view's popup, then clears only that view's selection
+// (the view clicked last, whose map the press focused).
+{
+  const sc = JSON.parse(JSON.stringify(part6.scene));
+  sc.layers = sc.layers.filter((L) => L.id !== "broken");
+  const browser11 = await chromium.launch({
+    executablePath: process.env.CHROMIUM_PATH || undefined,
+    args: ["--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--ignore-gpu-blocklist"],
+  });
+  try {
+    const page = await browser11.newPage({ viewport: { width: 900, height: 1000 } });
+    await page.setContent(`<!DOCTYPE html><html><head><meta charset="utf-8"></head><body style="margin:0">
+<div id="a" class="aob-fragment" style="height:480px;width:100%"></div>
+<div id="b" class="aob-fragment" style="height:480px;width:100%"></div><script>${bundle}</script></body></html>`);
+    await page.evaluate(async ([sc, blobs]) => {
+      const channel = (onState) => {
+        const listeners = [];
+        setTimeout(() => onState("open", {}), 0);
+        return {
+          send(m) {
+            if (m.type === "hello") setTimeout(() => listeners.forEach((f) => f({ type: "hello", protocol: 1, select: ["stations"] })), 0);
+            return true;
+          },
+          onMessage(f) { listeners.push(f); return () => {}; },
+          close() {},
+        };
+      };
+      for (const id of ["a", "b"]) {
+        const c = document.getElementById(id);
+        c.aob = await aob.render(c, sc, { blobs, channel });
+      }
+    }, [sc, part6.blobs]);
+    await page.waitForFunction(() => ["a", "b"].every((id) => document.getElementById(id).dataset.aobLink === "ready"),
+      null, { timeout: 60000 });
+    await page.waitForTimeout(400);
+    const screen = (id, [x, y]) => page.evaluate(([id, x, y]) => {
+      const c = document.getElementById(id);
+      const rc = c.querySelector(".aob-canvas").getBoundingClientRect();
+      const v = c.aob.view();
+      const k = Math.pow(2, v.zoom);
+      return [rc.left + rc.width / 2 + (x - v.target[0]) * k, rc.top + rc.height / 2 - (y - v.target[1]) * k];
+    }, [id, x, y]);
+    const sel = () => page.evaluate(() => ["a", "b"].map((id) => document.getElementById(id).dataset.aobSelection || ""));
+    const [ax, ay] = await screen("a", part6.pts[0]);
+    await page.mouse.click(ax, ay);
+    await page.waitForTimeout(400);
+    const [bx, by] = await screen("b", part6.pts[0]);
+    await page.mouse.click(bx, by);
+    await page.waitForFunction(() => ["a", "b"].every((id) => document.getElementById(id).dataset.aobSelection), null, { timeout: 5000 });
+    const before = await sel();
+    // The first Escape closes b's popup (which has the focus), as in a page.
+    await page.keyboard.press("Escape");
+    await page.waitForTimeout(300);
+    assert.deepEqual(await sel(), before, "the first Escape only closes the popup");
+    assert.equal(await page.evaluate(() => document.querySelector("#b .aob-popup").hidden), true);
+    assert.equal(await page.evaluate(() => document.getElementById("b").contains(document.activeElement)), true,
+      "the focus goes back to b's map");
+    await page.keyboard.press("Escape");
+    await page.waitForTimeout(300);
+    const after = await sel();
+    assert.deepEqual(after, [before[0], ""], `Escape clears only the focused view (${JSON.stringify(before)} -> ${JSON.stringify(after)})`);
+    console.log("ok   Escape in a host page clears only the view with the focus");
+  } finally {
+    await browser11.close();
   }
 }
