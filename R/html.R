@@ -179,7 +179,11 @@ page_json <- function(scene) {
   gsub("<", "\\u003c", scene_json(scene), fixed = TRUE)
 }
 
+## A whole page is the renderer's own: its root takes the renderer's colour
+## scheme (--aob-scheme, light or dark with the theme). A fragment in a host
+## page leaves the host's root alone (decision 0009).
 page_css <- paste(
+  "html { color-scheme: var(--aob-scheme, light); }",
   "html, body { height: 100%; margin: 0; }",
   "body { background: var(--aob-bg, #eef2f4); }",
   ".aob-page { height: 100%; }",

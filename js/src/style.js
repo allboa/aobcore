@@ -4,15 +4,19 @@
 // unless the root element has data-theme="light" or data-theme="dark".
 // A fragment in a host document (aobcore scene_tag(), decision 0009) is an
 // element with class aob-fragment: its own data-theme="light" or "dark"
-// fixes its theme without touching the host's root element.
+// fixes its theme without touching the host's root element. The tokens
+// are custom properties only (--aob-*), so a host page's own colours are
+// never changed: color-scheme follows --aob-scheme on the renderer's own
+// element (.aob-root), not on the root. A whole page sets its root's
+// color-scheme itself (aobcore's page CSS).
 const LIGHT = `--aob-bg: #eef2f4; --aob-panel: #f8fafb; --aob-ink: #1d2a33; --aob-muted: #5b6b76;
   --aob-rule: #d3dce1; --aob-accent: #1f6f8b; --aob-map: #dfe7eb; --aob-error: #a3322b;
   --aob-sel: #c2185b; --aob-sel-halo: #ffffff; --aob-sel-fill: #c2185b4d;
-  color-scheme: light;`;
+  --aob-scheme: light;`;
 const DARK = `--aob-bg: #0f171c; --aob-panel: #152029; --aob-ink: #e3ebef; --aob-muted: #93a4ae;
   --aob-rule: #26343e; --aob-accent: #6cc0dd; --aob-map: #0b1216; --aob-error: #f08a80;
   --aob-sel: #ff7ab8; --aob-sel-halo: #000000; --aob-sel-fill: #ff7ab84d;
-  color-scheme: dark;`;
+  --aob-scheme: dark;`;
 
 export const CSS = `
 :root {
@@ -35,6 +39,7 @@ export const CSS = `
   ${DARK}
 }
 .aob-root {
+  color-scheme: var(--aob-scheme, light);
   position: relative; display: grid; grid-template-columns: minmax(0, 1fr) 260px;
   background: var(--aob-bg); color: var(--aob-ink); font: 14px/1.45 var(--aob-font);
   min-height: 320px; overflow: hidden;

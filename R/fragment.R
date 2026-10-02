@@ -14,9 +14,17 @@
 #' local COG registered with `embed = FALSE`, which a fragment cannot read
 #' either. A fragment opens no socket and sends no selection.
 #'
+#' **Late fragments.** A fragment inserted after the host page has loaded
+#' (Shiny's `renderUI()` or `insertUI()`, say) draws when it is inserted:
+#' the fragment ends with a one-line script that calls the renderer's
+#' `aob.boot()`, which draws every scene element not yet drawn. A host that
+#' inserts the HTML without running its scripts calls `aob.boot()` itself.
+#'
 #' **Theme.** The host's own theme is not touched: `theme = "light"` or
 #' `"dark"` fixes the fragment's colours, and `"auto"` follows the browser's
-#' preference. The theme button in the fragment changes that fragment only.
+#' preference. The theme button in the fragment changes that fragment only,
+#' and the renderer sets no `color-scheme` or theme on the host's root
+#' element.
 #'
 #' @inheritParams write_scene_html
 #' @param width,height CSS sizes of the fragment, such as `"100%"` or
@@ -51,11 +59,19 @@ scene_tag <- function(scene, blobs = attr(scene, "blobs"), width = "100%", heigh
   style <- paste0("width:", css_size(width, "width"), ";height:", css_size(height, "height"), ";")
   warn_unfetchable_files(scene)
   htmltools::attachDependencies(
-    scene_element(scene, blobs, id, class = "aob-fragment", style = style,
-                  `data-theme` = if (theme != "auto") theme),
+    htmltools::tagList(
+      scene_element(scene, blobs, id, class = "aob-fragment", style = style,
+                    `data-theme` = if (theme != "auto") theme),
+      ## Draw it now when the renderer is already loaded: a fragment
+      ## inserted after the page loaded (Shiny's renderUI(), say) is
+      ## otherwise never booted. A renderer loaded later boots it itself.
+      htmltools::tags$script(htmltools::HTML(fragment_boot_js))
+    ),
     renderer_dependency()
   )
 }
+
+fragment_boot_js <- "if (window.aob && window.aob.boot) window.aob.boot();"
 
 ## The bundled renderer as an htmltools dependency: hosts that resolve
 ## dependencies include it once per document, by name.

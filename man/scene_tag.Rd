@@ -52,9 +52,17 @@ The checks are those of \code{\link[=write_scene_html]{write_scene_html()}}, inc
 local COG registered with \code{embed = FALSE}, which a fragment cannot read
 either. A fragment opens no socket and sends no selection.
 
+\strong{Late fragments.} A fragment inserted after the host page has loaded
+(Shiny's \code{renderUI()} or \code{insertUI()}, say) draws when it is inserted:
+the fragment ends with a one-line script that calls the renderer's
+\code{aob.boot()}, which draws every scene element not yet drawn. A host that
+inserts the HTML without running its scripts calls \code{aob.boot()} itself.
+
 \strong{Theme.} The host's own theme is not touched: \code{theme = "light"} or
 \code{"dark"} fixes the fragment's colours, and \code{"auto"} follows the browser's
-preference. The theme button in the fragment changes that fragment only.
+preference. The theme button in the fragment changes that fragment only,
+and the renderer sets no \code{color-scheme} or theme on the host's root
+element.
 }
 \examples{
 x <- wk::wkt("LINESTRING (0 0, 1000000 1000000)", crs = "EPSG:3031")
