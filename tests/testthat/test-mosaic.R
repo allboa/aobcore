@@ -9,6 +9,9 @@ fixture <- function(name) system.file("extdata", name, package = "aobcore")
 cog_halves <- function() {
   dir <- tempfile("mosaic-")
   dir.create(dir)
+  ## Members come back as normalizePath() gives them (on Windows, the long
+  ## form with forward slashes, not tempdir()'s short 8.3 form).
+  dir <- normalizePath(dir, winslash = "/")
   f <- fixture("polar_3031.tif")
   a <- file.path(dir, "west.tif")
   b <- file.path(dir, "east.tif")
