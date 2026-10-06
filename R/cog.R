@@ -15,6 +15,12 @@
 #' and predictor come from the `IMAGE_STRUCTURE` domain, the byte order from
 #' the file's first two bytes, and each band's colour interpretation
 #' (`"Red"`, `"Green"`, `"Blue"`, `"Alpha"`, `"Gray"`, ...) from GDAL.
+#' Bands stored one per tile (`INTERLEAVE=BAND`, or `TILE` from GDAL 3.11)
+#' are `planar = "separate"`.
+#'
+#' Overviews must be inside the GeoTIFF: one with an external `.ovr` file,
+#' or an overview GDAL reports that is not an image of the file itself, is
+#' refused, since the renderer reads every tile from the GeoTIFF's URL.
 #'
 #' Two TIFF tags GDAL does not report are read from the file's image file
 #' directories (IFDs) directly, through GDAL's virtual file layer: each
@@ -83,7 +89,20 @@ cog_info <- function(dsn, band = 1L) {
   if (!nzchar(wkt)) stop("\"", dsn, "\" has no CRS.", call. = FALSE)
   struct0 <- image_structure(ds)
   interleave <- toupper(md_item(struct0, "INTERLEAVE") %||% "BAND")
-  planar <- if (nb > 1L && interleave == "BAND") "separate" else "interleaved"
+  ## BAND and (GDAL 3.11 and later) TILE both store one band per tile
+  ## (TIFF PlanarConfiguration 2); only the order of the tiles differs, and
+  ## every tile's byte range is read per band.
+  planar <- if (nb > 1L && interleave %in% c("BAND", "TILE")) "separate" else "interleaved"
+  ## Overviews in an external .ovr file have tile offsets into that file,
+  ## not into the one the renderer reads.
+  ovr <- tryCatch(ds$getFileList(), error = function(e) character())
+  ovr <- ovr[grepl("[.]ovr$", ovr, ignore.case = TRUE)]
+  if (length(ovr)) {
+    stop("\"", dsn, "\" has its overviews in an external file (", basename(ovr[1]), "), ",
+         "whose tiles the renderer cannot read from the GeoTIFF's URL. Rewrite it with ",
+         "internal overviews (for example with GDAL's COG driver), or remove the .ovr file.",
+         call. = FALSE)
+  }
   if (!identical(toupper(md_item(struct0, "LAYOUT") %||% ""), "COG")) {
     ## Any tiled GeoTIFF works; a COG keeps the header and overviews first.
     if (is.null(ds$getMetadataItem(band, "BLOCK_OFFSET_0_0", "TIFF")) ||
@@ -106,6 +125,13 @@ cog_info <- function(dsn, band = 1L) {
     L <- cog_level(lv, k, band, dtype, planar, nb, struct0)
     if (k > 0L) lv$close()
     i <- if (length(ifds)) match_ifd(ifds, L$dim, used) else NA_integer_
+    if (k > 0L && length(ifds) && is.na(i)) {
+      ## An overview GDAL reports that is not an image in the file itself.
+      stop("Overview ", k, " of \"", dsn, "\" (", L$dim[1], " x ", L$dim[2], " cells) is not an ",
+           "image in the GeoTIFF itself, so its tiles cannot be read from the GeoTIFF's URL. ",
+           "Rewrite it with internal overviews (for example with GDAL's COG driver).",
+           call. = FALSE)
+    }
     ifd <- if (is.na(i)) NULL else ifds[[i]]
     used <- c(used, i)
     ycbcr <- identical(toupper(L$compression), "YCBCR JPEG")
@@ -1265,7 +1291,7 @@ rgb_default <- function(cog, quiet = TRUE) {
   if (!identical(unname(ci), want)) return(NULL)
   if (!identical(cog$planar, "interleaved")) {
     if (!quiet) {
-      message("This RGB COG stores its bands separately (INTERLEAVE=BAND); drawing band ",
+      message("This RGB COG stores its bands separately (INTERLEAVE=BAND or TILE); drawing band ",
               cog$band, " through a palette. Rewrite it with INTERLEAVE=PIXEL to draw it ",
               "in colour.")
     }

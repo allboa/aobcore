@@ -33,7 +33,12 @@
   drawn at one cell of scenespec's `tiny.zarr` (row 0 at the bottom); CI
   validates written 0.6 scenes against scenespec 898419b. A Zarr producer
   is left for later: gdalraster's multidimensional API does not give chunk
-  keys or byte ranges.
+  keys or byte ranges. `cog_info()` (so both the `cog` and the `chunks`
+  paths) now treats GDAL 3.11's `INTERLEAVE=TILE` as bands stored
+  separately, as `INTERLEAVE=BAND` is, and refuses overviews in an
+  external `.ovr` file (or any overview that is not an image of the
+  GeoTIFF itself), whose tiles the renderer cannot read from the
+  GeoTIFF's URL.
 
 * Renderer: draws scene spec 0.6 chunk references (#61; allboa/design
   decision 0010 item 2). A `tiled_raster` whose source is a `chunks` data

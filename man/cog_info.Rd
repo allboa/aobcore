@@ -48,6 +48,12 @@ metadata items in GDAL's \code{TIFF} domain for the chosen band. Compression
 and predictor come from the \code{IMAGE_STRUCTURE} domain, the byte order from
 the file's first two bytes, and each band's colour interpretation
 (\code{"Red"}, \code{"Green"}, \code{"Blue"}, \code{"Alpha"}, \code{"Gray"}, ...) from GDAL.
+Bands stored one per tile (\code{INTERLEAVE=BAND}, or \code{TILE} from GDAL 3.11)
+are \code{planar = "separate"}.
+
+Overviews must be inside the GeoTIFF: one with an external \code{.ovr} file,
+or an overview GDAL reports that is not an image of the file itself, is
+refused, since the renderer reads every tile from the GeoTIFF's URL.
 
 Two TIFF tags GDAL does not report are read from the file's image file
 directories (IFDs) directly, through GDAL's virtual file layer: each

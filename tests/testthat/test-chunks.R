@@ -324,3 +324,65 @@ test_that("write_scene_html() keeps blobs named by a refs table's url column and
                  fixed = TRUE)
   expect_true("copy.tif" %in% used)
 })
+
+test_that("INTERLEAVE=TILE stores bands separately, for a cog and over chunks", {
+  skip_if_no_gdal()
+  f <- make_chunk_tif(c("COMPRESS=DEFLATE", "BLOCKSIZE=128", "INTERLEAVE=TILE"), dtype = "UInt16", nb = 3L)
+  if (!is.null(f)) {
+    ds <- gdalraster::GDALRaster$new(f)
+    il <- ds$getMetadataItem(0L, "INTERLEAVE", "IMAGE_STRUCTURE")
+    ds$close()
+  }
+  skip_if(is.null(f) || !identical(il, "TILE"), "this GDAL cannot write INTERLEAVE=TILE (GDAL 3.11 and later)")
+  on.exit(unlink(f))
+  cog <- cog_info(f, band = 3L)
+  expect_identical(cog$planar, "separate")
+  ## The cog path: band 3's own tile ranges, with separate planes.
+  want <- gdal_tile_ranges(f, 3L)
+  got <- do.call(rbind, lapply(cog$levels, function(l) data.frame(level = l$level, col = l$tiles$col,
+                                                                 row = l$tiles$row, offset = l$tiles$byte_offset)))
+  expect_setequal(paste(got$level, got$col, got$row, got$offset),
+                  paste(want$level, want$col, want$row, want$offset))
+  s <- scene_add_tiled_raster(scene("EPSG:3031"), "t", cog_plan(cog, "EPSG:3031"), palette = "ocean")
+  expect_identical(s$layers[[1]]$plan$levels[[1]]$encoding$planar, "separate")
+  expect_identical(s$layers[[1]]$plan$levels[[1]]$encoding$band, 3L)
+  ## Over chunks: a ref per band for every stored tile, as GDAL reports.
+  ch <- cog_chunks(cog)
+  expect_identical(ch$interleave, "separate")
+  expect_identical(ch$bands, 3L)
+  expect_refs_match_gdal(ch, f, bands = 1:3)
+  s6 <- scene_add_tiled_raster(scene("EPSG:3031"), "t", cog_plan(cog, "EPSG:3031"), palette = "ocean",
+                               format = "chunks")
+  expect_identical(s6$layers[[1]]$band, 3L)
+  expect_validator_ok(scene_json(s6))
+})
+
+test_that("overviews outside the GeoTIFF are refused, for a cog and over chunks", {
+  skip_if_no_gdal()
+  f <- make_chunk_tif(c("TILED=YES", "BLOCKXSIZE=128", "BLOCKYSIZE=128", "COMPRESS=DEFLATE"),
+                      driver = "GTiff")
+  skip_if(is.null(f), "this GDAL cannot write a tiled GeoTIFF")
+  on.exit(unlink(c(f, paste0(f, ".ovr"))))
+  ## Overviews built on a dataset opened read-only go to an external .ovr.
+  ds <- gdalraster::GDALRaster$new(f, TRUE)
+  ds$quiet <- TRUE
+  ds$buildOverviews("NEAREST", 2L, 0L)
+  ds$close()
+  expect_true(file.exists(paste0(f, ".ovr")))
+  msg <- "has its overviews in an external file .*[.]ovr"
+  expect_error(cog_info(f), msg)
+  expect_error(cog_chunks(f), msg)
+  expect_error(scene_add_tiled_raster(scene("EPSG:3031"), "o", f, palette = "ocean"), msg)
+  expect_error(scene_add_tiled_raster(scene("EPSG:3031"), "o", f, palette = "ocean", format = "chunks"), msg)
+  ## Without the .ovr the file has one level and is fine.
+  unlink(paste0(f, ".ovr"))
+  expect_length(cog_info(f)$levels, 1L)
+  ## An overview GDAL reports with no image of its size in the file (found
+  ## by reading the IFDs) is refused too.
+  g <- make_chunk_tif(c("COMPRESS=DEFLATE", "BLOCKSIZE=128", "OVERVIEW_COUNT=1"))
+  on.exit(unlink(g), add = TRUE)
+  ifds <- tiff_ifds(g)
+  testthat::local_mocked_bindings(tiff_ifds = function(dsn, max_ifds = 64L) ifds[1])
+  expect_error(cog_info(g), "Overview 1 of .* is not an image in the GeoTIFF itself")
+  expect_error(cog_chunks(g), "Overview 1 of .* is not an image in the GeoTIFF itself")
+})
