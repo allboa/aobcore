@@ -14,6 +14,16 @@ export function readTable(bytes) {
   return tableFromIPC(bytes);
 }
 
+// The bytes against the declared format (scene spec README, "Explicit
+// data"): an IPC file starts with the magic "ARROW1" and a stream does not.
+// apache-arrow reads either, so a mismatch is found here or not at all.
+export function ipcFormatProblem(bytes, format) {
+  const isFile = bytes.length >= 6 && String.fromCharCode(...bytes.subarray(0, 6)) === "ARROW1";
+  if (format === "arrow-ipc-file" && !isFile) return "declared arrow-ipc-file but the bytes are not an IPC file";
+  if (format === "arrow-ipc-stream" && isFile) return "declared arrow-ipc-stream but the bytes are an IPC file";
+  return null;
+}
+
 function column(table, name, what) {
   const idx = table.schema.fields.findIndex((f) => f.name === name);
   if (idx < 0) throw new Error(`${what}: column "${name}" not found`);

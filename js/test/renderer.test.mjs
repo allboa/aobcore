@@ -79,7 +79,7 @@ import { socketChannel, socketUrl, RETRY_MAX_MS, STABLE_MS } from "../src/channe
 import { linkToR, utf8Length, NOT_CONNECTED, TOO_MANY } from "../src/link.js";
 import { selectionState, clickSelection, selectionText } from "../src/selection.js";
 import { rStandIn } from "./ws-server.mjs";
-import { geometryProblem, sameCrs, readTable } from "../src/arrow.js";
+import { geometryProblem, sameCrs, readTable, ipcFormatProblem } from "../src/arrow.js";
 import { readdirSync } from "node:fs";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -140,6 +140,14 @@ const invalidSpec = readdirSync(invalidDir).filter((f) => f.endsWith(".json")).s
   assert.deepEqual(geometryFaults, ["crs-not-view", "crs-type-mismatch", "encoding-not-declared", "geometrycollection",
     "no-crs", "storage-mismatch", "wkb", "xym"], "the geometry faults; the rest are faults of named columns");
   console.log("ok   explicit-data contract: CRS match rule, and the geometry of every scenespec fixture");
+  // The bytes are the declared IPC format: a file starts with "ARROW1".
+  const stream = Buffer.from(validSpec.blobs.linestring, "base64");
+  const file = tableToIPC(readTable(stream), "file");
+  assert.equal(ipcFormatProblem(stream, "arrow-ipc-stream"), null);
+  assert.equal(ipcFormatProblem(file, "arrow-ipc-file"), null);
+  assert.equal(ipcFormatProblem(file, "arrow-ipc-stream"), "declared arrow-ipc-stream but the bytes are an IPC file");
+  assert.equal(ipcFormatProblem(stream, "arrow-ipc-file"), "declared arrow-ipc-file but the bytes are not an IPC file");
+  console.log("ok   explicit-data contract: declared IPC stream or file against the bytes");
 }
 
 // ---- 2. decoders against GDAL ----------------------------------------------
@@ -2002,6 +2010,15 @@ ${keys === null ? "" : `<script type="application/json" data-aob-blob-keys data-
       assert.deepEqual(r.counts, [count], s.name);
     }
     console.log(`ok   explicit data: each of the ${invalidSpec.length} scenespec invalid-data scenes is a layer error`);
+
+    // IPC file bytes declared as a stream: that layer is an error, the rest draw.
+    const fileBlobs = { ...validSpec.blobs,
+      linestring: Buffer.from(tableToIPC(readTable(Buffer.from(validSpec.blobs.linestring, "base64")), "file")).toString("base64") };
+    const fr = await draw(validSpec.scene, fileBlobs);
+    assert.equal(fr.status, "ready", fr.line);
+    assert.equal(fr.errors, "1", fr.line);
+    assert.match(fr.line, /data linestring: declared arrow-ipc-stream but the bytes are an IPC file; not drawn/);
+    console.log("ok   explicit data: IPC file bytes declared as a stream are a layer error");
   } finally {
     await browser12.close();
   }

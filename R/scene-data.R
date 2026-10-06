@@ -11,8 +11,19 @@
 #' @param x The data: Arrow IPC stream bytes (a raw vector, as from
 #'   [vector_ipc()]), a 'nanoarrow' array stream, or anything
 #'   [vector_stream()] accepts. Anything other than bytes or a native
-#'   interleaved stream goes through [vector_stream()] with the scene's view
-#'   CRS, so its coordinates must already be in that CRS.
+#'   stream goes through [vector_stream()] with the scene's view CRS, so its
+#'   coordinates must already be in that CRS.
+#'
+#' @details Bytes and native streams (a native GeoArrow geometry column with
+#' interleaved or separated coordinates) are checked against scene spec's
+#' explicit-data contract before they reach a page, which would otherwise
+#' refuse to draw them: the CRS in the geometry column's GeoArrow metadata
+#' must match the view CRS, as equal JSON values or by one authority code
+#' (so `"EPSG:3031"` matches the PROJJSON 'geoarrow' writes for it). A
+#' native stream whose geometry has no CRS is given the view CRS; bytes are
+#' not rewritten, so bytes with no CRS are an error in a view with a CRS
+#' (read them with [nanoarrow::read_nanoarrow()] and pass the stream
+#' instead). Nothing is reprojected: a different CRS is an error.
 #' @return The scene with `data[[id]]` added and the bytes stored as blob
 #'   `id`.
 #' @seealso [scene_add_layer()], [scene_add_vector()], [scene_json()].
@@ -28,11 +39,11 @@ scene_add_data <- function(scene, id, x) {
   if (id %in% names(scene$data)) {
     stop("Data id \"", id, "\" is already in the scene.", call. = FALSE)
   }
-  bytes <- as_scene_ipc(x, scene$view$crs)
+  bytes <- as_scene_ipc(x, scene$view$crs, id)
   geom <- geometry_field(nanoarrow::read_nanoarrow(bytes)$get_schema())
-  if (is.null(geom) || !geom$interleaved) {
-    stop("The data for \"", id, "\" has no native, interleaved GeoArrow geometry column.",
-         call. = FALSE)
+  if (is.null(geom) || is.null(geom$layout)) {
+    stop("The data for \"", id, "\" has no native GeoArrow geometry column with ",
+         "interleaved or separated coordinates.", call. = FALSE)
   }
   scene$data[[id]] <- list(
     format = "arrow-ipc-stream",
@@ -71,8 +82,13 @@ scene_add_data <- function(scene, id, x) {
 #'   tap or key press, until another selection or a dismissal) or `"point"`
 #'   (shown while the pointer is over a feature; a renderer with no way to
 #'   point without selecting treats it as `"select"`). The columns must be in
-#'   the data and must not be its geometry column. A popup makes the scene
-#'   scene spec 0.5.
+#'   the data, must not be its geometry column, and must be types a popup
+#'   shows as text (logical, integer, double, character, `Date` or `POSIXct`
+#'   in R; boolean, 8 to 64 bit integers, float32 or float64, Utf8 or
+#'   LargeUtf8, Date32 or Date64, or a timestamp in Arrow), as scene spec's
+#'   explicit-data contract requires: a duration, time of day, binary, list
+#'   or dictionary column is an error here rather than in the page. A popup
+#'   makes the scene scene spec 0.5.
 #' @return The scene with the layer appended (drawn above earlier layers).
 #' @seealso [scene_add_legend()] for a key to the layer's colours.
 #' @export
@@ -173,11 +189,35 @@ kind_for_encoding <- list(
   "geoarrow.polygon" = "polygon", "geoarrow.multipolygon" = "polygon"
 )
 
-as_scene_ipc <- function(x, crs) {
-  if (is.raw(x)) return(x)
+## Bytes and native streams pass through after the explicit-data
+## contract's CRS check (see scene_add_data()); anything else is converted
+## by vector_stream() in the view CRS.
+as_scene_ipc <- function(x, crs, id = "x") {
+  what <- paste0("the geometry of the data for \"", id, "\"")
+  if (is.raw(x)) {
+    schema <- tryCatch(nanoarrow::read_nanoarrow(x)$get_schema(), error = function(e) {
+      stop("The data for \"", id, "\" are not Arrow IPC stream bytes: ", conditionMessage(e),
+           call. = FALSE)
+    })
+    geom <- geometry_field(schema)
+    if (!is.null(geom) && geom$native &&
+        !check_field_crs(schema$children[[geom$column]], crs, what)) {
+      stop("The data for \"", id, "\" have no CRS in their geometry column's GeoArrow ",
+           "metadata, and the view CRS is ", crs_label(crs), ". IPC bytes are not ",
+           "rewritten: pass nanoarrow::read_nanoarrow(bytes) instead, which is given the ",
+           "view CRS, or write the CRS when the bytes are made.", call. = FALSE)
+    }
+    return(x)
+  }
   if (inherits(x, "nanoarrow_array_stream")) {
-    geom <- geometry_field(x$get_schema())
-    if (!is.null(geom) && geom$interleaved) return(vector_ipc(x))
+    schema <- x$get_schema()
+    geom <- geometry_field(schema)
+    if (!is.null(geom) && !is.null(geom$layout)) {
+      if (!check_field_crs(schema$children[[geom$column]], crs, what)) {
+        x <- with_field_crs(x, geom$column, crs)
+      }
+      return(vector_ipc(x))
+    }
   }
   vector_ipc(vector_stream(x, crs))
 }

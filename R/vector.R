@@ -60,10 +60,16 @@ vector_stream <- function(x, crs, geometry = NULL) {
 #' stream bytes, the form a scene carries as a data blob. WKB geometry is
 #' refused: convert it first with [vector_stream()].
 #'
+#' The coordinates may be interleaved (what [vector_stream()] and
+#' [gdal_vector_stream()] write) or separated (a struct of `x`, `y` and
+#' optionally `z`), as scene spec's explicit-data contract allows; both are
+#' doubles under 32-bit list offsets. Other layouts (M coordinates, large
+#' lists) are refused: convert them with [vector_stream()].
+#'
 #' @param x A 'nanoarrow' array stream (or anything
-#'   [nanoarrow::as_nanoarrow_array_stream()] accepts) with a native,
-#'   interleaved GeoArrow geometry column, such as the result of
-#'   [vector_stream()] or [gdal_vector_stream()].
+#'   [nanoarrow::as_nanoarrow_array_stream()] accepts) with a native
+#'   GeoArrow geometry column, such as the result of [vector_stream()] or
+#'   [gdal_vector_stream()].
 #' @return A raw vector of Arrow IPC stream bytes.
 #' @export
 #' @examples
@@ -83,9 +89,10 @@ vector_ipc <- function(x) {
     stop("Geometry column \"", geom$column, "\" is ", geom$encoding,
          ", not native GeoArrow; convert it with vector_stream().", call. = FALSE)
   }
-  if (!geom$interleaved) {
+  if (is.null(geom$layout)) {
     stream$release()
-    stop("Geometry column \"", geom$column, "\" does not have interleaved coordinates; ",
+    stop("Geometry column \"", geom$column, "\" does not have interleaved (xy, xyz) or ",
+         "separated (x, y, z) double coordinates under 32-bit lists; ",
          "convert it with vector_stream().", call. = FALSE)
   }
   ipc_bytes(undictionary(stream))
@@ -127,34 +134,51 @@ ipc_bytes <- function(stream) {
 
 ## Find the geometry field of a schema: the first child with a geoarrow
 ## extension name. Returns NULL when there is none, otherwise the column
-## name, the extension name and whether it is native and interleaved.
+## name, the extension name, whether it is native, and its coordinate
+## layout ("interleaved", "separated", or NULL when it is not native or
+## not laid out as the explicit-data contract allows).
 geometry_field <- function(schema) {
   for (child in schema$children) {
     ext <- child$metadata[["ARROW:extension:name"]]
     if (!is.null(ext) && startsWith(ext, "geoarrow.")) {
       native <- ext %in% native_encodings
+      layout <- if (native) coord_layout(child, ext)
       return(list(
         column = child$name,
         encoding = ext,
         native = native,
-        interleaved = native && is_interleaved(child)
+        layout = layout,
+        interleaved = identical(layout, "interleaved")
       ))
     }
   }
   NULL
 }
 
-## Native GeoArrow nests lists down to the coordinates: a fixed-size list
-## ("+w:n") is interleaved, a struct ("+s") is separated.
-is_interleaved <- function(schema) {
-  while (!is.null(schema)) {
-    fmt <- schema$format
-    if (startsWith(fmt, "+w:")) return(TRUE)
-    if (identical(fmt, "+s")) return(FALSE)
-    if (!startsWith(fmt, "+l") && !startsWith(fmt, "+L")) return(FALSE)
-    schema <- schema$children[[1]]
+## Native GeoArrow nests 32-bit lists ("+l") down to the coordinates, as
+## many levels as the type has: interleaved is a fixed-size list of doubles
+## whose child is named xy or xyz, separated is a struct of doubles x, y and
+## optionally z (the explicit-data contract's two layouts; no M).
+coord_layout <- function(field, ext) {
+  levels <- c("geoarrow.point" = 0L, "geoarrow.linestring" = 1L, "geoarrow.multipoint" = 1L,
+              "geoarrow.polygon" = 2L, "geoarrow.multilinestring" = 2L,
+              "geoarrow.multipolygon" = 3L)[[ext]]
+  for (k in seq_len(levels)) {
+    if (!identical(field$format, "+l") || length(field$children) != 1L) return(NULL)
+    field <- field$children[[1]]
   }
-  FALSE
+  kids <- field$children
+  doubles <- length(kids) && all(vapply(kids, function(k) identical(k$format, "g"), TRUE))
+  if (!doubles) return(NULL)
+  if (field$format %in% c("+w:2", "+w:3") && length(kids) == 1L &&
+      identical(names(kids), c("+w:2" = "xy", "+w:3" = "xyz")[[field$format]])) {
+    return("interleaved")
+  }
+  if (identical(field$format, "+s") &&
+      (identical(names(kids), c("x", "y")) || identical(names(kids), c("x", "y", "z")))) {
+    return("separated")
+  }
+  NULL
 }
 
 ## `type` is the geometry type the source declares (such as

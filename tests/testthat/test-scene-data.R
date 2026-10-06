@@ -99,3 +99,133 @@ test_that("scene_json() writes numbers exactly enough", {
   s$view$center <- c(Inf, 0)
   expect_error(scene_json(s), "Inf")
 })
+
+# ---- the explicit-data contract, checked in R (#59) ------------------------
+
+# A native stream of `wkt` with no CRS, in either coordinate layout.
+no_crs_stream <- function(wkt = "LINESTRING (0 0, 1000 1000)", coord_type = "SEPARATE") {
+  df <- data.frame(id = 1L)
+  df$geometry <- geoarrow::as_geoarrow_vctr(
+    wk::wkt(wkt), schema = geoarrow::na_extension_geoarrow("LINESTRING", coord_type = coord_type)
+  )
+  nanoarrow::as_nanoarrow_array_stream(df)
+}
+
+# The stream with its geometry field's ARROW:extension:metadata replaced.
+with_ext_metadata <- function(stream, meta) {
+  schema <- stream$get_schema()
+  batches <- nanoarrow::collect_array_stream(stream, validate = FALSE)
+  field <- schema$children$geometry
+  md <- field$metadata
+  md[["ARROW:extension:metadata"]] <- meta
+  children <- schema$children
+  children$geometry <- nanoarrow::nanoarrow_schema_modify(field, list(metadata = md))
+  schema <- nanoarrow::nanoarrow_schema_modify(schema, list(children = children))
+  batches <- lapply(batches, nanoarrow::nanoarrow_array_set_schema, schema, validate = FALSE)
+  nanoarrow::basic_array_stream(batches, schema = schema, validate = FALSE)
+}
+
+blob_geometry <- function(s, id) {
+  nanoarrow::read_nanoarrow(scene_blobs(s)[[id]])$get_schema()$children$geometry
+}
+
+test_that("a native stream with no CRS is given the view CRS", {
+  for (coord_type in c("SEPARATE", "INTERLEAVED")) {
+    st <- no_crs_stream(coord_type = coord_type)
+    expect_identical(field_extension_metadata(st$get_schema()$children$geometry, "g")$crs, NULL)
+    s <- scene_add_data(scene(), "line", st)
+    g <- blob_geometry(s, "line")
+    expect_true(check_field_crs(g, "EPSG:3031", "g"))
+    expect_true("EPSG:3031" %in% crs_codes(field_extension_metadata(g, "g")$crs))
+    expect_identical(geometry_field(nanoarrow::read_nanoarrow(scene_blobs(s)$line)$get_schema())$layout,
+                     tolower(sub("SEPARATE", "SEPARATED", coord_type)))
+    expect_valid_scene(s)
+  }
+})
+
+test_that("a native stream in another CRS is refused", {
+  x <- wk::wkt("LINESTRING (0 0, 1000 1000)")
+  expect_error(scene_add_data(scene("EPSG:3031"), "a", vector_stream(x, "EPSG:3413")),
+               "is EPSG:3413 but the view CRS is EPSG:3031.*does not reproject")
+  # The same CRS written as an authority code (any case) is the view's.
+  st <- with_ext_metadata(no_crs_stream(), "{\"crs\": \"epsg:3031\", \"crs_type\": \"authority_code\"}")
+  s <- scene_add_data(scene(), "a", st)
+  expect_identical(field_extension_metadata(blob_geometry(s, "a"), "g")$crs, "epsg:3031")
+})
+
+test_that("IPC bytes are checked against the view CRS, not rewritten", {
+  bytes <- function(meta) ipc_bytes(with_ext_metadata(no_crs_stream(), meta))
+  none <- ipc_bytes(no_crs_stream())
+  expect_error(scene_add_data(scene(), "a", none),
+               "no CRS in their geometry column.*view CRS is EPSG:3031.*not rewritten")
+  expect_error(scene_add_data(scene(), "a", bytes("{\"crs\": \"EPSG:3413\"}")),
+               "is EPSG:3413 but the view CRS is EPSG:3031")
+  x <- wk::wkt("POINT (1 2)")
+  expect_error(scene_add_data(scene("EPSG:3031"), "a", vector_ipc(vector_stream(x, "EPSG:3413"))),
+               "is EPSG:3413 but the view CRS is EPSG:3031")
+  ok <- bytes("{\"crs\": \"EPSG:3031\", \"crs_type\": \"authority_code\", \"edges\": \"planar\"}")
+  s <- scene_add_data(scene(), "a", ok)
+  expect_identical(scene_blobs(s)$a, ok)
+  expect_valid_scene(s)
+  expect_error(scene_add_data(scene(), "a", bytes("{\"crs\": \"EPSG:3031\", \"crs_type\": \"projjson\"}")),
+               "crs_type .* is projjson but its crs is not a JSON object")
+  expect_error(scene_add_data(scene(), "a", bytes("{\"crs\": {\"name\": \"x\"}, \"crs_type\": \"authority_code\"}")),
+               "authority_code but its crs is not")
+  expect_error(scene_add_data(scene(), "a", bytes("{\"crs\": \"EPSG:3031\", \"crs_type\": \"wkt2:2019\"}")),
+               "not projjson or authority_code")
+  expect_error(scene_add_data(scene(), "a", bytes("{\"crs\": \"EPSG:3031\", \"edges\": \"spherical\"}")),
+               "only planar edges")
+  expect_error(scene_add_data(scene(), "a", bytes("[1, 2]")), "not a JSON object")
+  # What the page refuses: an authority_code crs that is a PROJJSON object
+  # (even one with an EPSG id), and crs_type or edges given as null.
+  projjson <- "{\"type\": \"ProjectedCRS\", \"name\": \"P\", \"id\": {\"authority\": \"EPSG\", \"code\": 3031}}"
+  expect_error(scene_add_data(scene(), "a", bytes(paste0("{\"crs\": ", projjson, ", \"crs_type\": \"authority_code\"}"))),
+               "authority_code but its crs is not")
+  expect_error(scene_add_data(scene(), "a", bytes("{\"crs\": \"EPSG:3031\", \"crs_type\": null}")),
+               "crs_type .* is null, not projjson or authority_code")
+  expect_error(scene_add_data(scene(), "a", bytes("{\"crs\": \"EPSG:3031\", \"edges\": null}")),
+               "edges .* are null; only planar edges")
+  expect_identical(scene_blobs(scene_add_data(scene(), "a", bytes(paste0("{\"crs\": ", projjson, ", \"crs_type\": \"projjson\"}"))))$a,
+                   bytes(paste0("{\"crs\": ", projjson, ", \"crs_type\": \"projjson\"}")))
+  # A view with no CRS needs none.
+  v <- scene()
+  v$view$crs <- NULL
+  expect_identical(scene_blobs(scene_add_data(v, "a", none))$a, none)
+})
+
+test_that("the contract's CRS rule: equal JSON values or one authority code", {
+  projjson <- "{\"$schema\": \"x\", \"type\": \"ProjectedCRS\", \"name\": \"P\", \"id\": {\"authority\": \"EPSG\", \"code\": 3031}}"
+  p <- json_parse(projjson)
+  expect_true(crs_values_match(p, "EPSG:3031"))
+  expect_true(crs_values_match("epsg:3031", "EPSG:3031"))
+  expect_false(crs_values_match(p, "EPSG:3413"))
+  # Equal as JSON values, keys in any order and $schema aside, with no id.
+  a <- json_parse("{\"name\": \"laea\", \"type\": \"ProjectedCRS\", \"conversion\": {\"x\": [1, 2.5]}}")
+  b <- json_parse("{\"$schema\": \"y\", \"conversion\": {\"x\": [1, 2.5]}, \"type\": \"ProjectedCRS\", \"name\": \"laea\"}")
+  expect_true(crs_values_match(a, b))
+  b$conversion$x[[2]] <- 2.6
+  expect_false(crs_values_match(a, b))
+  expect_identical(crs_codes(json_parse("{\"ids\": [{\"authority\": \"ESRI\", \"code\": 102020}, {\"authority\": \"EPSG\", \"code\": \"3031\"}]}")),
+                   c("ESRI:102020", "EPSG:3031"))
+  expect_identical(crs_codes("not a code"), character())
+  expect_identical(crs_value_label(a), "\"laea\" (PROJJSON)")
+  expect_identical(crs_value_label("+proj=stere\n  +lat_0=-90"), "\"+proj=stere +lat_0=-90\"")
+  expect_identical(crs_value_label(3031), "(a JSON number)")
+  expect_identical(crs_value_label(list(1, 2)), "(a JSON array)")
+  expect_identical(crs_value_label(TRUE), "(a JSON boolean)")
+})
+
+test_that("json_parse() reads what json_value() writes", {
+  x <- list(a = list(1, 2.5e-3, "q\"u\\o\u00e9\n", TRUE, FALSE), b = structure(list(), names = character()),
+            c = list(), d = -12)
+  back <- json_parse(json_value(x))
+  expect_true(json_same(back, x))
+  expect_identical(back$a[[3]], "q\"u\\o\u00e9\n")
+  expect_identical(json_parse("[null]"), list(NULL))
+  # A repeated key overwrites the earlier value, as JSON.parse does.
+  expect_identical(json_parse("{\"a\": 1, \"b\": 2, \"a\": 3}"), list(a = 3, b = 2))
+  expect_identical(json_parse("\"\\ud83c\\udf0d\""), "\U0001F30D")
+  expect_error(json_parse("{\"a\": }"), "Not JSON")
+  expect_error(json_parse("[1, 2"), "Not JSON")
+  expect_error(json_parse("[1] 2"), "Not JSON")
+})

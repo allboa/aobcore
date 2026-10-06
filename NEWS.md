@@ -1,5 +1,29 @@
 # aobcore 0.0.0.9000
 
+* `scene_add_data()` and `scene_add_vector()` check IPC bytes and native
+  GeoArrow streams against scene spec's explicit-data contract, so data the
+  page would refuse are an error in R (#59). The CRS in the geometry
+  column's GeoArrow metadata must match the view CRS by the contract's rule
+  (equal JSON values, or one authority code compared case-insensitively,
+  so `"EPSG:3031"` matches the PROJJSON 'geoarrow' writes), with a
+  `crs_type` that fits it and planar edges; a CRS that does not match is an
+  error, since nothing is reprojected. A native stream with no CRS is given
+  the view CRS; IPC bytes are never rewritten, so bytes with no CRS are an
+  error in a view that has one. `scene_add_layer()` checks that popup
+  columns are attribute types (boolean, 8 to 64 bit integers, float32 or
+  float64, string, date or timestamp), read from the blob's schema, and
+  names each column that is not with its type (a duration, time, binary,
+  list or dictionary column). `vector_ipc()` and `scene_add_data()` accept
+  separated coordinates (a struct of `x`, `y` and optionally `z`) as well
+  as interleaved, which the contract allows and the renderer reads, and
+  write them as they are; M coordinates and 64-bit list offsets are
+  refused by `vector_ipc()` and in IPC bytes, and converted from a stream
+  by `scene_add_data()`. Renderer: a vector layer whose bytes are not the
+  declared format (an IPC file, which starts with `ARROW1`, declared
+  `arrow-ipc-stream`, or the reverse) is a layer error, as scenespec's
+  `check-data.js` reports it; the check applies to the data of vector
+  layers (a raster's mesh and value tables are read as before).
+
 * Renderer: vector data are checked against scene spec's explicit-data
   contract (allboa/scenespec#11) before they are drawn. The geometry
   column's `ARROW:extension:name` must be the scene's `geometry.encoding`
@@ -15,10 +39,14 @@
   is not drawn, and the rest of the scene draws; nothing is reprojected.
   A popup column that is not an attribute type (a binary or dictionary
   column, say) is an error for that layer's popup, as a missing one was.
-  Data written by aobcore are unchanged and draw as before. The renderer
-  test reads scenespec's fixtures (copied into `js/test/fixtures/scenespec`
-  from scenespec 898419b): the six streams draw with their feature counts,
-  and each invalid-data scene is a layer error (#57).
+  Data written by aobcore's producers (`vector_stream()`,
+  `gdal_vector_stream()`, and `scene_add_vector()` or `scene_add_data()`
+  given anything they convert) are unchanged and draw as before; IPC bytes
+  and native streams made elsewhere are checked in R before the page sees
+  them (#59). The renderer test reads scenespec's fixtures (copied into
+  `js/test/fixtures/scenespec` from scenespec 898419b): the six streams
+  draw with their feature counts, and each invalid-data scene is a layer
+  error (#57).
 
 * `mosaic_members()` reads the members of a VRT (a `.vrt` file or a
   `vrt://` connection string, from the XML GDAL serialises for it) or a
