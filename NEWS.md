@@ -21,7 +21,8 @@
   by `scene_add_data()`. Renderer: a vector layer whose bytes are not the
   declared format (an IPC file, which starts with `ARROW1`, declared
   `arrow-ipc-stream`, or the reverse) is a layer error, as scenespec's
-  `check-data.js` reports it.
+  `check-data.js` reports it; the check applies to the data of vector
+  layers (a raster's mesh and value tables are read as before).
 
 * Renderer: vector data are checked against scene spec's explicit-data
   contract (allboa/scenespec#11) before they are drawn. The geometry

@@ -120,9 +120,23 @@ crs_value_label <- function(x) {
   if (is.null(x)) return("(none)")
   codes <- crs_codes(x)
   if (length(codes)) return(codes[1])
-  if (is.character(x)) return(paste0("\"", crs_short(x), "\""))
-  nm <- if (is.list(x)) x[["name"]]
-  if (is.character(nm) && length(nm) == 1L) paste0("\"", nm, "\" (PROJJSON)") else "(PROJJSON)"
+  if (is.character(x)) return(paste0("\"", crs_short(gsub("[[:space:]]+", " ", x)), "\""))
+  if (is.list(x) && !is.null(names(x))) {
+    nm <- x[["name"]]
+    return(if (is.character(nm) && length(nm) == 1L) paste0("\"", nm, "\" (PROJJSON)") else "(PROJJSON)")
+  }
+  if (is.list(x)) return("(a JSON array)")
+  if (is.logical(x)) return("(a JSON boolean)")
+  if (is.numeric(x)) return("(a JSON number)")
+  "(not a CRS)"
+}
+
+## A parsed JSON value for messages: null, a string or a short summary.
+json_label <- function(x) {
+  if (is.null(x)) return("null")
+  if (is.character(x) && length(x) == 1L) return(paste0("\"", crs_short(x), "\""))
+  if (is.list(x)) return(if (is.null(names(x))) "an array" else "an object")
+  format(x)
 }
 
 ## The parsed `ARROW:extension:metadata` of a GeoArrow field: a named list,
@@ -144,23 +158,26 @@ field_extension_metadata <- function(field, what) {
 ## view's or its metadata breaks the contract. A view with no CRS needs none.
 check_field_crs <- function(field, crs, what) {
   m <- field_extension_metadata(field, what)
+  ## A key given as null breaks the contract as any other value would (the
+  ## page compares with undefined), so presence is tested, not NULL.
   edges <- m[["edges"]]
-  if (!is.null(edges) && !identical(edges, "planar")) {
-    stop("The edges of ", what, " are ", format(edges), "; only planar edges are drawn.",
+  if ("edges" %in% names(m) && !identical(edges, "planar")) {
+    stop("The edges of ", what, " are ", json_label(edges), "; only planar edges are drawn.",
          call. = FALSE)
   }
   type <- m[["crs_type"]]
   value <- m[["crs"]]
-  if (!is.null(type)) {
+  if ("crs_type" %in% names(m)) {
     if (!(is.character(type) && length(type) == 1L && type %in% c("projjson", "authority_code"))) {
-      stop("The crs_type of ", what, " is ", format(type),
+      stop("The crs_type of ", what, " is ", json_label(type),
            ", not projjson or authority_code.", call. = FALSE)
     }
     if (!is.null(value) && type == "projjson" && !(is.list(value) && !is.null(names(value)))) {
       stop("The crs_type of ", what, " is projjson but its crs is not a JSON object.",
            call. = FALSE)
     }
-    if (!is.null(value) && type == "authority_code" && !length(crs_codes(value))) {
+    if (!is.null(value) && type == "authority_code" &&
+        !(is.character(value) && length(crs_codes(value)))) {
       stop("The crs_type of ", what, " is authority_code but its crs is not an ",
            "\"authority:code\" string.", call. = FALSE)
     }

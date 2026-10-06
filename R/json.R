@@ -163,8 +163,14 @@ json_parse <- function(text) {
           key <- take()
           if (!startsWith(key, "\"")) bad()
           expect(":")
-          keys <- c(keys, json_unquote(key))
-          vals[length(vals) + 1L] <- list(value())
+          ## A repeated key overwrites the earlier value, as JSON.parse does.
+          key <- json_unquote(key)
+          i <- match(key, keys)
+          if (is.na(i)) {
+            keys <- c(keys, key)
+            i <- length(keys)
+          }
+          vals[i] <- list(value())
           sep <- take()
           if (sep == "}") break
           if (sep != ",") bad()

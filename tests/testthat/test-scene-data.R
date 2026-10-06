@@ -176,6 +176,17 @@ test_that("IPC bytes are checked against the view CRS, not rewritten", {
   expect_error(scene_add_data(scene(), "a", bytes("{\"crs\": \"EPSG:3031\", \"edges\": \"spherical\"}")),
                "only planar edges")
   expect_error(scene_add_data(scene(), "a", bytes("[1, 2]")), "not a JSON object")
+  # What the page refuses: an authority_code crs that is a PROJJSON object
+  # (even one with an EPSG id), and crs_type or edges given as null.
+  projjson <- "{\"type\": \"ProjectedCRS\", \"name\": \"P\", \"id\": {\"authority\": \"EPSG\", \"code\": 3031}}"
+  expect_error(scene_add_data(scene(), "a", bytes(paste0("{\"crs\": ", projjson, ", \"crs_type\": \"authority_code\"}"))),
+               "authority_code but its crs is not")
+  expect_error(scene_add_data(scene(), "a", bytes("{\"crs\": \"EPSG:3031\", \"crs_type\": null}")),
+               "crs_type .* is null, not projjson or authority_code")
+  expect_error(scene_add_data(scene(), "a", bytes("{\"crs\": \"EPSG:3031\", \"edges\": null}")),
+               "edges .* are null; only planar edges")
+  expect_identical(scene_blobs(scene_add_data(scene(), "a", bytes(paste0("{\"crs\": ", projjson, ", \"crs_type\": \"projjson\"}"))))$a,
+                   bytes(paste0("{\"crs\": ", projjson, ", \"crs_type\": \"projjson\"}")))
   # A view with no CRS needs none.
   v <- scene()
   v$view$crs <- NULL
@@ -198,6 +209,10 @@ test_that("the contract's CRS rule: equal JSON values or one authority code", {
                    c("ESRI:102020", "EPSG:3031"))
   expect_identical(crs_codes("not a code"), character())
   expect_identical(crs_value_label(a), "\"laea\" (PROJJSON)")
+  expect_identical(crs_value_label("+proj=stere\n  +lat_0=-90"), "\"+proj=stere +lat_0=-90\"")
+  expect_identical(crs_value_label(3031), "(a JSON number)")
+  expect_identical(crs_value_label(list(1, 2)), "(a JSON array)")
+  expect_identical(crs_value_label(TRUE), "(a JSON boolean)")
 })
 
 test_that("json_parse() reads what json_value() writes", {
@@ -207,6 +222,8 @@ test_that("json_parse() reads what json_value() writes", {
   expect_true(json_same(back, x))
   expect_identical(back$a[[3]], "q\"u\\o\u00e9\n")
   expect_identical(json_parse("[null]"), list(NULL))
+  # A repeated key overwrites the earlier value, as JSON.parse does.
+  expect_identical(json_parse("{\"a\": 1, \"b\": 2, \"a\": 3}"), list(a = 3, b = 2))
   expect_identical(json_parse("\"\\ud83c\\udf0d\""), "\U0001F30D")
   expect_error(json_parse("{\"a\": }"), "Not JSON")
   expect_error(json_parse("[1, 2"), "Not JSON")
