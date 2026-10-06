@@ -20,8 +20,11 @@
 #'
 #' @param scene A scene from [scene()] and [scene_add_data()] or
 #'   [scene_add_vector()], which carries its blobs; or a plain list following
-#'   scene spec 0.1 to 0.5, with `version`, `view`, `data` and `layers`. It is written
-#'   with [scene_json()].
+#'   scene spec 0.1 to 0.6, with `version`, `view`, `data` and `layers`. It is written
+#'   with [scene_json()]. A scene spec 0.6 `chunks` reference's chunk bytes are
+#'   embedded as blobs keyed by the refs' `url` (as the scene writes it),
+#'   each holding the bytes at that URL; the page reads each chunk's bytes
+#'   from them at its `offset` and `length`.
 #' @param blobs A named list of raw vectors, each an Arrow IPC stream or file,
 #'   named by the `blob` keys used in `scene$data`. Defaults to the blobs the
 #'   scene carries ([scene_blobs()]).
@@ -276,6 +279,23 @@ check_scene_shape <- function(scene, blobs) {
       }
       next
     }
+    if (identical(ref$format, "chunks")) {
+      ## Scene spec 0.6: bytes by url, offset and length. A url that is a
+      ## blob key carries those bytes in the page.
+      if (!spec_at_least(scene$version, "0.6") && !inherits(scene, "aob_scene")) {
+        fail("The chunks data reference `", id, "` needs scene spec 0.6.")
+      }
+      if (!is.null(ref$blob) || (is.null(ref$refs$rows) == is.null(ref$refs$table))) {
+        fail("The chunks data reference `", id, "` needs `refs` with exactly one of `rows` or `table`, and no `blob`.")
+      }
+      tbl <- ref$refs$table
+      if (!is.null(tbl) && !(is.character(tbl) && length(tbl) == 1L && tbl %in% ids)) {
+        fail("The chunks data reference `", id, "` names refs table \"", format(tbl), "\", which is not in `scene$data`.")
+      }
+      urls <- c(ref$url, unlist(lapply(ref$refs$rows, function(r) r$url)))
+      used_blobs <- c(used_blobs, intersect(names(blobs), urls))
+      next
+    }
     has_blob <- !is.null(ref$blob)
     if (has_blob == !is.null(ref$url)) {
       fail("Data reference `", id, "` needs exactly one of `blob` or `url`.")
@@ -317,15 +337,18 @@ check_scene_shape <- function(scene, blobs) {
         fail("Layer `", lid, "` uses `rgb` or JPEG tiles, which need scene spec 0.3.")
       }
       need(lid, layer$source)
-      if (!identical(data[[layer$source]]$format, "cog")) {
-        fail("Layer `", lid, "` draws `", layer$source, "`, which is not a cog.")
+      if (!isTRUE(data[[layer$source]]$format %in% c("cog", "chunks"))) {
+        fail("Layer `", lid, "` draws `", layer$source, "`, which is not a cog or chunks reference.")
       }
       need(lid, layer$plan$mesh$vertices)
       need(lid, layer$plan$mesh$indices)
-      ## Embedded tile bytes (see scene_add_tiled_raster()).
-      for (lv in layer$plan$levels) for (t in lv$tiles) {
-        key <- tile_blob_key(layer$source, t$byte_offset, t$byte_length)
-        if (key %in% names(blobs)) used_blobs <- c(used_blobs, key)
+      ## Embedded tile bytes (see scene_add_tiled_raster()); a chunks
+      ## source's embedded bytes are keyed by url (above).
+      if (identical(data[[layer$source]]$format, "cog")) {
+        for (lv in layer$plan$levels) for (t in lv$tiles) {
+          key <- tile_blob_key(layer$source, t$byte_offset, t$byte_length)
+          if (key %in% names(blobs)) used_blobs <- c(used_blobs, key)
+        }
       }
     } else if (is.character(kind) && length(kind) == 1L && kind %in% c("polygon", "path", "point")) {
       need(lid, layer$data)

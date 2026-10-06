@@ -16,7 +16,7 @@ A single character string of JSON.
 }
 \description{
 Writes a scene as a scene spec JSON document, as the lowest version that
-can express it (0.1 to 0.5; see \code{\link[=scene_spec_version]{scene_spec_version()}}). The blobs are not
+can express it (0.1 to 0.6; see \code{\link[=scene_spec_version]{scene_spec_version()}}). The blobs are not
 included; a transport delivers them beside the document (see
 \code{\link[=scene_blobs]{scene_blobs()}}). The output is ASCII: other characters are written as
 \verb{\\uXXXX} escapes.

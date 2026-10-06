@@ -12,8 +12,9 @@ scene_spec_version(scene = NULL)
 \value{
 A character string: \code{"0.1"}, \code{"0.2"} for a scene with a
 \code{tiled_raster} layer, \code{"0.3"} for one whose tiled raster uses \code{rgb}
-or JPEG tiles, \code{"0.4"} for one whose view has \code{bounds}, or \code{"0.5"} for
-one with legends or popups. A scene already marked with a version keeps
+or JPEG tiles, \code{"0.4"} for one whose view has \code{bounds}, \code{"0.5"} for
+one with legends or popups, or \code{"0.6"} for one with a \code{chunks} data
+reference. A scene already marked with a version keeps
 at least that version (removing its bounds by hand leaves it 0.4).
 }
 \description{
@@ -23,8 +24,9 @@ unless it has a tiled raster layer (added by \code{\link[=scene_add_tiled_raster
 which needs 0.2; a tiled raster drawn as a colour image (\code{rgb}) or with
 JPEG tiles needs 0.3; a view with \code{bounds} (see \code{\link[=scene]{scene()}}'s \code{domain})
 needs 0.4; legends (\code{\link[=scene_add_legend]{scene_add_legend()}}) or a layer \code{popup} (see
-\code{\link[=scene_add_layer]{scene_add_layer()}}) need 0.5. Each version only adds to the one before,
-so earlier output is unchanged by the later additions.
+\code{\link[=scene_add_layer]{scene_add_layer()}}) need 0.5; a \code{chunks} data reference (chunk
+references, written by hand for now) needs 0.6. Each version only adds to
+the one before, so earlier output is unchanged by the later additions.
 }
 \examples{
 scene_spec_version()

@@ -12,6 +12,14 @@
 // or (0.3) draws three bands as red, green and blue, with an optional alpha
 // band (rgb). jpeg tiles (0.3) are decoded by the browser (jpeg.js).
 //
+// Scene spec 0.6: the source may instead be a chunks reference. Each plan
+// tile is then a chunk of the source grid: its bytes are the chunk's ref
+// (url, offset and length; a page that carries the url's bytes as a blob
+// keyed by the url, or a served page that lists that key, gives the bytes
+// to slice), decoded by the source's codec chain (chunks.js), and its size
+// and valid cells come from the grid. A planned chunk with no ref is not
+// stored: it is no data and is not drawn.
+//
 // Tiles no longer in view stay cached, up to MAX_CACHED decoded tiles; past
 // that the least recently drawn are dropped (and fetched again if needed).
 // A tile still loading when the view moves off it has its fetch aborted.
@@ -20,6 +28,7 @@ import { numericColumn, listColumn, decodeBase64 } from "./arrow.js";
 import { paletteStops, ramp, UnknownPaletteError, UNLIT } from "./palettes.js";
 import { pickBand, colorizeTile, colorizeRGB, encodingProblem } from "./decode.js";
 import { decodeTileSamples } from "./jpeg.js";
+import { chunksProblem, chunkRefs, chunkKey, chunkLevel, chunkWindow, chunkLayout, chunkEncoding, decodeChunk } from "./chunks.js";
 
 const textureParameters = { minFilter: "nearest", magFilter: "nearest", mipmapFilter: "none" };
 
@@ -127,7 +136,7 @@ export function tilesToEvict(cached, now, max) {
 }
 
 export function buildTiledRaster(L, ctx) {
-  const { scene, tables, blobs } = ctx;
+  const { scene, blobs } = ctx;
   const what = `layer ${L.id}`;
   const fail = (msg, summary) => {
     ctx.error(`${what}: ${msg}; not drawn`);
@@ -145,6 +154,8 @@ export function buildTiledRaster(L, ctx) {
     }
   }
   const plan = L.plan;
+  const src = scene.data[L.source];
+  if (src && src.format === "chunks") return buildChunkRaster(L, ctx, src, rgb, stops, fail);
   for (const lv of plan.levels) {
     const problem = encodingProblem(lv.encoding);
     if (problem) return fail(`level ${lv.level}: ${problem}`, problem.replace(/ \(.*$/, ""));
@@ -157,9 +168,87 @@ export function buildTiledRaster(L, ctx) {
       if (enc.dtype !== "uint8" && !rgb.range) return fail(`level ${lv.level}: rgb of ${enc.dtype} samples needs a range`, "rgb needs a range");
     }
   }
-  const src = scene.data[L.source];
   const url = typeof document !== "undefined" ? new URL(src.url, document.baseURI).href : src.url;
 
+  return drawPlan(L, ctx, rgb, stops, async (tile, signal) => {
+    const { t, lv } = tile;
+    const key = tileBlobKey(L.source, t);
+    let bytes;
+    if (blobs[key] !== undefined) {
+      const b = blobs[key];
+      bytes = typeof b === "string" ? decodeBase64(b.trim()) : b instanceof Uint8Array ? b : new Uint8Array(b);
+    } else {
+      // A tile blob the server has (a served page), else a range request.
+      const served = ctx.servedBlob ? ctx.servedBlob(key, `tile ${tile.key}`, signal) : null;
+      bytes = served ? await served : await fetchRange(url, t.byte_offset, t.byte_length, signal);
+    }
+    if (signal.aborted) throw signal.reason;
+    if (bytes.length !== t.byte_length) throw new Error(`tile ${tile.key}: got ${bytes.length} bytes, expected ${t.byte_length}`);
+    const [w, h] = t.size;
+    const { samples, spp } = await decodeTileSamples(bytes, lv.encoding, w, h);
+    return { samples, spp, w, h, win: t.window, enc: lv.encoding, nodata: lv.grid.nodata, band: lv.encoding.band || 1 };
+  });
+}
+
+// A tiled_raster over a 0.6 chunks source.
+function buildChunkRaster(L, ctx, src, rgb, stops, fail) {
+  const what = `layer ${L.id}`;
+  const problem = chunksProblem(src, L);
+  if (problem) return fail(problem, problem.replace(/ \(.*$/, ""));
+  let refs;
+  try {
+    refs = chunkRefs(src, ctx.tables, what);
+  } catch (err) {
+    return fail(err.message.replace(`${what}: `, ""), "refs not read");
+  }
+  const { interleave } = chunkLayout(src);
+  const enc = chunkEncoding(src);
+  const band = rgb ? 1 : L.band || 1;
+  // Bytes a page carries for a url (a blob keyed by the url as the scene
+  // writes it), decoded once.
+  const carried = new Map();
+  const blobBytes = (k) => {
+    if (!carried.has(k)) {
+      const b = ctx.blobs[k];
+      carried.set(k, typeof b === "string" ? decodeBase64(b.trim()) : b instanceof Uint8Array ? b : new Uint8Array(b));
+    }
+    return carried.get(k);
+  };
+  const resolve = (u) => (typeof document !== "undefined" ? new URL(u, document.baseURI).href : u);
+  return drawPlan(L, ctx, rgb, stops, async (tile, signal) => {
+    const { t, lv } = tile;
+    const ref = refs.get(chunkKey(lv.level, t.col, t.row, interleave === "separate" ? band : 0));
+    // Not stored: every cell is no data, so nothing is drawn.
+    if (!ref) return null;
+    let bytes;
+    if (ctx.blobs[ref.url] !== undefined) {
+      const all = blobBytes(ref.url);
+      if (ref.offset + ref.length > all.length) {
+        throw new Error(`chunk ${tile.key}: blob "${ref.url}" has ${all.length} bytes; the chunk needs ${ref.offset + ref.length}`);
+      }
+      bytes = all.subarray(ref.offset, ref.offset + ref.length);
+    } else {
+      const served = ctx.servedUrl ? ctx.servedUrl(ref.url) : null;
+      bytes = await fetchRange(served || resolve(ref.url), ref.offset, ref.length, signal);
+    }
+    if (signal.aborted) throw signal.reason;
+    if (bytes.length !== ref.length) throw new Error(`chunk ${tile.key}: got ${bytes.length} bytes, expected ${ref.length}`);
+    const level = chunkLevel(src, lv.level);
+    const [w, h] = level.size;
+    const { samples, spp } = await decodeChunk(bytes, src, w, h);
+    return { samples, spp, w, h, win: chunkWindow(level, t.col, t.row), enc, nodata: src.nodata,
+      band: interleave === "separate" ? 1 : band };
+  });
+}
+
+// Draw a plan: pick a level for the view, load the tiles in view with
+// get(tile, signal), which resolves to decoded samples ({samples, spp, w,
+// h, win, enc, nodata, band}) or null for a tile with nothing to draw, and
+// draw each as a textured mesh.
+function drawPlan(L, ctx, rgb, stops, get) {
+  const { tables } = ctx;
+  const what = `layer ${L.id}`;
+  const plan = L.plan;
   const m = plan.mesh;
   const pos = listColumn(tables[m.vertices], m.position_column || "position", what);
   const uv = listColumn(tables[m.vertices], m.uv_column || "uv", what);
@@ -210,26 +299,13 @@ export function buildTiledRaster(L, ctx) {
   }
 
   async function load(tile, signal) {
-    const { t, lv } = tile;
-    const key = tileBlobKey(L.source, t);
-    let bytes;
-    if (blobs[key] !== undefined) {
-      const b = blobs[key];
-      bytes = typeof b === "string" ? decodeBase64(b.trim()) : b instanceof Uint8Array ? b : new Uint8Array(b);
-    } else {
-      // A tile blob the server has (a served page), else a range request.
-      const served = ctx.servedBlob ? ctx.servedBlob(key, `tile ${tile.key}`, signal) : null;
-      bytes = served ? await served : await fetchRange(url, t.byte_offset, t.byte_length, signal);
-    }
+    const d = await get(tile, signal);
+    if (d === null) return null;
     if (signal.aborted) throw signal.reason;
-    if (bytes.length !== t.byte_length) throw new Error(`tile ${tile.key}: got ${bytes.length} bytes, expected ${t.byte_length}`);
-    const [w, h] = t.size;
-    const { samples, spp } = await decodeTileSamples(bytes, lv.encoding, w, h);
-    if (signal.aborted) throw signal.reason;
+    const { samples, spp, w, h, win, enc, nodata } = d;
     const px = rgb
-      ? colorizeRGB(samples, spp, w, h, t.window, lv.encoding, lv.grid.nodata, rgb)
-      : colorizeTile(pickBand(samples, spp, lv.encoding.band || 1, w * h), w, h, t.window, lv.encoding,
-        lv.grid.nodata, L.palette.range, lut);
+      ? colorizeRGB(samples, spp, w, h, win, enc, nodata, rgb)
+      : colorizeTile(pickBand(samples, spp, d.band, w * h), w, h, win, enc, nodata, L.palette.range, lut);
     const image = document.createElement("canvas");
     image.width = w;
     image.height = h;
@@ -237,7 +313,7 @@ export function buildTiledRaster(L, ctx) {
     return new SimpleMeshLayer({
       id: `${L.id}--${tile.key}`,
       data: [0],
-      mesh: meshOf(t),
+      mesh: meshOf(tile.t),
       texture: image,
       coordinateSystem: ctx.coordinateSystem,
       getPosition: [0, 0, 0],
@@ -309,11 +385,11 @@ export function buildTiledRaster(L, ctx) {
         .forEach((l) => l.tiles.forEach((x) => {
           if (x.state === "ready" && meets(x.t.footprint, view.bounds)) {
             x.used = now;
-            out.push(x.layer);
+            if (x.layer) out.push(x.layer);
           }
         }));
     }
-    want.forEach((x) => x.state === "ready" && out.push(x.layer));
+    want.forEach((x) => x.state === "ready" && x.layer && out.push(x.layer));
     // Loads the view no longer needs are aborted; idle decoded tiles past
     // the cache size are dropped, least recently drawn first.
     for (const x of live) if (x.state === "loading" && x.used < now) forget(x);

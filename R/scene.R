@@ -6,14 +6,16 @@
 #' which needs 0.2; a tiled raster drawn as a colour image (`rgb`) or with
 #' JPEG tiles needs 0.3; a view with `bounds` (see [scene()]'s `domain`)
 #' needs 0.4; legends ([scene_add_legend()]) or a layer `popup` (see
-#' [scene_add_layer()]) need 0.5. Each version only adds to the one before,
-#' so earlier output is unchanged by the later additions.
+#' [scene_add_layer()]) need 0.5; a `chunks` data reference (chunk
+#' references, written by hand for now) needs 0.6. Each version only adds to
+#' the one before, so earlier output is unchanged by the later additions.
 #'
 #' @param scene Optional scene. Without it, the version of a new scene.
 #' @return A character string: `"0.1"`, `"0.2"` for a scene with a
 #'   `tiled_raster` layer, `"0.3"` for one whose tiled raster uses `rgb`
-#'   or JPEG tiles, `"0.4"` for one whose view has `bounds`, or `"0.5"` for
-#'   one with legends or popups. A scene already marked with a version keeps
+#'   or JPEG tiles, `"0.4"` for one whose view has `bounds`, `"0.5"` for
+#'   one with legends or popups, or `"0.6"` for one with a `chunks` data
+#'   reference. A scene already marked with a version keeps
 #'   at least that version (removing its bounds by hand leaves it 0.4).
 #' @export
 #' @examples
@@ -22,7 +24,9 @@
 scene_spec_version <- function(scene = NULL) {
   if (is.null(scene)) return("0.1")
   kinds <- vapply(scene$layers, function(l) as.character(l$kind %||% ""), "")
-  v <- if (uses_spec_05(scene)) {
+  v <- if (uses_spec_06(scene)) {
+    "0.6"
+  } else if (uses_spec_05(scene)) {
     "0.5"
   } else if (!is.null(scene$view$bounds)) {
     "0.4"
@@ -41,12 +45,17 @@ scene_spec_version <- function(scene = NULL) {
   v
 }
 
-scene_spec_versions <- c("0.1", "0.2", "0.3", "0.4", "0.5")
+scene_spec_versions <- c("0.1", "0.2", "0.3", "0.4", "0.5", "0.6")
 
 ## Is spec version `v` the same as or later than `min`?
 spec_at_least <- function(v, min) {
   is.character(v) && length(v) == 1L && v %in% scene_spec_versions &&
     match(v, scene_spec_versions) >= match(min, scene_spec_versions)
+}
+
+## Does a scene use a scene spec 0.6 feature (a chunks data reference)?
+uses_spec_06 <- function(scene) {
+  any(vapply(scene$data, function(d) identical(d$format, "chunks"), TRUE))
 }
 
 ## Does a scene use a scene spec 0.5 feature (legends, or a layer popup)?

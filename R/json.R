@@ -1,7 +1,7 @@
 #' Scene as scene spec JSON
 #'
 #' Writes a scene as a scene spec JSON document, as the lowest version that
-#' can express it (0.1 to 0.5; see [scene_spec_version()]). The blobs are not
+#' can express it (0.1 to 0.6; see [scene_spec_version()]). The blobs are not
 #' included; a transport delivers them beside the document (see
 #' [scene_blobs()]). The output is ASCII: other characters are written as
 #' `\uXXXX` escapes.

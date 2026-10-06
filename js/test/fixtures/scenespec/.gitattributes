@@ -1,3 +1,5 @@
 # Arrow IPC data fixtures: binary record batches, never text.
 data/*.arrows binary
 data/invalid/*.arrows binary
+# Zarr chunk files: zlib-compressed bytes, never text.
+conformance/tiny.zarr/[0-9]*.[0-9]* binary

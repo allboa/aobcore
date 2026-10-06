@@ -1,5 +1,26 @@
 # aobcore 0.0.0.9000
 
+* Renderer: draws scene spec 0.6 chunk references (#61; allboa/design
+  decision 0010 item 2). A `tiled_raster` whose source is a `chunks` data
+  reference reads each planned chunk's bytes by its ref's `url`, `offset`
+  and `length` (an HTTP range request, or a slice of a blob keyed by that
+  `url` when the page carries one or, on a served page, lists it), undoes
+  the codec chain in reverse and draws the chunk as a COG tile is drawn
+  (palette or `rgb`, `nodata`, `scale` and `offset`, mesh). Codecs: `bytes`
+  (either endian), `deflate` and `gzip` through the browser's own
+  `DecompressionStream`, and the `horizontal` and `floating_point`
+  predictors with a stride of `bands` for `pixel` interleave. `zstd`,
+  `lzw`, `blosc` and `jpeg` chains are a layer error naming the codec. A
+  planned chunk with no ref is no data and is not drawn; edge chunks are
+  padded; `pixel`, `plane` and `separate` interleave and the layer's `band`
+  follow the 0.6 README; refs may be inline rows or an Arrow table. Tested
+  against GDAL's reads of scenespec's `tiny.zarr` (vendored in
+  `js/test/fixtures/scenespec`) and of a deflate COG of 2 int16 bands
+  interleaved by pixel (`tools/make-chunk-fixtures.R`). In R,
+  `scene_spec_version()` knows 0.6 (a scene with a `chunks` reference), and
+  `write_scene_html()` accepts a 0.6 scene and embeds the blobs named by
+  its chunk refs' urls. No producer writes `chunks` yet.
+
 * `scene_add_data()` and `scene_add_vector()` check IPC bytes and native
   GeoArrow streams against scene spec's explicit-data contract, so data the
   page would refuse are an error in R (#59). The CRS in the geometry
