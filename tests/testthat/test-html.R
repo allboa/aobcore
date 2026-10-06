@@ -233,8 +233,8 @@ test_that("a scene spec 0.6 chunks scene is written with its chunk bytes keyed b
                               palette = "ocean", range = c(-2, 15), embed = FALSE, url = "polar_3031.tif")
   l0 <- cog$levels[[1]]
   lv <- cog$levels[[4]]
-  ## The COG's level 3 tiles as chunk refs (a hand-written 0.6 scene: no
-  ## producer writes chunks yet).
+  ## The COG's level 3 tiles as chunk refs, written by hand (test-chunks.R
+  ## covers cog_chunks()), and their bytes as one blob keyed by the url.
   s$data$sst <- list(
     format = "chunks", url = "polar_3031.tif",
     grid = list(crs = "EPSG:3031", geotransform = l0$geotransform, dim = l0$dim, chunk_size = l0$tile_size,

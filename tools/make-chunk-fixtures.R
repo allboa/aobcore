@@ -2,7 +2,7 @@
 #
 #   Rscript tools/make-chunk-fixtures.R
 #
-# Needs aobcore installed (for cog_info(), cog_plan() and
+# Needs aobcore installed (for cog_chunks(), cog_plan() and
 # scene_add_tiled_raster()) and gdalraster. Writes:
 #
 # - js/test/fixtures/chunks/int16-pixel.tif: a 300 x 200 COG in EPSG:3031,
@@ -13,12 +13,20 @@
 # - js/test/fixtures/chunks/float32-big.tif: a 100 x 70 GeoTIFF, 2 float32
 #   bands interleaved by pixel, big endian, deflate with the floating point
 #   predictor, 64 x 64 tiles.
-# - js/test/chunks-gdal.json: a 0.6 scene drawing int16-pixel.tif as
-#   chunks (its real TileOffsets and TileByteCounts as refs, levels 0 and
-#   1, band 2 through a palette) with its mesh blobs (base64), and cases:
-#   a chunks source each (the two TIFFs, and scenespec's tiny.zarr as
-#   vendored in js/test/fixtures/scenespec) with cells whose values GDAL
-#   reads, so the renderer's chunk decoding is checked against GDAL.
+# - js/test/fixtures/chunks/uint16-zstd-band.tif: a 90 x 70 GeoTIFF, 2
+#   uint16 bands stored separately (INTERLEAVE=BAND, so a ref per band),
+#   zstd with the horizontal predictor, 32 x 32 tiles.
+# - js/test/fixtures/chunks/float32-lzw.tif: a 90 x 70 GeoTIFF, 1 float32
+#   band, lzw with the floating point predictor, 32 x 32 tiles.
+# - js/test/chunks-gdal.json: cases, each a chunks source with cells whose
+#   values GDAL reads (the four TIFFs as cog_chunks() describes them, and
+#   scenespec's tiny.zarr as vendored in js/test/fixtures/scenespec), so the
+#   renderer's chunk decoding is checked against GDAL; a 0.6 scene drawing
+#   int16-pixel.tif over its chunks (scene_add_tiled_raster(format =
+#   "chunks"), levels 0 and 1, band 2 through a palette, read by range) with
+#   its mesh blobs (base64); and the same layer planned at level 1 only and
+#   embedded, with its blobs (meshes and the planned chunks' bytes, keyed
+#   "<source>@<offset>+<length>").
 library(gdalraster)
 library(aobcore)
 
@@ -31,12 +39,12 @@ wave <- function(nx, ny, b) {
   sin(x / 23 + b) * 9000 + cos(y / 17 * b) * 7000 + (x - y) * 20
 }
 
-write_tif <- function(f, driver, dtype, nx, ny, gt, values, options, nodata = NULL) {
-  mem <- create("MEM", "", nx, ny, 2L, dtype, return_obj = TRUE)
+write_tif <- function(f, driver, dtype, nx, ny, gt, values, options, nodata = NULL, nb = 2L) {
+  mem <- create("MEM", "", nx, ny, nb, dtype, return_obj = TRUE)
   on.exit(mem$close())
   mem$setGeoTransform(gt)
   mem$setProjection(srs_to_wkt("EPSG:3031"))
-  for (b in 1:2) {
+  for (b in seq_len(nb)) {
     if (!is.null(nodata)) mem$setNoDataValue(b, nodata)
     mem$write(b, 0L, 0L, nx, ny, values(b))
   }
@@ -67,35 +75,24 @@ fflt <- write_tif(file.path("js", "test", "fixtures", "chunks", "float32-big.tif
                   c("COMPRESS=DEFLATE", "PREDICTOR=3", "TILED=YES", "BLOCKXSIZE=64", "BLOCKYSIZE=64",
                     "INTERLEAVE=PIXEL", "ENDIANNESS=BIG"))
 
-# A TIFF's levels as a chunks data reference: the grid of level 0 and its
-# overviews, the codec chain of its encoding, and a ref for every tile
-# GDAL wrote (TileOffsets and TileByteCounts; an unwritten tile has none).
+fzstd <- write_tif(file.path("js", "test", "fixtures", "chunks", "uint16-zstd-band.tif"), "GTiff", "UInt16",
+                   90L, 70L, c(-500000, 10000, 0, 400000, 0, -10000),
+                   function(b) round(wave(90L, 70L, b) + 20000),
+                   c("COMPRESS=ZSTD", "PREDICTOR=2", "TILED=YES", "BLOCKXSIZE=32", "BLOCKYSIZE=32",
+                     "INTERLEAVE=BAND"))
+flzw <- write_tif(file.path("js", "test", "fixtures", "chunks", "float32-lzw.tif"), "GTiff", "Float32",
+                  90L, 70L, c(-500000, 10000, 0, 400000, 0, -10000),
+                  function(b) wave(90L, 70L, b) / 1000,
+                  c("COMPRESS=LZW", "PREDICTOR=3", "TILED=YES", "BLOCKXSIZE=32", "BLOCKYSIZE=32"),
+                  nb = 1L)
+
+# A TIFF as a chunks data reference (cog_chunks(): the grid of level 0 and
+# its overviews, the codec chain of its encoding, and a ref for every tile
+# GDAL wrote; an unwritten tile has none), each ref naming `url`.
 chunks_ref <- function(f, url) {
-  cog <- cog_info(f)
-  l0 <- cog$levels[[1]]
-  enc <- l0$encoding
-  stopifnot(enc$codec == "deflate", enc$planar == "interleaved", cog$samples_per_pixel == 2L)
-  codecs <- list(list(name = "bytes", configuration = list(endian = enc$byte_order)))
-  if (enc$predictor != "none") {
-    codecs[[2]] <- list(name = "predictor", configuration = list(type = enc$predictor))
-  }
-  codecs[[length(codecs) + 1L]] <- list(name = "deflate")
-  levels <- lapply(cog$levels[-1], function(lv) {
-    stopifnot(identical(lv$tile_size, l0$tile_size))
-    list(level = lv$level, dim = lv$dim, geotransform = lv$geotransform)
-  })
-  rows <- list()
-  for (lv in cog$levels) for (i in seq_len(nrow(lv$tiles))) {
-    t <- lv$tiles[i, ]
-    rows[[length(rows) + 1L]] <- list(level = lv$level, col = t$col, row = t$row, url = url,
-                                      offset = t$byte_offset, length = t$byte_length)
-  }
-  grid <- list(crs = "EPSG:3031", geotransform = l0$geotransform, dim = l0$dim, chunk_size = l0$tile_size)
-  if (length(levels)) grid$levels <- levels
-  ref <- list(format = "chunks", grid = grid, dtype = enc$dtype, bands = 2L, interleave = "pixel",
-              codecs = codecs)
-  if (!is.null(cog$nodata)) ref$nodata <- cog$nodata
-  ref$refs <- list(rows = rows)
+  ref <- unclass(cog_chunks(f, url = url))
+  ref$url <- NULL
+  ref$refs$rows <- lapply(ref$refs$rows, function(r) c(r, list(url = url)))
   ref
 }
 
@@ -117,12 +114,20 @@ gdal_cells <- function(f, cells, level = 0L, open_options = character()) {
 
 src_int <- chunks_ref(fint, "fixtures/chunks/int16-pixel.tif")
 src_flt <- chunks_ref(fflt, "fixtures/chunks/float32-big.tif")
+src_zstd <- chunks_ref(fzstd, "fixtures/chunks/uint16-zstd-band.tif")
+src_lzw <- chunks_ref(flzw, "fixtures/chunks/float32-lzw.tif")
+stopifnot(identical(vapply(src_zstd$codecs, `[[`, "", "name"), c("bytes", "predictor", "zstd")),
+          identical(src_zstd$interleave, "separate"),
+          identical(vapply(src_lzw$codecs, `[[`, "", "name"), c("bytes", "predictor", "lzw")))
 cells_int <- c(
   gdal_cells(fint, data.frame(x = c(0, 1, 2, 127, 128, 255, 200, 299, 256, 299, 0),
                               y = c(0, 0, 0, 127, 0, 5, 150, 199, 128, 130, 199)), 0L),
   gdal_cells(fint, data.frame(x = c(0, 1, 149, 70), y = c(0, 0, 99, 40)), 1L)
 )
 cells_flt <- gdal_cells(fflt, data.frame(x = c(0, 1, 63, 64, 99, 10), y = c(0, 0, 63, 0, 69, 66)), 0L)
+edge_cells <- data.frame(x = c(0, 1, 31, 32, 89, 64, 45, 89), y = c(0, 0, 31, 0, 69, 33, 64, 0))
+cells_zstd <- gdal_cells(fzstd, edge_cells, 0L)
+cells_lzw <- gdal_cells(flzw, edge_cells, 0L)
 
 # The vendored Zarr v2 array (GDAL's Zarr driver: x, y are array indices).
 zdir <- file.path("js", "test", "fixtures", "scenespec", "conformance")
@@ -131,40 +136,43 @@ cells_zarr <- gdal_cells(file.path(zdir, "tiny.zarr"),
                          data.frame(x = c(0, 1, 9, 10, 23, 5, 19, 23, 20),
                                     y = c(0, 0, 9, 0, 0, 12, 19, 10, 15)), 0L)
 
-# The scene: int16-pixel.tif planned at levels 0 and 1 as a 0.2 tiled
-# raster, then its cog source replaced by the chunks reference and its plan
-# levels cut down to what a plan over chunks gives.
-s <- scene_add_tiled_raster(scene("EPSG:3031"), "cog", cog_plan(fint, "EPSG:3031", levels = 0:1),
+# The scene: int16-pixel.tif planned at levels 0 and 1 and drawn over its
+# chunks, band 2 through a palette, read by range from "int16-pixel.tif";
+# and the same layer planned at level 1 only with its chunks' bytes
+# embedded.
+cog2 <- cog_info(fint, band = 2L)
+s <- scene_add_tiled_raster(scene("EPSG:3031", domain = FALSE), "cog", cog_plan(cog2, "EPSG:3031", levels = 0:1),
                             palette = "ocean", range = c(-20000, 20000), embed = FALSE,
-                            url = "int16-pixel.tif")
+                            url = "int16-pixel.tif", format = "chunks")
+stopifnot(identical(s$version, "0.6"), identical(s$layers[[1]]$band, 2L))
 blobs <- lapply(scene_blobs(s), b64)
 s <- unclass(s)
 attr(s, "blobs") <- NULL
-s$version <- "0.6"
-src_scene <- src_int
-src_scene$url <- "int16-pixel.tif"
-src_scene$refs$rows <- lapply(src_scene$refs$rows, function(r) {
-  r$url <- NULL
-  r
-})
-s$data$cog <- src_scene
-s$layers[[1]]$band <- 2L
-s$layers[[1]]$plan$levels <- lapply(s$layers[[1]]$plan$levels, function(lv) {
-  list(level = lv$level, pixel_size = lv$pixel_size,
-       tiles = lapply(lv$tiles, function(t) t[c("col", "row", "footprint", "mesh")]))
-})
+attr(s, "files") <- NULL
+e <- scene_add_tiled_raster(scene("EPSG:3031", domain = FALSE), "cog", cog_plan(cog2, "EPSG:3031", levels = 1L),
+                            palette = "ocean", range = c(-20000, 20000), embed = TRUE,
+                            url = "int16-pixel.tif", format = "chunks")
+eblobs <- lapply(scene_blobs(e), b64)
+e <- unclass(e)
+attr(e, "blobs") <- NULL
 out <- list(
   scene = s,
   blobs = blobs,
+  embedded = list(scene = e, blobs = eblobs),
   cases = list(
     list(name = "zarr v2 float32 deflate (scenespec tiny.zarr)", base = "fixtures/scenespec/conformance",
          source = zscene$data$tiny, cells = cells_zarr),
     list(name = "COG int16, 2 bands pixel, deflate horizontal (int16-pixel.tif)", base = ".",
          source = src_int, cells = cells_int),
     list(name = "GeoTIFF float32 big endian, 2 bands pixel, deflate floating_point (float32-big.tif)",
-         base = ".", source = src_flt, cells = cells_flt)
+         base = ".", source = src_flt, cells = cells_flt),
+    list(name = "GeoTIFF uint16, 2 bands separate, zstd horizontal (uint16-zstd-band.tif)",
+         base = ".", source = src_zstd, cells = cells_zstd),
+    list(name = "GeoTIFF float32, lzw floating_point (float32-lzw.tif)",
+         base = ".", source = src_lzw, cells = cells_lzw)
   )
 )
 f <- file.path("js", "test", "chunks-gdal.json")
 writeLines(aobcore:::json_value(out, ""), f)
-cat("wrote", f, file.size(f), "bytes;", fint, file.size(fint), "bytes;", fflt, file.size(fflt), "bytes\n")
+cat("wrote", f, file.size(f), "bytes;", paste(basename(c(fint, fflt, fzstd, flzw)),
+    file.size(c(fint, fflt, fzstd, flzw)), "bytes", collapse = "; "), "\n")

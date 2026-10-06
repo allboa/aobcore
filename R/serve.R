@@ -81,8 +81,8 @@
 #' @param scene A scene, as for [write_scene_html()].
 #' @param blobs A named list of raw vectors, as for [write_scene_html()].
 #'   Defaults to the blobs the scene carries.
-#' @param files Registered local files: a named list, by cog data id, of
-#'   records with `path`, `size`, `mtime` and `url_explicit`. Defaults to
+#' @param files Registered local files: a named list, by cog (or chunks)
+#'   data id, of records with `path`, `size`, `mtime` and `url_explicit`. Defaults to
 #'   those the scene carries (see [scene_add_tiled_raster()]); give it for a
 #'   scene that is a plain list.
 #' @param port A port number, or `NULL` for a random one.
@@ -282,9 +282,9 @@ serve_content <- function(scene, blobs, files, title, theme, serial = NULL, sock
   for (id in names(files)) {
     rec <- files[[id]]
     ref <- scene$data[[id]]
-    if (is.null(ref) || !identical(ref$format, "cog")) {
-      stop("A registered file is keyed by data id `", id, "`, which is not a cog in ",
-           "`scene$data`.", call. = FALSE)
+    if (is.null(ref) || !isTRUE(ref$format %in% c("cog", "chunks")) || is.null(ref$url)) {
+      stop("A registered file is keyed by data id `", id, "`, which is not a cog or a ",
+           "chunks reference with a `url` in `scene$data`.", call. = FALSE)
     }
     check_file_unchanged(id, rec, stop)
     name <- basename(rec$path)
@@ -295,14 +295,16 @@ serve_content <- function(scene, blobs, files, title, theme, serial = NULL, sock
   }
   used <- check_scene_shape(served, blobs)
   blobs <- blobs[intersect(names(blobs), used)]
-  ## A cog with a relative url this server cannot answer: no file behind it
-  ## and no embedded tiles.
+  ## A cog (or a chunks reference's url) with a relative url this server
+  ## cannot answer: no file behind it, no embedded tiles and no blob keyed
+  ## by the url.
   for (id in names(served$data)) {
     ref <- served$data[[id]]
-    if (!identical(ref$format, "cog") || grepl("^[A-Za-z][A-Za-z0-9+.-]*:", ref$url)) next
+    if (!isTRUE(ref$format %in% c("cog", "chunks")) || is.null(ref$url) ||
+        grepl("^[A-Za-z][A-Za-z0-9+.-]*:", ref$url)) next
     if (!is.null(routes[[id]]) && !isTRUE(files[[id]]$url_explicit)) next
-    if (any(startsWith(names(blobs), paste0(id, "@")))) next
-    stop("The cog data reference `", id, "` has the relative url \"", ref$url,
+    if (any(startsWith(names(blobs), paste0(id, "@"))) || ref$url %in% names(blobs)) next
+    stop("The ", ref$format, " data reference `", id, "` has the relative url \"", ref$url,
          "\", which the server cannot answer: no file is registered for it and its ",
          "tiles are not embedded. Add the layer with `embed = FALSE` (or `embed = TRUE`), ",
          "or give an absolute `url`.", call. = FALSE)

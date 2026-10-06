@@ -1,5 +1,45 @@
 # aobcore 0.0.0.9000
 
+* Chunk references from R, and the codecs already bundled (#63). New
+  `cog_chunks()` describes a COG as a scene spec 0.6 `chunks` data
+  reference: the grid of every level (GDAL's own geotransform and size for
+  each overview), the codec chain mapped from the TIFF's compression and
+  predictor (`bytes` with the file's byte order, then `predictor`
+  `horizontal` or `floating_point`, then `deflate`, `zstd` or `lzw`; JPEG
+  as the whole chain with its shared tables, YCbCr or greyscale only), and
+  a ref for every tile GDAL says is stored (its TileOffsets and
+  TileByteCounts), so a sparse tile has none. Bands stored separately get
+  a ref per band. Compressions with no 0.6 codec (PACKBITS, LERC, WEBP),
+  or different compressions across levels, are an error that says to draw
+  the COG as a `cog`. `scene_add_tiled_raster(format = "chunks")` draws a
+  COG over its chunk references with the same plan as the `cog` path
+  (levels, tiles, footprints and meshes in the view CRS), each plan level
+  cut down to what 0.6 asks; an embedded page carries only the planned
+  chunks' bytes, one blob per chunk keyed `"<source>@<offset>+<length>"`
+  as a cog's tiles are, and `embed = FALSE` registers the file for
+  `serve_scene()` as for a cog. The renderer looks up that per-chunk blob
+  (in the page, or listed by a served page) for a ref at the reference's
+  own `url` before a blob keyed by the url, and decodes `zstd` and `lzw`
+  with the decoders the COG path bundles (fzstd, geotiff.js's TIFF LZW),
+  `deflate` and `gzip` synchronously with the bundled fflate instead of
+  the browser's `DecompressionStream` (so trailing bytes and Safari before
+  16.4 are no longer a problem), and `jpeg` with the browser's image
+  decoder and the chain's tables; `blosc` is still a layer error.
+  `write_scene_html()` keeps blobs named by a refs table's `url` column (an
+  Arrow stream blob) and per-chunk blobs, not only inline rows' urls. The
+  renderer tests check zstd and lzw GeoTIFFs written by GDAL (a uint16
+  zstd file with its bands stored separately, and a float32 lzw file)
+  against GDAL's values, a jpeg chunk against GDAL's read, and the colour
+  drawn at one cell of scenespec's `tiny.zarr` (row 0 at the bottom); CI
+  validates written 0.6 scenes against scenespec 898419b. A Zarr producer
+  is left for later: gdalraster's multidimensional API does not give chunk
+  keys or byte ranges. `cog_info()` (so both the `cog` and the `chunks`
+  paths) now treats GDAL 3.11's `INTERLEAVE=TILE` as bands stored
+  separately, as `INTERLEAVE=BAND` is, and refuses overviews in an
+  external `.ovr` file (or any overview that is not an image of the
+  GeoTIFF itself), whose tiles the renderer cannot read from the
+  GeoTIFF's URL.
+
 * Renderer: draws scene spec 0.6 chunk references (#61; allboa/design
   decision 0010 item 2). A `tiled_raster` whose source is a `chunks` data
   reference reads each planned chunk's bytes by its ref's `url`, `offset`

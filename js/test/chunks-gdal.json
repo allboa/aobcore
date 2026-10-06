@@ -8,6 +8,7 @@
     "data": {
       "cog": {
         "format": "chunks",
+        "url": "int16-pixel.tif",
         "grid": {
           "crs": "EPSG:3031",
           "geotransform": [-3000000,20000,0,2000000,0,-20000],
@@ -94,8 +95,7 @@
               "length": 1361
             }
           ]
-        },
-        "url": "int16-pixel.tif"
+        }
       },
       "cog_vertices": {
         "format": "arrow-ipc-stream",
@@ -224,6 +224,175 @@
   "blobs": {
     "cog_vertices": "/////yABAAAIAAAAAAAAAPz+//8EAAEABAAAABT///8UAAAADAAAAAQAAAAAAAAAAAAAAAIAAABUAAAABAAAAEj///9AAAAAARAAADAAAAAEAAAAAQAAAAQAAABw////FAAAAAEDAAAEAAAAhv///wEAAAAAAAAAAAAAAJz///8CAAAAAgAAAHV2AACU////QAAAAAEQAAAwAAAABAAAAAEAAAAEAAAAvP///xQAAAABAwAABAAAANL///8BAAAAAAAAAAAAAADo////AgAAAAgAAABwb3NpdGlvbgAAAAAGAAgABAAGAAYABAAMABAABAAIAAkADAAQABQABAAIAAkADAAAABAADAAQAAAABAAIAAwACgAMAAQABgAIAAAAAAAAAAAAAAD/////AAEAAAQAAAAa////BAADABAAAADAAQAAAAAAAAAAAAA8////HAAAAAAAAAB0AAAACAAAAAAAAAAGAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAOAAAAAAAAAA4AAAAAAAAAAAAAAAAAAAAOAAAAAAAAAAAAAAAAAAAADgAAAAAAAAAOAAAAAAAAAAAAAAAAQAAAAcAAAAAAAAAAAAAAAAAAAAOAAAAAAAAAAAAAAAAAAAABwAAAAAAAAAAAAAAAAAAAA4AAAAAAAAAAAAAAAAAAAACgAUAAQADAAQAAwAFAAEAAYACAAMAAAAAAAAAAAAAAAAGzfKACT0SQBlAUoAJPRJABs3ygAk9MkAZQFKACT0yQBlAUoAJPRJABs3SgAk9EkAZQFKACT0yQAbN0oAJPTJABs3ygAk9EkA2NbIACT0SQAbN8oAuAjJANjWyAC4CMkA2NbIACT0SQBlAUoAJPRJANjWyAC4CMkAZQFKALgIyQAbN8oAuAjJANjWyAC4CMkAGzfKACT0yQDY1sgAJPTJANjWyAC4CMkAZQFKALgIyQDY1sgAJPTJAGUBSgAk9MkAZQFKALgIyQAbN0oAuAjJAGUBSgAk9MkAGzdKACT0yQAAAAAAAAAAAACAPwAAAAAAAAAAAABIPwAAgD8AAEg/AAAAAAAAAAAAADA+AAAAAAAAAAAAAEg/AAAwPgAASD8AAAAAAAAAAAAAgD8AAAAAAAAAAAAAgD8AAIA/AACAPwAAAAAAAAAAAACAPwAAAAAAAAAAAACAPwAAgD8AAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAABA/AACAPwAAED8AAAAAAAAAAAAAgD8AAAAAAAAAAAAAED8AAIA/AAAQPwAAAAAAAAAAAACwPgAAAAAAAAAAAAAQPwAAsD4AABA//////wAAAAA=",
     "cog_indices": "/////4AAAAAIAAAAAAAAAJL///8EAAEABAAAAKr///8UAAAADAAAAAQAAAAAAAAAAAAAAAEAAAAEAAAA1v///xQAAAABAgAABAAAAOz///8gAAAABQAAAGluZGV4AAAABgAIAAQADAAQAAQACAAJAAwADAAQAAAABAAIAAwACgAMAAQABgAIAP////+QAAAABAAAAIr///8EAAMAEAAAAKgAAAAAAAAAAAAAAKz///8qAAAAAAAAADQAAAAIAAAAAAAAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACoAAAAAAAAAAAAAAABAAAAKgAAAAAAAAAAAAAAAAAAAAoAFAAEAAwAEAAMABQABAAGAAgADAAAAAAAAAAAAAAAAAAAAAIAAAABAAAAAQAAAAIAAAADAAAAAAAAAAIAAAABAAAAAQAAAAIAAAADAAAAAAAAAAIAAAABAAAAAQAAAAIAAAADAAAAAAAAAAIAAAABAAAAAQAAAAIAAAADAAAAAAAAAAIAAAABAAAAAQAAAAIAAAADAAAAAAAAAAIAAAABAAAAAQAAAAIAAAADAAAAAAAAAAIAAAABAAAAAQAAAAIAAAADAAAA/////wAAAAA="
+  },
+  "embedded": {
+    "scene": {
+      "version": "0.6",
+      "view": {
+        "type": "projected",
+        "crs": "EPSG:3031"
+      },
+      "data": {
+        "cog": {
+          "format": "chunks",
+          "url": "int16-pixel.tif",
+          "grid": {
+            "crs": "EPSG:3031",
+            "geotransform": [-3000000,20000,0,2000000,0,-20000],
+            "dim": [300,200],
+            "chunk_size": [128,128],
+            "levels": [
+              {
+                "level": 1,
+                "dim": [150,100],
+                "geotransform": [-3000000,40000,0,2000000,0,-40000]
+              }
+            ]
+          },
+          "dtype": "int16",
+          "bands": 2,
+          "interleave": "pixel",
+          "codecs": [
+            {
+              "name": "bytes",
+              "configuration": {
+                "endian": "little"
+              }
+            },
+            {
+              "name": "predictor",
+              "configuration": {
+                "type": "horizontal"
+              }
+            },
+            {
+              "name": "deflate"
+            }
+          ],
+          "nodata": -32768,
+          "refs": {
+            "rows": [
+              {
+                "level": 0,
+                "col": 0,
+                "row": 0,
+                "offset": 7909,
+                "length": 6009
+              },
+              {
+                "level": 0,
+                "col": 1,
+                "row": 0,
+                "offset": 13926,
+                "length": 6288
+              },
+              {
+                "level": 0,
+                "col": 0,
+                "row": 1,
+                "offset": 20222,
+                "length": 4249
+              },
+              {
+                "level": 0,
+                "col": 1,
+                "row": 1,
+                "offset": 24479,
+                "length": 4369
+              },
+              {
+                "level": 0,
+                "col": 2,
+                "row": 1,
+                "offset": 28856,
+                "length": 2493
+              },
+              {
+                "level": 1,
+                "col": 0,
+                "row": 0,
+                "offset": 1011,
+                "length": 5521
+              },
+              {
+                "level": 1,
+                "col": 1,
+                "row": 0,
+                "offset": 6540,
+                "length": 1361
+              }
+            ]
+          }
+        },
+        "cog_vertices": {
+          "format": "arrow-ipc-stream",
+          "blob": "cog_vertices"
+        },
+        "cog_indices": {
+          "format": "arrow-ipc-stream",
+          "blob": "cog_indices"
+        }
+      },
+      "layers": [
+        {
+          "id": "cog",
+          "kind": "tiled_raster",
+          "source": "cog",
+          "plan": {
+            "crs": "EPSG:3031",
+            "coverage": "all_levels",
+            "selection": {
+              "rule": "coarsest_sufficient"
+            },
+            "mesh": {
+              "vertices": "cog_vertices",
+              "indices": "cog_indices"
+            },
+            "levels": [
+              {
+                "level": 1,
+                "pixel_size": 40000,
+                "tiles": [
+                  {
+                    "col": 0,
+                    "row": 0,
+                    "footprint": [-3000000,2120000,-2000000,2000000],
+                    "mesh": {
+                      "first_vertex": 0,
+                      "vertex_count": 4,
+                      "first_index": 0,
+                      "index_count": 6
+                    }
+                  },
+                  {
+                    "col": 1,
+                    "row": 0,
+                    "footprint": [2120000,3000000,-2000000,2000000],
+                    "mesh": {
+                      "first_vertex": 4,
+                      "vertex_count": 4,
+                      "first_index": 6,
+                      "index_count": 6
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "palette": {
+            "name": "ocean",
+            "range": [-20000,20000]
+          },
+          "band": 2
+        }
+      ]
+    },
+    "blobs": {
+      "cog_vertices": "/////yABAAAIAAAAAAAAAPz+//8EAAEABAAAABT///8UAAAADAAAAAQAAAAAAAAAAAAAAAIAAABUAAAABAAAAEj///9AAAAAARAAADAAAAAEAAAAAQAAAAQAAABw////FAAAAAEDAAAEAAAAhv///wEAAAAAAAAAAAAAAJz///8CAAAAAgAAAHV2AACU////QAAAAAEQAAAwAAAABAAAAAEAAAAEAAAAvP///xQAAAABAwAABAAAANL///8BAAAAAAAAAAAAAADo////AgAAAAgAAABwb3NpdGlvbgAAAAAGAAgABAAGAAYABAAMABAABAAIAAkADAAQABQABAAIAAkADAAAABAADAAQAAAABAAIAAwACgAMAAQABgAIAAAAAAAAAAAAAAD/////AAEAAAQAAAAa////BAADABAAAACAAAAAAAAAAAAAAAA8////CAAAAAAAAAB0AAAACAAAAAAAAAAGAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAEAAAAAAAAAAAAAAAAQAAAAIAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAgAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAACgAUAAQADAAQAAwAFAAEAAYACAAMAAAAAAAAAAAAAAAAGzfKACT0SQBlAUoAJPRJABs3ygAk9MkAZQFKACT0yQBlAUoAJPRJABs3SgAk9EkAZQFKACT0yQAbN0oAJPTJAAAAAAAAAAAAAIA/AAAAAAAAAAAAAEg/AACAPwAASD8AAAAAAAAAAAAAMD4AAAAAAAAAAAAASD8AADA+AABIP/////8AAAAA",
+      "cog_indices": "/////4AAAAAIAAAAAAAAAJL///8EAAEABAAAAKr///8UAAAADAAAAAQAAAAAAAAAAAAAAAEAAAAEAAAA1v///xQAAAABAgAABAAAAOz///8gAAAABQAAAGluZGV4AAAABgAIAAQADAAQAAQACAAJAAwADAAQAAAABAAIAAwACgAMAAQABgAIAP////+QAAAABAAAAIr///8EAAMAEAAAADAAAAAAAAAAAAAAAKz///8MAAAAAAAAADQAAAAIAAAAAAAAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAwAAAAAAAAAAAAAAABAAAADAAAAAAAAAAAAAAAAAAAAAoAFAAEAAwAEAAMABQABAAGAAgADAAAAAAAAAAAAAAAAAAAAAIAAAABAAAAAQAAAAIAAAADAAAAAAAAAAIAAAABAAAAAQAAAAIAAAADAAAA/////wAAAAA=",
+      "cog@1011+5521": "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",
+      "cog@6540+1361": "eJzt299Pm1Ucx/HvOacdixh/lGgxJsuALiboLOJoiSxZYozhwpglaODCm2VLXGCY4AW70YR54694o9vQaBY1AZJBZjI08YYZF80MyYQpqywOGD8GoxSHWwaDducRbDaetk+pRUhO8/28/oDevHP6nPN9zkMt1EKbYbN+FzYW+vOG/ryhP2/ozxv684b+vKE/b+jPG/rzhv68oT9v6M8b+vOG/ryhP2/ozxv684b+vKE/b+jPG/rzhv68oT9v6M8b+vOG/ryhP2/ozxv684b+vKE/b+jPG/rzhv68oT9v6M8b+vOG/ryhP2/ozxv684b+vKE/b+jPG/rzhv68oT9v6M8b+vOG/ryhP2/ozxv684b+vKE/b+jPG/rzhv68oT9v6M8b+vOG/ryhP2tXlMqLyk7pUUekT9VIvyqWATUjAqpb+FWz2KEqhUctUEx+SyOyiXrk03RcTlsNst2qkvutPFls9YsJfVS06zrRqL0iqEPk0vXnWuYIjHeCPldReTKpf0RUqNOiTDULn6oUBff6v0k9cmdS/xKrT4zrY6Jd14pGXSiCOkQu3dU7fZPAeNV3PhGr/V+RflVk639Y+FRQFKgFisnvaEQ2UY/cScdl2GqQbVaVPGDlyWKrT4zrY6JD14pGXSgCOkRuLX+du0VgvOnFPMf+AVt/T0r/aatBtt/r3y/G9VHRoetEo/aKgA6RW++78NY8gfE+mo+JqDwpPeod6VM1skwVyYoM/Vtl2Kq3rf/E/kEdIpfuGXgX6z8H7Lm532V//pepYlv/1ed/1Pb8b5XTVr3t+d9ve/57RVCHyKXzB4vw/M8B+XOPbo3KTulRR2SJqpFlqlgG1IyoUN0O+z/n/X+fmEjZ/+35s/E6gfGWIqP3pzv/lalm4Vvn+W/v8NdhAuMVht/2OPVPXP/zDvt/+/q37/+DOkQuXT665SqB8RqnPiu07/+d9n8FaoGiCfu/xP2/vb9XBHSIXHpofGaYwHiuq5e3pTv/+dVhscPx/Jf5/P/iZMcggfHGxyK+9az/+qTzf/L6f/3ap78RGM8z2lS63v//59boXxkuOE9gvNaRx/2Z+mc3/wnoELl198zBXwiM1zzcXu48/+sWZao5zfoPWw2yLc36D+oQufRAZOgnAuN1Dw3vyv7/P3X9J/dvnW07S2C8vUNfVdjP//H5b+L8Z3X+G5//JM5/4/Of5Pnv0uzYjwTGe3lofNdmnP9is19i/eeArqHO8rXu/6TO/5zm/6nzvxOzg3j+54CDw15/pv//5Pm/0/9/8vx/LHII+/8c0DJSW5p5/p/9+7/emadw/s8Bf13p8mVe//MO53/7+k+9//Fa+A/M/3LAqbED29Lf/8vm/qd9/+fSX1zbfonAeN9PDHjt85/V/v/v/e/Hk9+MEBjPPVX38NJy/4J/7/9knv+c+Q/nv4sr7/8mnpwkMN6H09X5mzH/+WG0KkJgvOcji+5oFuvfPv9Pf//DrbeOfPA3gfG2Xz8tnJ7/9vc/meZ/Tvv/0ssXcP87Bzx245Te2Pc/8fX/zKWLtwmMV3LrkTvO63+t738yr/8nQm8sERiv/HYs5vT9p/37D0+G83+8f+L8t/D399A/B1RF9+ns3/859bff/3HpB/tLFgmM96z2i+Tzv9P3v4nn//T3v+Pn/+X1f/5VfP+ZAx4Qu9131/9G9V9Z/7t7q28QGO+seum+peX5T0GG7//ufv95JuX/P/X938r6f/9ccJbAeC9s8T6Uef4373D+S3z/l3z/b8vPh6YIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAALL2D3PsIlY="
+    }
   },
   "cases": [
     {
@@ -417,57 +586,57 @@
               "level": 0,
               "col": 0,
               "row": 0,
-              "url": "fixtures/chunks/int16-pixel.tif",
               "offset": 7909,
-              "length": 6009
+              "length": 6009,
+              "url": "fixtures/chunks/int16-pixel.tif"
             },
             {
               "level": 0,
               "col": 1,
               "row": 0,
-              "url": "fixtures/chunks/int16-pixel.tif",
               "offset": 13926,
-              "length": 6288
+              "length": 6288,
+              "url": "fixtures/chunks/int16-pixel.tif"
             },
             {
               "level": 0,
               "col": 0,
               "row": 1,
-              "url": "fixtures/chunks/int16-pixel.tif",
               "offset": 20222,
-              "length": 4249
+              "length": 4249,
+              "url": "fixtures/chunks/int16-pixel.tif"
             },
             {
               "level": 0,
               "col": 1,
               "row": 1,
-              "url": "fixtures/chunks/int16-pixel.tif",
               "offset": 24479,
-              "length": 4369
+              "length": 4369,
+              "url": "fixtures/chunks/int16-pixel.tif"
             },
             {
               "level": 0,
               "col": 2,
               "row": 1,
-              "url": "fixtures/chunks/int16-pixel.tif",
               "offset": 28856,
-              "length": 2493
+              "length": 2493,
+              "url": "fixtures/chunks/int16-pixel.tif"
             },
             {
               "level": 1,
               "col": 0,
               "row": 0,
-              "url": "fixtures/chunks/int16-pixel.tif",
               "offset": 1011,
-              "length": 5521
+              "length": 5521,
+              "url": "fixtures/chunks/int16-pixel.tif"
             },
             {
               "level": 1,
               "col": 1,
               "row": 0,
-              "url": "fixtures/chunks/int16-pixel.tif",
               "offset": 6540,
-              "length": 1361
+              "length": 1361,
+              "url": "fixtures/chunks/int16-pixel.tif"
             }
           ]
         }
@@ -722,33 +891,33 @@
               "level": 0,
               "col": 0,
               "row": 0,
-              "url": "fixtures/chunks/float32-big.tif",
               "offset": 445,
-              "length": 20065
+              "length": 20065,
+              "url": "fixtures/chunks/float32-big.tif"
             },
             {
               "level": 0,
               "col": 1,
               "row": 0,
-              "url": "fixtures/chunks/float32-big.tif",
               "offset": 20510,
-              "length": 11998
+              "length": 11998,
+              "url": "fixtures/chunks/float32-big.tif"
             },
             {
               "level": 0,
               "col": 0,
               "row": 1,
-              "url": "fixtures/chunks/float32-big.tif",
               "offset": 32508,
-              "length": 2324
+              "length": 2324,
+              "url": "fixtures/chunks/float32-big.tif"
             },
             {
               "level": 0,
               "col": 1,
               "row": 1,
-              "url": "fixtures/chunks/float32-big.tif",
               "offset": 34832,
-              "length": 1350
+              "length": 1350,
+              "url": "fixtures/chunks/float32-big.tif"
             }
           ]
         }
@@ -837,6 +1006,484 @@
           "x": 10,
           "y": 66,
           "value": 5.348802089691162
+        }
+      ]
+    },
+    {
+      "name": "GeoTIFF uint16, 2 bands separate, zstd horizontal (uint16-zstd-band.tif)",
+      "base": ".",
+      "source": {
+        "format": "chunks",
+        "grid": {
+          "crs": "EPSG:3031",
+          "geotransform": [-500000,10000,0,400000,0,-10000],
+          "dim": [90,70],
+          "chunk_size": [32,32]
+        },
+        "dtype": "uint16",
+        "bands": 2,
+        "interleave": "separate",
+        "codecs": [
+          {
+            "name": "bytes",
+            "configuration": {
+              "endian": "little"
+            }
+          },
+          {
+            "name": "predictor",
+            "configuration": {
+              "type": "horizontal"
+            }
+          },
+          {
+            "name": "zstd"
+          }
+        ],
+        "refs": {
+          "rows": [
+            {
+              "level": 0,
+              "col": 0,
+              "row": 0,
+              "band": 1,
+              "offset": 521,
+              "length": 350,
+              "url": "fixtures/chunks/uint16-zstd-band.tif"
+            },
+            {
+              "level": 0,
+              "col": 1,
+              "row": 0,
+              "band": 1,
+              "offset": 871,
+              "length": 340,
+              "url": "fixtures/chunks/uint16-zstd-band.tif"
+            },
+            {
+              "level": 0,
+              "col": 2,
+              "row": 0,
+              "band": 1,
+              "offset": 1211,
+              "length": 395,
+              "url": "fixtures/chunks/uint16-zstd-band.tif"
+            },
+            {
+              "level": 0,
+              "col": 0,
+              "row": 1,
+              "band": 1,
+              "offset": 1606,
+              "length": 354,
+              "url": "fixtures/chunks/uint16-zstd-band.tif"
+            },
+            {
+              "level": 0,
+              "col": 1,
+              "row": 1,
+              "band": 1,
+              "offset": 1960,
+              "length": 329,
+              "url": "fixtures/chunks/uint16-zstd-band.tif"
+            },
+            {
+              "level": 0,
+              "col": 2,
+              "row": 1,
+              "band": 1,
+              "offset": 2289,
+              "length": 386,
+              "url": "fixtures/chunks/uint16-zstd-band.tif"
+            },
+            {
+              "level": 0,
+              "col": 0,
+              "row": 2,
+              "band": 1,
+              "offset": 2675,
+              "length": 158,
+              "url": "fixtures/chunks/uint16-zstd-band.tif"
+            },
+            {
+              "level": 0,
+              "col": 1,
+              "row": 2,
+              "band": 1,
+              "offset": 2833,
+              "length": 144,
+              "url": "fixtures/chunks/uint16-zstd-band.tif"
+            },
+            {
+              "level": 0,
+              "col": 2,
+              "row": 2,
+              "band": 1,
+              "offset": 2977,
+              "length": 165,
+              "url": "fixtures/chunks/uint16-zstd-band.tif"
+            },
+            {
+              "level": 0,
+              "col": 0,
+              "row": 0,
+              "band": 2,
+              "offset": 3142,
+              "length": 330,
+              "url": "fixtures/chunks/uint16-zstd-band.tif"
+            },
+            {
+              "level": 0,
+              "col": 1,
+              "row": 0,
+              "band": 2,
+              "offset": 3472,
+              "length": 324,
+              "url": "fixtures/chunks/uint16-zstd-band.tif"
+            },
+            {
+              "level": 0,
+              "col": 2,
+              "row": 0,
+              "band": 2,
+              "offset": 3796,
+              "length": 405,
+              "url": "fixtures/chunks/uint16-zstd-band.tif"
+            },
+            {
+              "level": 0,
+              "col": 0,
+              "row": 1,
+              "band": 2,
+              "offset": 4201,
+              "length": 346,
+              "url": "fixtures/chunks/uint16-zstd-band.tif"
+            },
+            {
+              "level": 0,
+              "col": 1,
+              "row": 1,
+              "band": 2,
+              "offset": 4547,
+              "length": 353,
+              "url": "fixtures/chunks/uint16-zstd-band.tif"
+            },
+            {
+              "level": 0,
+              "col": 2,
+              "row": 1,
+              "band": 2,
+              "offset": 4900,
+              "length": 399,
+              "url": "fixtures/chunks/uint16-zstd-band.tif"
+            },
+            {
+              "level": 0,
+              "col": 0,
+              "row": 2,
+              "band": 2,
+              "offset": 5299,
+              "length": 163,
+              "url": "fixtures/chunks/uint16-zstd-band.tif"
+            },
+            {
+              "level": 0,
+              "col": 1,
+              "row": 2,
+              "band": 2,
+              "offset": 5462,
+              "length": 148,
+              "url": "fixtures/chunks/uint16-zstd-band.tif"
+            },
+            {
+              "level": 0,
+              "col": 2,
+              "row": 2,
+              "band": 2,
+              "offset": 5610,
+              "length": 163,
+              "url": "fixtures/chunks/uint16-zstd-band.tif"
+            }
+          ]
+        }
+      },
+      "cells": [
+        {
+          "level": 0,
+          "band": 1,
+          "x": 0,
+          "y": 0,
+          "value": 34573
+        },
+        {
+          "level": 0,
+          "band": 2,
+          "x": 0,
+          "y": 0,
+          "value": 35184
+        },
+        {
+          "level": 0,
+          "band": 1,
+          "x": 1,
+          "y": 0,
+          "value": 34797
+        },
+        {
+          "level": 0,
+          "band": 2,
+          "x": 1,
+          "y": 0,
+          "value": 35033
+        },
+        {
+          "level": 0,
+          "band": 1,
+          "x": 31,
+          "y": 31,
+          "value": 24667
+        },
+        {
+          "level": 0,
+          "band": 2,
+          "x": 31,
+          "y": 31,
+          "value": 12032
+        },
+        {
+          "level": 0,
+          "band": 1,
+          "x": 32,
+          "y": 0,
+          "value": 33777
+        },
+        {
+          "level": 0,
+          "band": 2,
+          "x": 32,
+          "y": 0,
+          "value": 25416
+        },
+        {
+          "level": 0,
+          "band": 1,
+          "x": 89,
+          "y": 69,
+          "value": 7255
+        },
+        {
+          "level": 0,
+          "band": 2,
+          "x": 89,
+          "y": 69,
+          "value": 14958
+        },
+        {
+          "level": 0,
+          "band": 1,
+          "x": 64,
+          "y": 33,
+          "value": 12704
+        },
+        {
+          "level": 0,
+          "band": 2,
+          "x": 64,
+          "y": 33,
+          "value": 6476
+        },
+        {
+          "level": 0,
+          "band": 1,
+          "x": 45,
+          "y": 64,
+          "value": 15592
+        },
+        {
+          "level": 0,
+          "band": 2,
+          "x": 45,
+          "y": 64,
+          "value": 15303
+        },
+        {
+          "level": 0,
+          "band": 1,
+          "x": 89,
+          "y": 0,
+          "value": 19891
+        },
+        {
+          "level": 0,
+          "band": 2,
+          "x": 89,
+          "y": 0,
+          "value": 25163
+        }
+      ]
+    },
+    {
+      "name": "GeoTIFF float32, lzw floating_point (float32-lzw.tif)",
+      "base": ".",
+      "source": {
+        "format": "chunks",
+        "grid": {
+          "crs": "EPSG:3031",
+          "geotransform": [-500000,10000,0,400000,0,-10000],
+          "dim": [90,70],
+          "chunk_size": [32,32]
+        },
+        "dtype": "float32",
+        "codecs": [
+          {
+            "name": "bytes",
+            "configuration": {
+              "endian": "little"
+            }
+          },
+          {
+            "name": "predictor",
+            "configuration": {
+              "type": "floating_point"
+            }
+          },
+          {
+            "name": "lzw"
+          }
+        ],
+        "refs": {
+          "rows": [
+            {
+              "level": 0,
+              "col": 0,
+              "row": 0,
+              "offset": 455,
+              "length": 1866,
+              "url": "fixtures/chunks/float32-lzw.tif"
+            },
+            {
+              "level": 0,
+              "col": 1,
+              "row": 0,
+              "offset": 2321,
+              "length": 2886,
+              "url": "fixtures/chunks/float32-lzw.tif"
+            },
+            {
+              "level": 0,
+              "col": 2,
+              "row": 0,
+              "offset": 5207,
+              "length": 2938,
+              "url": "fixtures/chunks/float32-lzw.tif"
+            },
+            {
+              "level": 0,
+              "col": 0,
+              "row": 1,
+              "offset": 8145,
+              "length": 3211,
+              "url": "fixtures/chunks/float32-lzw.tif"
+            },
+            {
+              "level": 0,
+              "col": 1,
+              "row": 1,
+              "offset": 11356,
+              "length": 2685,
+              "url": "fixtures/chunks/float32-lzw.tif"
+            },
+            {
+              "level": 0,
+              "col": 2,
+              "row": 1,
+              "offset": 14041,
+              "length": 1517,
+              "url": "fixtures/chunks/float32-lzw.tif"
+            },
+            {
+              "level": 0,
+              "col": 0,
+              "row": 2,
+              "offset": 15558,
+              "length": 665,
+              "url": "fixtures/chunks/float32-lzw.tif"
+            },
+            {
+              "level": 0,
+              "col": 1,
+              "row": 2,
+              "offset": 16223,
+              "length": 685,
+              "url": "fixtures/chunks/float32-lzw.tif"
+            },
+            {
+              "level": 0,
+              "col": 2,
+              "row": 2,
+              "offset": 16908,
+              "length": 500,
+              "url": "fixtures/chunks/float32-lzw.tif"
+            }
+          ]
+        }
+      },
+      "cells": [
+        {
+          "level": 0,
+          "band": 1,
+          "x": 0,
+          "y": 0,
+          "value": 14.57323932647705
+        },
+        {
+          "level": 0,
+          "band": 1,
+          "x": 1,
+          "y": 0,
+          "value": 14.79743766784668
+        },
+        {
+          "level": 0,
+          "band": 1,
+          "x": 31,
+          "y": 31,
+          "value": 4.666635513305664
+        },
+        {
+          "level": 0,
+          "band": 1,
+          "x": 32,
+          "y": 0,
+          "value": 13.776647567749023
+        },
+        {
+          "level": 0,
+          "band": 1,
+          "x": 89,
+          "y": 69,
+          "value": -12.745205879211426
+        },
+        {
+          "level": 0,
+          "band": 1,
+          "x": 64,
+          "y": 33,
+          "value": -7.29587984085083
+        },
+        {
+          "level": 0,
+          "band": 1,
+          "x": 45,
+          "y": 64,
+          "value": -4.408313274383545
+        },
+        {
+          "level": 0,
+          "band": 1,
+          "x": 89,
+          "y": 0,
+          "value": -0.10905901342630386
         }
       ]
     }

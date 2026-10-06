@@ -14,11 +14,14 @@
 //
 // Scene spec 0.6: the source may instead be a chunks reference. Each plan
 // tile is then a chunk of the source grid: its bytes are the chunk's ref
-// (url, offset and length; a page that carries the url's bytes as a blob
-// keyed by the url, or a served page that lists that key, gives the bytes
-// to slice), decoded by the source's codec chain (chunks.js), and its size
-// and valid cells come from the grid. A planned chunk with no ref is not
-// stored: it is no data and is not drawn.
+// (url, offset and length), decoded by the source's codec chain
+// (chunks.js), and its size and valid cells come from the grid. A ref at
+// the reference's own url has its bytes looked up as a COG tile's are: a
+// blob keyed "<source>@<offset>+<length>" in the page, or listed by a served
+// page. Otherwise (and for refs at other urls) a page that carries the
+// url's bytes as a blob keyed by the url, or a served page that lists that
+// key, gives the bytes to slice; else an HTTP range request. A planned
+// chunk with no ref is not stored: it is no data and is not drawn.
 //
 // Tiles no longer in view stay cached, up to MAX_CACHED decoded tiles; past
 // that the least recently drawn are dropped (and fetched again if needed).
@@ -34,6 +37,9 @@ const textureParameters = { minFilter: "nearest", magFilter: "nearest", mipmapFi
 
 // Decoded tiles kept beyond those the current view draws.
 export const MAX_CACHED = 256;
+
+// A blob as bytes: base64 text (an embedded page) or bytes.
+const asBytes = (b) => (typeof b === "string" ? decodeBase64(b.trim()) : b instanceof Uint8Array ? b : new Uint8Array(b));
 
 export function tileBlobKey(source, t) {
   return `${source}@${t.byte_offset}+${t.byte_length}`;
@@ -175,8 +181,7 @@ export function buildTiledRaster(L, ctx) {
     const key = tileBlobKey(L.source, t);
     let bytes;
     if (blobs[key] !== undefined) {
-      const b = blobs[key];
-      bytes = typeof b === "string" ? decodeBase64(b.trim()) : b instanceof Uint8Array ? b : new Uint8Array(b);
+      bytes = asBytes(blobs[key]);
     } else {
       // A tile blob the server has (a served page), else a range request.
       const served = ctx.servedBlob ? ctx.servedBlob(key, `tile ${tile.key}`, signal) : null;
@@ -208,11 +213,18 @@ function buildChunkRaster(L, ctx, src, rgb, stops, fail) {
   // writes it), decoded once.
   const carried = new Map();
   const blobBytes = (k) => {
-    if (!carried.has(k)) {
-      const b = ctx.blobs[k];
-      carried.set(k, typeof b === "string" ? decodeBase64(b.trim()) : b instanceof Uint8Array ? b : new Uint8Array(b));
-    }
+    if (!carried.has(k)) carried.set(k, asBytes(ctx.blobs[k]));
     return carried.get(k);
+  };
+  // A chunk's own bytes, for a ref at the reference's url: a blob keyed
+  // "<source>@<offset>+<length>" as a COG tile's is, in the page or listed
+  // by a served page; null when there is none.
+  const ownBlob = async (ref, tile, signal) => {
+    if (src.url === undefined || ref.url !== src.url) return null;
+    const key = tileBlobKey(L.source, { byte_offset: ref.offset, byte_length: ref.length });
+    if (ctx.blobs[key] !== undefined) return asBytes(ctx.blobs[key]);
+    const served = ctx.servedBlob ? ctx.servedBlob(key, `chunk ${tile.key}`, signal) : null;
+    return served ? served : null;
   };
   const resolve = (u) => (typeof document !== "undefined" ? new URL(u, document.baseURI).href : u);
   return drawPlan(L, ctx, rgb, stops, async (tile, signal) => {
@@ -220,14 +232,14 @@ function buildChunkRaster(L, ctx, src, rgb, stops, fail) {
     const ref = refs.get(chunkKey(lv.level, t.col, t.row, interleave === "separate" ? band : 0));
     // Not stored: every cell is no data, so nothing is drawn.
     if (!ref) return null;
-    let bytes;
-    if (ctx.blobs[ref.url] !== undefined) {
+    let bytes = await ownBlob(ref, tile, signal);
+    if (bytes === null && ctx.blobs[ref.url] !== undefined) {
       const all = blobBytes(ref.url);
       if (ref.offset + ref.length > all.length) {
         throw new Error(`chunk ${tile.key}: blob "${ref.url}" has ${all.length} bytes; the chunk needs ${ref.offset + ref.length}`);
       }
       bytes = all.subarray(ref.offset, ref.offset + ref.length);
-    } else {
+    } else if (bytes === null) {
       const served = ctx.servedUrl ? ctx.servedUrl(ref.url) : null;
       bytes = await fetchRange(served || resolve(ref.url), ref.offset, ref.length, signal);
     }

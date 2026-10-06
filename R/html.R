@@ -22,9 +22,14 @@
 #'   [scene_add_vector()], which carries its blobs; or a plain list following
 #'   scene spec 0.1 to 0.6, with `version`, `view`, `data` and `layers`. It is written
 #'   with [scene_json()]. A scene spec 0.6 `chunks` reference's chunk bytes are
-#'   embedded as blobs keyed by the refs' `url` (as the scene writes it),
-#'   each holding the bytes at that URL; the page reads each chunk's bytes
-#'   from them at its `offset` and `length`.
+#'   embedded as blobs keyed like a cog's tiles,
+#'   `"<source id>@<offset>+<length>"`, one per chunk, for refs at the
+#'   reference's own `url` (as [scene_add_tiled_raster()] writes them with
+#'   `format = "chunks"`); or as blobs keyed by a ref's `url` (as the scene
+#'   writes it), each holding the bytes at that URL, from which the page
+#'   reads each chunk's bytes at its `offset` and `length`. Refs are read
+#'   from inline rows or from a refs table carried as an Arrow IPC stream
+#'   blob.
 #' @param blobs A named list of raw vectors, each an Arrow IPC stream or file,
 #'   named by the `blob` keys used in `scene$data`. Defaults to the blobs the
 #'   scene carries ([scene_blobs()]).
@@ -225,6 +230,44 @@ check_blobs <- function(blobs) {
   invisible()
 }
 
+## The blob keys a scene spec 0.6 chunks reference can use: every ref's url
+## (a blob keyed by a url carries the bytes at that url), and for a ref at
+## the reference's own url its own blob, keyed as a cog tile's is
+## ("<source>@<offset>+<length>"). Refs are the inline rows, or the url,
+## offset and length columns of a refs table carried as an Arrow stream
+## blob (a table at a url is not read here).
+chunk_blob_keys <- function(id, ref, data, blobs) {
+  refs <- if (!is.null(ref$refs$rows)) {
+    num <- function(name) vapply(ref$refs$rows, function(r) as.numeric(r[[name]] %||% NA_real_), 0)
+    data.frame(url = vapply(ref$refs$rows, function(r) as.character(r$url %||% NA_character_), ""),
+               offset = num("offset"), length = num("length"))
+  } else {
+    chunk_refs_table(ref$refs$table, data, blobs)
+  }
+  if (is.null(refs) || !nrow(refs)) return(as.character(ref$url))
+  own <- !is.null(ref$url) & (is.na(refs$url) | refs$url == (ref$url %||% ""))
+  own <- own & !is.na(refs$offset) & !is.na(refs$length)
+  unique(c(ref$url, refs$url[!is.na(refs$url)],
+           if (any(own)) tile_blob_key(id, refs$offset[own], refs$length[own])))
+}
+
+## The url, offset and length columns of a refs table carried as an Arrow
+## IPC stream blob, or NULL when it is not one.
+chunk_refs_table <- function(tbl, data, blobs) {
+  d <- data[[tbl]]
+  if (is.null(d$blob) || !identical(d$format, "arrow-ipc-stream") || !d$blob %in% names(blobs)) {
+    return(NULL)
+  }
+  df <- tryCatch(as.data.frame(nanoarrow::read_nanoarrow(blobs[[d$blob]])), error = function(e) {
+    stop("The refs table `", tbl, "` is not an Arrow IPC stream R can read (",
+         conditionMessage(e), ").", call. = FALSE)
+  })
+  n <- nrow(df)
+  col <- function(name, as) if (name %in% names(df)) as(df[[name]]) else as(rep(NA, n))
+  data.frame(url = col("url", as.character), offset = col("offset", as.numeric),
+             length = col("length", as.numeric))
+}
+
 ## A cheap shape check: enough to catch a scene that cannot draw, not a
 ## replacement for the JSON Schema.
 check_scene_shape <- function(scene, blobs) {
@@ -292,8 +335,7 @@ check_scene_shape <- function(scene, blobs) {
       if (!is.null(tbl) && !(is.character(tbl) && length(tbl) == 1L && tbl %in% ids)) {
         fail("The chunks data reference `", id, "` names refs table \"", format(tbl), "\", which is not in `scene$data`.")
       }
-      urls <- c(ref$url, unlist(lapply(ref$refs$rows, function(r) r$url)))
-      used_blobs <- c(used_blobs, intersect(names(blobs), urls))
+      used_blobs <- c(used_blobs, intersect(names(blobs), chunk_blob_keys(id, ref, data, blobs)))
       next
     }
     has_blob <- !is.null(ref$blob)

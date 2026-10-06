@@ -14,7 +14,8 @@ scene_add_tiled_raster(
   embed = NULL,
   url = NULL,
   label = NULL,
-  visible = NULL
+  visible = NULL,
+  format = c("cog", "chunks")
 )
 }
 \arguments{
@@ -54,9 +55,13 @@ embedded.}
 \item{label}{Optional human-readable name.}
 
 \item{visible}{Optional initial visibility.}
+
+\item{format}{The layer's source: \code{"cog"} (a scene spec 0.2 \code{cog}
+reference, with byte ranges and encodings in the plan) or \code{"chunks"}
+(a scene spec 0.6 \code{chunks} reference from \code{\link[=cog_chunks]{cog_chunks()}}).}
 }
 \value{
-The scene, now version 0.2 or 0.3, with the layer appended.
+The scene, now version 0.2 or 0.3 (or 0.6 with \code{format = "chunks"}), with the layer appended.
 }
 \description{
 Adds a scene spec \code{tiled_raster} layer: a \code{cog} data reference, the
@@ -81,8 +86,22 @@ browser's JPEG decoder assumes one of those; others are refused.
 A JPEG COG's internal mask (its no-data area) is not carried.
 
 \strong{Version.} The scene is written as scene spec 0.2, or as 0.3 when the
-layer uses a 0.3 feature (\code{rgb}, or JPEG tiles); see
-\code{\link[=scene_spec_version]{scene_spec_version()}}.
+layer uses a 0.3 feature (\code{rgb}, or JPEG tiles), or as 0.6 with
+\code{format = "chunks"}; see \code{\link[=scene_spec_version]{scene_spec_version()}}.
+
+\strong{Chunk references.} With \code{format = "chunks"} the layer's source is the
+COG's scene spec 0.6 \code{chunks} data reference (\code{\link[=cog_chunks]{cog_chunks()}}: the grid of
+every level, the codec chain and a ref for every stored tile) instead of
+a \code{cog} reference, and the plan is the same plan (levels, tiles,
+footprints and meshes in the view CRS) with each level giving only
+\code{level}, \code{pixel_size} and its tiles' \code{col}, \code{row}, \code{footprint} and
+\code{mesh}, since the grid, codecs and byte ranges come from the source. A
+palette layer of a multi-band COG names its band in the layer's \code{band}.
+Embedding, the \code{url} and serving work as for a \code{cog} source: an embedded
+page carries only the planned chunks' bytes, under the same keys. The
+COG's compression must have a 0.6 codec (deflate, zstd, lzw, JPEG or
+none) and be the same at every level. From scene spec 0.5 a page shows
+only the scene's own legends, so add one with \code{\link[=scene_add_legend]{scene_add_legend()}}.
 
 \strong{Transport.} The renderer reads tile bytes by HTTP range requests from
 the \code{cog} URL. A page opened from \verb{file://} cannot range-request a local
@@ -113,5 +132,10 @@ f <- system.file("extdata", "polar_3031.tif", package = "aobcore")
 s <- scene_add_tiled_raster(scene("EPSG:3031"), "sst", f, palette = "ocean")
 s
 names(scene_blobs(s))[1:4]
+# The same layer over the COG's chunk references (scene spec 0.6).
+s6 <- scene_add_tiled_raster(scene("EPSG:3031"), "sst", f, palette = "ocean",
+                             format = "chunks")
+s6$version
+s6$data$sst$codecs
 \dontshow{\}) # examplesIf}
 }
