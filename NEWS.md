@@ -1,5 +1,25 @@
 # aobcore 0.0.0.9000
 
+* Renderer: vector data are checked against scene spec's explicit-data
+  contract (allboa/scenespec#11) before they are drawn. The geometry
+  column's `ARROW:extension:name` must be the scene's `geometry.encoding`
+  and one of the six native GeoArrow types (WKB, WKT, geometry collections
+  and unknown extensions are refused, not guessed from the storage); the
+  `crs` in its `ARROW:extension:metadata` must fit its `crs_type` and match
+  `view.crs` (and `geometry.crs`, when given) as equal JSON values or by one
+  authority code, compared case-insensitively, so `"EPSG:3031"` matches
+  the PROJJSON geoarrow writes; edges must be planar; the storage must be
+  the extension's List layout with interleaved (`xy`, `xyz`) or separated
+  (`x`, `y`, `z`) doubles, no M; and a `fill` or `stroke` column must be
+  RGBA. Data that fail are an error for each layer that draws them, which
+  is not drawn, and the rest of the scene draws; nothing is reprojected.
+  A popup column that is not an attribute type (a binary or dictionary
+  column, say) is an error for that layer's popup, as a missing one was.
+  Data written by aobcore are unchanged and draw as before. The renderer
+  test reads scenespec's fixtures (copied into `js/test/fixtures/scenespec`
+  from scenespec 898419b): the six streams draw with their feature counts,
+  and each invalid-data scene is a layer error (#57).
+
 * `mosaic_members()` reads the members of a VRT (a `.vrt` file or a
   `vrt://` connection string, from the XML GDAL serialises for it) or a
   GDAL Tile Index (GTI: a `.gti` file, a `.gti.gpkg` or `.gti.fgb` index or

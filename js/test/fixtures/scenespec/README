@@ -1,0 +1,13 @@
+Scene spec explicit-data fixtures
+---------------------------------
+
+Copied unchanged from allboa/scenespec at commit
+898419b1489306bc3f68dbc9a424280d176b1db0 (main after scenespec#13, "Write
+down the explicit-data contract"): fixtures/data/*.arrows,
+fixtures/data/invalid/* and fixtures/valid/explicit-data-0.6.json, in the
+same relative layout, so the scenes' url references resolve here as they do
+there. test/renderer.test.mjs reads them (part 12). The contract is the
+"Explicit data: Arrow with GeoArrow geometry" section of scenespec's
+README; scenespec's scripts/check-data.js is its reference checker. To
+update, copy the files again from a newer scenespec commit and change the
+commit above.

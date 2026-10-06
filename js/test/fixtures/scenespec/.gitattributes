@@ -1,0 +1,3 @@
+# Arrow IPC data fixtures: binary record batches, never text.
+data/*.arrows binary
+data/invalid/*.arrows binary

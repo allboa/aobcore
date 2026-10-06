@@ -1,0 +1,190 @@
+{
+  "version": "0.6",
+  "view": {
+    "type": "projected",
+    "crs": "EPSG:3031",
+    "extent": [
+      -3000000,
+      3000000,
+      -3000000,
+      3000000
+    ]
+  },
+  "data": {
+    "point": {
+      "format": "arrow-ipc-stream",
+      "url": "../data/point.arrows",
+      "geometry": {
+        "column": "geometry",
+        "encoding": "geoarrow.point"
+      }
+    },
+    "linestring": {
+      "format": "arrow-ipc-stream",
+      "url": "../data/linestring.arrows",
+      "geometry": {
+        "column": "geometry",
+        "encoding": "geoarrow.linestring"
+      }
+    },
+    "polygon": {
+      "format": "arrow-ipc-stream",
+      "url": "../data/polygon.arrows",
+      "geometry": {
+        "column": "geometry",
+        "encoding": "geoarrow.polygon",
+        "crs": "EPSG:3031"
+      }
+    },
+    "multipoint": {
+      "format": "arrow-ipc-stream",
+      "url": "../data/multipoint.arrows",
+      "geometry": {
+        "column": "geometry",
+        "encoding": "geoarrow.multipoint"
+      }
+    },
+    "multilinestring": {
+      "format": "arrow-ipc-stream",
+      "url": "../data/multilinestring.arrows",
+      "geometry": {
+        "column": "geometry",
+        "encoding": "geoarrow.multilinestring"
+      }
+    },
+    "multipolygon": {
+      "format": "arrow-ipc-stream",
+      "url": "../data/multipolygon.arrows",
+      "geometry": {
+        "column": "geometry",
+        "encoding": "geoarrow.multipolygon"
+      }
+    }
+  },
+  "layers": [
+    {
+      "id": "point",
+      "kind": "point",
+      "label": "point",
+      "data": "point",
+      "fill": {
+        "column": "rgba"
+      },
+      "radius_px": 4,
+      "popup": {
+        "columns": [
+          "name",
+          "depth_m",
+          "surveyed"
+        ]
+      }
+    },
+    {
+      "id": "linestring",
+      "kind": "path",
+      "label": "linestring",
+      "data": "linestring",
+      "stroke": [
+        60,
+        66,
+        72,
+        255
+      ],
+      "stroke_width_px": 2,
+      "popup": {
+        "columns": [
+          "name",
+          "length_km"
+        ]
+      }
+    },
+    {
+      "id": "polygon",
+      "kind": "polygon",
+      "label": "polygon",
+      "data": "polygon",
+      "fill": [
+        27,
+        158,
+        119,
+        120
+      ],
+      "stroke": [
+        60,
+        66,
+        72,
+        255
+      ],
+      "popup": {
+        "columns": [
+          "zone",
+          "area_km2"
+        ]
+      }
+    },
+    {
+      "id": "multipoint",
+      "kind": "point",
+      "label": "multipoint",
+      "data": "multipoint",
+      "fill": [
+        217,
+        95,
+        2,
+        255
+      ],
+      "radius_px": 4,
+      "popup": {
+        "columns": [
+          "name",
+          "count"
+        ]
+      }
+    },
+    {
+      "id": "multilinestring",
+      "kind": "path",
+      "label": "multilinestring",
+      "data": "multilinestring",
+      "stroke": [
+        60,
+        66,
+        72,
+        255
+      ],
+      "stroke_width_px": 2,
+      "popup": {
+        "columns": [
+          "name",
+          "seasonal"
+        ]
+      }
+    },
+    {
+      "id": "multipolygon",
+      "kind": "polygon",
+      "label": "multipolygon",
+      "data": "multipolygon",
+      "fill": [
+        27,
+        158,
+        119,
+        120
+      ],
+      "stroke": [
+        60,
+        66,
+        72,
+        255
+      ],
+      "popup": {
+        "columns": [
+          "name",
+          "protected",
+          "established"
+        ]
+      }
+    }
+  ],
+  "legends": []
+}
