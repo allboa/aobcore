@@ -68,7 +68,10 @@ geo_table <- function(wkt, schema, rgba) {
   nanoarrow_array_modify(nanoarrow_array_init(st), list(length = length(wkt), children = list(geometry = g, color = col)))
 }
 
-interleaved <- function(f) f(coord_type = "INTERLEAVED")
+# Native interleaved GeoArrow in the view CRS: the explicit-data contract
+# needs the CRS in the geometry field's metadata, and scene_add_data()
+# checks it in IPC bytes (#59).
+interleaved <- function(f) f(coord_type = "INTERLEAVED", crs = "EPSG:3031")
 
 # ---- polar probe --------------------------------------------------------
 p <- probe_scene()
