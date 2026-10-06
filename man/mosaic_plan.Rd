@@ -37,11 +37,13 @@ budget is per member).}
 \value{
 A list of class \code{"aob_mosaic_plan"}: \code{mosaic}, \code{crs}, \code{band}, \code{plans}
 (one \code{\link[=cog_plan]{cog_plan()}} result per planned member, named by the member's
-\code{dsn}, in the mosaic's order) and \code{members}, a data frame of every
-member of the band with \code{dsn}, \code{source_band}, \code{status} (\code{"planned"},
-\code{"skipped"} when its placement misses \code{extent}, or \code{"unplanned"} when
-it cannot be drawn in place) and \code{reason} (\code{NA} unless unplanned); the
-unplanned rows are what a caller falls back for.
+\code{dsn}, in the mosaic's order; a file the band lists twice is planned
+twice) and \code{members}, a data frame of every member of the band with
+\code{dsn}, \code{source_band}, \code{status} (\code{"planned"}, \code{"skipped"} when its
+placement misses \code{extent}, or \code{"unplanned"} when it cannot be drawn in
+place), \code{reason} (\code{NA} unless unplanned) and \code{plan} (the row's index
+in \code{plans}, \code{NA} unless planned); the unplanned rows are what a caller
+falls back for.
 }
 \description{
 Plans a VRT or GTI mosaic of COGs across its members, one \code{\link[=cog_plan]{cog_plan()}}
@@ -55,7 +57,10 @@ be drawn in place is reported, not planned: one that is not a tiled
 GeoTIFF with overviews (or small enough for one tile), one in another
 CRS, one the mosaic places by a window of its cells or somewhere other
 than its own georeferencing (a VRT that stretches a small image over a
-huge grid), or one the VRT rescales (see \code{\link[=mosaic_members]{mosaic_members()}}). The caller
+huge grid), one the VRT rescales (see \code{\link[=mosaic_members]{mosaic_members()}}), or one the
+VRT masks with a no-data value (on its source or its band) that is not
+the member's own, since the member's tiles would then draw cells the
+mosaic hides. The caller
 decides what to do then (aobview falls back to reading the mosaic
 through GDAL into a temporary COG, with a message naming the member).
 }

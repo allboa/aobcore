@@ -301,3 +301,69 @@ test_that("mosaic_members() reads a GTI's index layer, and mosaic_plan() plans i
   expect_identical(p$members$source_band, c(1L, 1L))
   expect_identical(p$plans[[h$a]]$cog$band, 1L)
 })
+
+test_that("a VRT that masks a no-data value its member does not have is not drawn in place", {
+  skip_if_no_gdal()
+  h <- cog_halves()
+  ## buildVRT copies the members' own no-data (-32768): drawn in place.
+  m <- mosaic_members(h$vrt)$members
+  expect_identical(m$src_nodata, c(-32768, -32768))
+  expect_identical(m$band_nodata, c(-32768, -32768))
+  expect_identical(mosaic_plan(h$vrt, "EPSG:3031")$members$status, c("planned", "planned"))
+  ## Members with no no-data value, which the VRT masks at 0: the member's
+  ## tiles would draw 0 as data.
+  opts <- c("-of", "COG", "-co", "BLOCKSIZE=128", "-a_nodata", "none")
+  a <- file.path(h$dir, "west0.tif")
+  b <- file.path(h$dir, "east0.tif")
+  gdalraster::translate(fixture("polar_3031.tif"), a, c(opts, "-srcwin", "0", "0", "200", "400"),
+                        quiet = TRUE)
+  gdalraster::translate(fixture("polar_3031.tif"), b, c(opts, "-srcwin", "200", "0", "200", "400"),
+                        quiet = TRUE)
+  vrt <- file.path(h$dir, "nodata0.vrt")
+  gdalraster::buildVRT(vrt, c(a, b), cl_arg = c("-srcnodata", "0", "-vrtnodata", "0"),
+                       quiet = TRUE)
+  m0 <- mosaic_members(vrt)$members
+  expect_identical(m0$src_nodata, c(0, 0))
+  expect_identical(m0$band_nodata, c(0, 0))
+  p <- mosaic_plan(vrt, "EPSG:3031")
+  expect_identical(p$members$status, c("unplanned", "unplanned"))
+  expect_match(p$members$reason, "has no-data none but the VRT masks 0 in its source")
+  ## A band no-data value alone counts too; NaN is read as GDAL writes it.
+  f <- hand_vrt(h$dir, c("<NoDataValue>5</NoDataValue>", simple_source("west.tif")))
+  expect_identical(mosaic_members(f)$members$band_nodata, 5)
+  expect_match(mosaic_plan(f, "EPSG:3031")$members$reason,
+               "has no-data -32768 but the VRT masks 5 in its band")
+  expect_true(is.nan(xml_number("nan")))
+  expect_identical(xml_number(""), NA_real_)
+  expect_identical(xml_number("-32768"), -32768)
+})
+
+test_that("a file a band lists twice is planned once per row", {
+  skip_if_no_gdal()
+  h <- cog_halves()
+  f <- hand_vrt(h$dir, c(simple_source("west.tif"), simple_source("west.tif")))
+  p <- mosaic_plan(f, "EPSG:3031")
+  expect_identical(p$members$status, c("planned", "planned"))
+  expect_identical(p$members$plan, 1:2)
+  expect_length(p$plans, 2L)
+  expect_identical(names(p$plans), c(h$a, h$a))
+  expect_output(print(p), "west.tif: planned, 11 tiles\n  west.tif: planned, 11 tiles")
+})
+
+test_that("the VRT parser reads thousands of sources in one pass", {
+  n <- 5000L
+  src <- sprintf(paste0('<SimpleSource><SourceFilename relativeToVRT="1">t%d.tif</SourceFilename>',
+                        '<SourceBand>1</SourceBand><SrcRect xOff="0" yOff="0" xSize="100" ',
+                        'ySize="100"/><DstRect xOff="%d" yOff="0" xSize="100" ySize="100"/>',
+                        '</SimpleSource>'), seq_len(n), (seq_len(n) - 1L) * 100L)
+  xml <- paste0('<VRTDataset rasterXSize="', n * 100L, '" rasterYSize="100">',
+                '<VRTRasterBand dataType="Int16" band="1">', paste(src, collapse = ""),
+                "</VRTRasterBand></VRTDataset>")
+  t0 <- proc.time()[["elapsed"]]
+  m <- vrt_members(xml, "/data/big.vrt", c(0, 1, 0, 0, 0, -1), c(n * 100L, 100L))$members
+  expect_lt(proc.time()[["elapsed"]] - t0, 10)
+  expect_identical(nrow(m), n)
+  expect_identical(m$dsn[c(1, n)], c("/data/t1.tif", paste0("/data/t", n, ".tif")))
+  expect_identical(m$xmin[c(1, n)], c(0, (n - 1) * 100))
+  expect_identical(names(m), names(member_rows()))
+})

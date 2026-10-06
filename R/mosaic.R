@@ -38,7 +38,9 @@
 #'   for every band), `source_band`, `xmin`, `xmax`, `ymin`, `ymax` (its
 #'   placement in the mosaic CRS), `src_xoff`, `src_yoff`, `src_xsize`,
 #'   `src_ysize` (the window of the member's cells a VRT draws; `NA` for
-#'   the whole member) and `reason` (`NA` when the member is drawn as it
+#'   the whole member), `src_nodata` and `band_nodata` (the no-data value a
+#'   VRT gives the source, `<NODATA>`, and its band, `<NoDataValue>`; `NA`
+#'   when it gives none) and `reason` (`NA` when the member is drawn as it
 #'   is).
 #' @seealso [mosaic_plan()] to plan the members a view touches.
 #' @export
@@ -126,7 +128,10 @@ print.aob_mosaic <- function(x, ...) {
 #' GeoTIFF with overviews (or small enough for one tile), one in another
 #' CRS, one the mosaic places by a window of its cells or somewhere other
 #' than its own georeferencing (a VRT that stretches a small image over a
-#' huge grid), or one the VRT rescales (see [mosaic_members()]). The caller
+#' huge grid), one the VRT rescales (see [mosaic_members()]), or one the
+#' VRT masks with a no-data value (on its source or its band) that is not
+#' the member's own, since the member's tiles would then draw cells the
+#' mosaic hides. The caller
 #' decides what to do then (aobview falls back to reading the mosaic
 #' through GDAL into a temporary COG, with a message naming the member).
 #'
@@ -140,11 +145,13 @@ print.aob_mosaic <- function(x, ...) {
 #'   budget is per member).
 #' @return A list of class `"aob_mosaic_plan"`: `mosaic`, `crs`, `band`, `plans`
 #'   (one [cog_plan()] result per planned member, named by the member's
-#'   `dsn`, in the mosaic's order) and `members`, a data frame of every
-#'   member of the band with `dsn`, `source_band`, `status` (`"planned"`,
-#'   `"skipped"` when its placement misses `extent`, or `"unplanned"` when
-#'   it cannot be drawn in place) and `reason` (`NA` unless unplanned); the
-#'   unplanned rows are what a caller falls back for.
+#'   `dsn`, in the mosaic's order; a file the band lists twice is planned
+#'   twice) and `members`, a data frame of every member of the band with
+#'   `dsn`, `source_band`, `status` (`"planned"`, `"skipped"` when its
+#'   placement misses `extent`, or `"unplanned"` when it cannot be drawn in
+#'   place), `reason` (`NA` unless unplanned) and `plan` (the row's index
+#'   in `plans`, `NA` unless planned); the unplanned rows are what a caller
+#'   falls back for.
 #' @seealso [mosaic_members()].
 #' @export
 #' @examplesIf requireNamespace("gdalraster", quietly = TRUE) && !inherits(try(gdalraster::srs_to_wkt("EPSG:3031"), silent = TRUE), "try-error")
@@ -189,6 +196,7 @@ mosaic_plan <- function(mosaic, crs = "EPSG:3031", extent = NULL, units_per_pixe
     }
   }
   plans <- list()
+  plan_row <- rep(NA_integer_, nrow(m))
   for (i in which(status == "planned")) {
     cog <- tryCatch(cog_info(m$dsn[i], band = m$source_band[i]), error = function(e) e)
     why <- if (inherits(cog, "error")) {
@@ -201,7 +209,12 @@ mosaic_plan <- function(mosaic, crs = "EPSG:3031", extent = NULL, units_per_pixe
       reason[i] <- why
       next
     }
-    plans[[m$dsn[i]]] <- cog_plan(cog, crs, extent = extent, units_per_pixel = units_per_pixel, ...)
+    ## Appended, not assigned by name: a file a band lists twice is
+    ## planned twice, once for each of its rows.
+    plans <- c(plans, stats::setNames(
+      list(cog_plan(cog, crs, extent = extent, units_per_pixel = units_per_pixel, ...)),
+      m$dsn[i]))
+    plan_row[i] <- length(plans)
   }
   structure(list(
     mosaic = mosaic,
@@ -209,7 +222,7 @@ mosaic_plan <- function(mosaic, crs = "EPSG:3031", extent = NULL, units_per_pixe
     band = band,
     plans = plans,
     members = data.frame(dsn = m$dsn, source_band = as.integer(m$source_band), status = status,
-                         reason = reason, stringsAsFactors = FALSE)
+                         reason = reason, plan = plan_row, stringsAsFactors = FALSE)
   ), class = "aob_mosaic_plan")
 }
 
@@ -222,7 +235,7 @@ print.aob_mosaic_plan <- function(x, ...) {
       " tiles\n", sep = "")
   for (i in seq_len(nrow(m))) {
     cat("  ", basename(m$dsn[i]), ": ", m$status[i],
-        if (m$status[i] == "planned") paste0(", ", n[[m$dsn[i]]], " tiles"),
+        if (m$status[i] == "planned") paste0(", ", n[[m$plan[i]]], " tiles"),
         if (!is.na(m$reason[i])) paste0(" (", m$reason[i], ")"), "\n", sep = "")
   }
   invisible(x)
@@ -231,13 +244,26 @@ print.aob_mosaic_plan <- function(x, ...) {
 ## ---- internals -------------------------------------------------------------
 
 ## Why a member COG cannot be drawn where the mosaic places it, or NULL: it
-## must be in the mosaic's CRS, drawn whole (its SrcRect, when a VRT gives
-## one, is all its cells) and placed by its own georeferencing (its
-## full-resolution extent is the placement, within a thousandth of a mosaic
-## cell), and be tiled with overviews or small enough for one tile.
+## must be in the mosaic's CRS, masked as the mosaic masks it (a no-data
+## value the VRT gives its source or band is the member's own), drawn whole
+## (its SrcRect, when a VRT gives one, is all its cells) and placed by its
+## own georeferencing (its full-resolution extent is the placement, within
+## a thousandth of a mosaic cell), and be tiled with overviews or small
+## enough for one tile.
 member_in_place <- function(cog, m, mosaic) {
   if (!isTRUE(gdalraster::srs_is_same(cog$wkt, mosaic$wkt))) {
     return("is not in the mosaic's CRS")
+  }
+  for (k in c("src_nodata", "band_nodata")) {
+    v <- m[[k]]
+    if (is.null(v) || (is.na(v) && !is.nan(v))) next
+    own <- cog$nodata
+    same <- !is.null(own) && (if (is.nan(v)) is.nan(own) else !is.nan(own) && own == v)
+    if (!same) {
+      return(paste0("has no-data ", if (is.null(own)) "none" else format(own), " but the VRT ",
+                    "masks ", format(v), if (k == "src_nodata") " in its source" else
+                      " in its band"))
+    }
   }
   l0 <- cog$levels[[1]]
   if (!is.na(m$src_xsize) && !(m$src_xoff == 0 && m$src_yoff == 0 &&
@@ -285,25 +311,31 @@ vrt_members <- function(xml, dsn, gt, dim) {
     if (is.na(band)) band <- k
     derived <- xml_attr(open, "subClass")
     band_reason <- if (!is.na(derived)) paste0("feeds a ", derived, " band, not a copy")
-    for (s in vrt_sources(b)) {
-      r <- vrt_source(s, dsn, gt, dim)
-      if (is.null(r)) next
-      r$band <- band
-      if (is.na(r$reason) && !is.null(band_reason)) r$reason <- band_reason
-      rows[[length(rows) + 1L]] <- r
-    }
+    ## The band's own no-data value (the first <NoDataValue> is the band's:
+    ## a source's is <NODATA>).
+    band_nodata <- xml_number(xml_element(b, "NoDataValue"))
+    r <- vrt_sources_rows(vrt_sources(b), dsn, gt, dim)
+    n <- length(r$dsn)
+    if (!n) next
+    r$band <- rep(band, n)
+    r$band_nodata <- rep(band_nodata, n)
+    if (!is.null(band_reason)) r$reason[is.na(r$reason)] <- band_reason
+    rows[[length(rows) + 1L]] <- r
   }
   if (!length(rows)) return(list(members = empty, note = "it has no sources"))
-  out <- do.call(rbind, lapply(rows, as.data.frame, stringsAsFactors = FALSE))
-  rownames(out) <- NULL
-  list(members = out[names(empty)], note = NULL)
+  ## Each band's columns joined once: binding a data frame per member is
+  ## quadratic in the number of members.
+  out <- lapply(names(empty), function(nm) unlist(lapply(rows, `[[`, nm), use.names = FALSE))
+  list(members = as.data.frame(stats::setNames(out, names(empty)), stringsAsFactors = FALSE),
+       note = NULL)
 }
 
 member_rows <- function() {
   data.frame(dsn = character(), band = integer(), source_band = integer(),
              xmin = numeric(), xmax = numeric(), ymin = numeric(), ymax = numeric(),
              src_xoff = numeric(), src_yoff = numeric(), src_xsize = numeric(),
-             src_ysize = numeric(), reason = character(), stringsAsFactors = FALSE)
+             src_ysize = numeric(), src_nodata = numeric(), band_nodata = numeric(),
+             reason = character(), stringsAsFactors = FALSE)
 }
 
 vrt_source_kinds <- c("SimpleSource", "AveragedSource", "ComplexSource",
@@ -315,68 +347,90 @@ vrt_sources <- function(band_xml) {
   regmatches(band_xml, gregexpr(pat, band_xml, perl = TRUE))[[1]]
 }
 
-## One source element as a member row (a list), or NULL when it names no
-## file.
-vrt_source <- function(s, dsn, gt, dim) {
+## The source elements of one band as member rows (a list of columns),
+## the sources that name no file left out. Vectorised over the sources: a
+## VRT may list thousands.
+vrt_sources_rows <- function(s, dsn, gt, dim) {
   kind <- sub("^<([A-Za-z]+).*$", "\\1", s)
-  fn <- regmatches(s, regexpr("(?s)<SourceFilename\\b[^>]*>.*?</SourceFilename>", s, perl = TRUE))
-  if (!length(fn)) return(NULL)
-  open <- regmatches(fn, regexpr("^<SourceFilename\\b[^>]*>", fn))
+  fn <- xml_element(s, "SourceFilename", text = FALSE)
   name <- xml_text(sub("^<SourceFilename\\b[^>]*>", "", sub("</SourceFilename>$", "", fn)))
-  if (!nzchar(name)) return(NULL)
-  relative <- identical(xml_attr(open, "relativeToVRT"), "1")
-  path <- if (relative) paste0(dsn_dir(dsn), "/", name) else name
-  sb <- xml_text(xml_element(s, "SourceBand"))
-  reason <- NA_character_
-  source_band <- NA_integer_
-  if (nzchar(sb) && grepl("mask", sb, ignore.case = TRUE)) {
-    reason <- "is drawn from its mask band"
-  } else {
-    source_band <- if (nzchar(sb)) suppressWarnings(as.integer(sb)) else 1L
-    if (is.na(source_band)) reason <- paste0("has an unknown source band \"", sb, "\"")
-  }
-  if (is.na(reason)) {
-    if (kind %in% c("KernelFilteredSource", "NoDataFromMaskSource")) {
-      reason <- paste0("is a ", kind, ", not a copy of its cells")
-    } else if (kind == "ComplexSource" && any(vapply(
-      c("ScaleOffset", "ScaleRatio", "Exponent", "LUT", "ColorTableComponent"),
-      function(e) nzchar(xml_element(s, e)), TRUE))) {
-      reason <- "is rescaled or remapped by the VRT"
-    }
-  }
+  keep <- nzchar(fn) & nzchar(name)
+  if (!any(keep)) return(list(dsn = character()))
+  s <- s[keep]
+  kind <- kind[keep]
+  name <- name[keep]
+  relative <- xml_attr(regmatches(fn[keep], regexpr("^<SourceFilename\\b[^>]*>", fn[keep])),
+                       "relativeToVRT") %in% "1"
+  path <- ifelse(relative, paste0(dsn_dir(dsn), "/", name), name)
+  sb <- xml_element(s, "SourceBand")
+  mask <- nzchar(sb) & grepl("mask", sb, ignore.case = TRUE)
+  source_band <- rep(1L, length(s))
+  source_band[nzchar(sb)] <- suppressWarnings(as.integer(sb[nzchar(sb)]))
+  source_band[mask] <- NA_integer_
+  reason <- rep(NA_character_, length(s))
+  reason[mask] <- "is drawn from its mask band"
+  bad <- !mask & is.na(source_band)
+  reason[bad] <- paste0("has an unknown source band \"", sb[bad], "\"")
+  filtered <- kind %in% c("KernelFilteredSource", "NoDataFromMaskSource")
+  rescaled <- kind == "ComplexSource" & Reduce(`|`, lapply(
+    c("ScaleOffset", "ScaleRatio", "Exponent", "LUT", "ColorTableComponent"),
+    function(e) nzchar(xml_element(s, e))), FALSE)
+  open <- is.na(reason)
+  reason[open & filtered] <- paste0("is a ", kind[open & filtered], ", not a copy of its cells")
+  reason[open & !filtered & rescaled] <- "is rescaled or remapped by the VRT"
   src <- xml_rect(s, "SrcRect")
   dst <- xml_rect(s, "DstRect")
-  if (anyNA(dst)) dst <- c(0, 0, dim)
-  x <- gt[1] + c(dst[1], dst[1] + dst[3]) * gt[2]
-  y <- gt[4] + c(dst[2], dst[2] + dst[4]) * gt[6]
-  list(dsn = path, band = NA_integer_, source_band = source_band,
-       xmin = min(x), xmax = max(x), ymin = min(y), ymax = max(y),
-       src_xoff = src[1], src_yoff = src[2], src_xsize = src[3], src_ysize = src[4],
-       reason = reason)
+  whole <- !stats::complete.cases(dst)
+  dst[whole, ] <- rep(c(0, 0, dim), each = sum(whole))
+  x0 <- gt[1] + dst[, 1] * gt[2]
+  x1 <- gt[1] + (dst[, 1] + dst[, 3]) * gt[2]
+  y0 <- gt[4] + dst[, 2] * gt[6]
+  y1 <- gt[4] + (dst[, 2] + dst[, 4]) * gt[6]
+  list(dsn = path, band = rep(NA_integer_, length(s)), source_band = source_band,
+       xmin = pmin(x0, x1), xmax = pmax(x0, x1), ymin = pmin(y0, y1), ymax = pmax(y0, y1),
+       src_xoff = src[, 1], src_yoff = src[, 2], src_xsize = src[, 3], src_ysize = src[, 4],
+       src_nodata = xml_number(xml_element(s, "NODATA")),
+       band_nodata = rep(NA_real_, length(s)), reason = reason)
 }
 
-## The xOff, yOff, xSize, ySize of a <SrcRect/> or <DstRect/>, NA when the
-## element is absent.
+## A number written in VRT XML ("nan" and "inf" as GDAL writes them), NA
+## when the text is empty or not a number. Vectorised.
+xml_number <- function(x) {
+  x <- trimws(x)
+  v <- suppressWarnings(as.numeric(x))
+  v[is.na(v) & tolower(x) == "nan"] <- NaN
+  v[!nzchar(x)] <- NA_real_
+  v
+}
+
+## The xOff, yOff, xSize, ySize of the <SrcRect/> or <DstRect/> of each
+## element of `s`, a matrix with a row per element, NA where it is absent.
 xml_rect <- function(s, name) {
-  el <- regmatches(s, regexpr(paste0("<", name, "\\b[^>]*>"), s))
-  if (!length(el)) return(rep(NA_real_, 4L))
-  v <- vapply(c("xOff", "yOff", "xSize", "ySize"), function(a) xml_attr(el, a), "")
-  suppressWarnings(as.numeric(v))
+  m <- regexpr(paste0("<", name, "\\b[^>]*>"), s)
+  el <- rep("", length(s))
+  el[m > 0] <- regmatches(s, m)
+  out <- vapply(c("xOff", "yOff", "xSize", "ySize"),
+                function(a) suppressWarnings(as.numeric(xml_attr(el, a))), numeric(length(s)))
+  matrix(out, nrow = length(s))
 }
 
-## The text of the first <name>...</name> element, "" when absent.
-xml_element <- function(s, name) {
-  el <- regmatches(s, regexpr(paste0("(?s)<", name, "\\b[^>]*>.*?</", name, ">"), s, perl = TRUE))
-  if (!length(el)) return("")
+## The text of the first <name>...</name> element of each element of `s`,
+## "" when absent; with `text = FALSE` the element itself, tags and all.
+xml_element <- function(s, name, text = TRUE) {
+  m <- regexpr(paste0("(?s)<", name, "\\b[^>]*>.*?</", name, ">"), s, perl = TRUE)
+  el <- rep("", length(s))
+  el[m > 0] <- regmatches(s, m)
+  if (!text) return(el)
   sub(paste0("</", name, ">$"), "", sub(paste0("^<", name, "\\b[^>]*>"), "", el))
 }
 
-## A double-quoted attribute of an element's open tag, NA when absent.
+## A double-quoted attribute of each open tag in `tag`, NA when absent.
 xml_attr <- function(tag, name) {
   if (!length(tag)) return(NA_character_)
-  m <- regmatches(tag, regexpr(paste0("\\b", name, "\\s*=\\s*\"[^\"]*\""), tag))
-  if (!length(m)) return(NA_character_)
-  xml_text(sub("\"$", "", sub("^[^\"]*\"", "", m)))
+  m <- regexpr(paste0("\\b", name, "\\s*=\\s*\"[^\"]*\""), tag)
+  out <- rep(NA_character_, length(tag))
+  out[m > 0] <- xml_text(sub("\"$", "", sub("^[^\"]*\"", "", regmatches(tag, m))))
+  out
 }
 
 ## Element text with the XML entities GDAL writes decoded.
@@ -445,7 +499,8 @@ gti_members <- function(dsn, gdal_dsn) {
   data.frame(dsn = loc, band = NA_integer_, source_band = NA_integer_,
              xmin = env$xmin, xmax = env$xmax, ymin = env$ymin, ymax = env$ymax,
              src_xoff = NA_real_, src_yoff = NA_real_, src_xsize = NA_real_, src_ysize = NA_real_,
-             reason = NA_character_, stringsAsFactors = FALSE)
+             src_nodata = NA_real_, band_nodata = NA_real_, reason = NA_character_,
+             stringsAsFactors = FALSE)
 }
 
 ## A small text file read through GDAL's virtual file layer.

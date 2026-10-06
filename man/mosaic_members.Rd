@@ -21,7 +21,9 @@ path, as for \code{\link[=cog_info]{cog_info()}}.}
 for every band), \code{source_band}, \code{xmin}, \code{xmax}, \code{ymin}, \code{ymax} (its
 placement in the mosaic CRS), \code{src_xoff}, \code{src_yoff}, \code{src_xsize},
 \code{src_ysize} (the window of the member's cells a VRT draws; \code{NA} for
-the whole member) and \code{reason} (\code{NA} when the member is drawn as it
+the whole member), \code{src_nodata} and \code{band_nodata} (the no-data value a
+VRT gives the source, \verb{<NODATA>}, and its band, \verb{<NoDataValue>}; \code{NA}
+when it gives none) and \code{reason} (\code{NA} when the member is drawn as it
 is).
 }
 \description{
@@ -38,12 +40,16 @@ members a view touches before it probes any. Requires 'gdalraster'.
 \details{
 A VRT member is one \verb{<SourceFilename>} of one \verb{<VRTRasterBand>}, with
 its \verb{<SourceBand>}, \verb{<SrcRect>} and \verb{<DstRect>}; the placement is the
-\code{DstRect} in the mosaic's geotransform. A member that the VRT does not
-copy as it is (a \code{ComplexSource} with a scale, offset, lookup table or
+\code{DstRect} in the mosaic's geotransform (the whole member over the whole
+mosaic when they are absent). A member that the VRT does not copy as it
+is (a \code{ComplexSource} with a scale, offset, exponent, lookup table or
 colour table component, a \code{KernelFilteredSource}, a mask band as the
 source band, a source of a derived band) is kept with a \code{reason}, so
 \code{\link[=mosaic_plan]{mosaic_plan()}} can say why it is not drawn in place. A warped or
-pansharpened VRT has no members. A GTI member is one feature of the index
+pansharpened VRT has no members. A source that composites by the
+member's mask (\code{UseMaskBand}, as \code{gdalbuildvrt} writes for a member with
+an alpha or mask band) is a copy: the member's own alpha is drawn. A
+GTI member is one feature of the index
 layer: its \code{location} field (or the field the layer's \code{LOCATION_FIELD}
 metadata or the \code{.gti} file's \verb{<LocationField>} names) and the bounds of
 its geometry; every band comes from the same member, so \code{band} is \code{NA}.
