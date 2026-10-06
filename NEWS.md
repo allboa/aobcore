@@ -1,5 +1,21 @@
 # aobcore 0.0.0.9000
 
+* `mosaic_members()` reads the members of a VRT (a `.vrt` file or a
+  `vrt://` connection string, from the XML GDAL serialises for it) or a
+  GDAL Tile Index (GTI: a `.gti` file, a `.gti.gpkg` or `.gti.fgb` index or
+  a `GTI:` path, from its index layer) without reading any member: each
+  member's path or URL as GDAL opens it (relative names resolved against
+  the VRT or index) with its placement in the mosaic, and `NULL` for a
+  plain file. `mosaic_plan()` plans a mosaic of COGs across its members for
+  a view: one `cog_plan()` per member, probing (`cog_info()`) only the
+  members whose placement meets `extent`, so a remote member costs one
+  range request for its header and nothing is copied; a member that
+  cannot be drawn in place (not a tiled GeoTIFF with overviews, in another
+  CRS, placed by a window or stretched, rescaled by the VRT) is reported
+  with a reason for the caller to fall back on. aobview draws a mosaic as
+  one `tiled_raster` layer per member (allboa/aobview#41, allboa/design
+  decision 0011).
+
 * `renderer_dependency()` is exported: the renderer as an HTML dependency,
   for hosts that call `aob.render()` themselves, such as aobview's Shiny
   output binding (decision 0009).
