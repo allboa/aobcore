@@ -16,8 +16,11 @@ scene_tag(
 \arguments{
 \item{scene}{A scene from \code{\link[=scene]{scene()}} and \code{\link[=scene_add_data]{scene_add_data()}} or
 \code{\link[=scene_add_vector]{scene_add_vector()}}, which carries its blobs; or a plain list following
-scene spec 0.1 to 0.5, with \code{version}, \code{view}, \code{data} and \code{layers}. It is written
-with \code{\link[=scene_json]{scene_json()}}.}
+scene spec 0.1 to 0.6, with \code{version}, \code{view}, \code{data} and \code{layers}. It is written
+with \code{\link[=scene_json]{scene_json()}}. A scene spec 0.6 \code{chunks} reference's chunk bytes are
+embedded as blobs keyed by the refs' \code{url} (as the scene writes it),
+each holding the bytes at that URL; the page reads each chunk's bytes
+from them at its \code{offset} and \code{length}.}
 
 \item{blobs}{A named list of raw vectors, each an Arrow IPC stream or file,
 named by the \code{blob} keys used in \code{scene$data}. Defaults to the blobs the

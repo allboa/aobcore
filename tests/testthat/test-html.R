@@ -85,8 +85,8 @@ test_that("write_scene_html() checks the scene shape", {
   tf <- tempfile(fileext = ".html")
   expect_error(write_scene_html(unclass(s)[c("version", "view")], b, tf), "missing data, layers")
   s1 <- s
-  s1$version <- "0.6"
-  expect_error(write_scene_html(s1, b, tf), "must be one of \"0.1\", \"0.2\", \"0.3\", \"0.4\", \"0.5\"")
+  s1$version <- "0.7"
+  expect_error(write_scene_html(s1, b, tf), "must be one of \"0.1\", \"0.2\", \"0.3\", \"0.4\", \"0.5\", \"0.6\"")
   s2 <- s
   s2$view$type <- "orthographic"
   expect_error(write_scene_html(s2, b, tf), "view\\$type")
@@ -223,4 +223,62 @@ test_that("the linked page links the renderer and names a blob base", {
   ## The inline mode is the embedded page.
   inline <- scene_page(p, blobs, title = "Polar probe", theme = "auto", mode = "inline")
   expect_identical(charToRaw(paste0("<!DOCTYPE html>\n", inline, "\n")), legacy_page(p, title = "Polar probe"))
+})
+
+test_that("a scene spec 0.6 chunks scene is written with its chunk bytes keyed by url", {
+  skip_if_no_gdal()
+  f <- system.file("extdata", "polar_3031.tif", package = "aobcore")
+  cog <- cog_info(f)
+  s <- scene_add_tiled_raster(scene("EPSG:3031"), "sst", cog_plan(cog, "EPSG:3031", levels = 3L),
+                              palette = "ocean", range = c(-2, 15), embed = FALSE, url = "polar_3031.tif")
+  l0 <- cog$levels[[1]]
+  lv <- cog$levels[[4]]
+  ## The COG's level 3 tiles as chunk refs (a hand-written 0.6 scene: no
+  ## producer writes chunks yet).
+  s$data$sst <- list(
+    format = "chunks", url = "polar_3031.tif",
+    grid = list(crs = "EPSG:3031", geotransform = l0$geotransform, dim = l0$dim, chunk_size = l0$tile_size,
+                levels = list(list(level = 3L, dim = lv$dim, geotransform = lv$geotransform))),
+    dtype = "int16", scale = cog$scale, nodata = cog$nodata,
+    codecs = list(list(name = "bytes"), list(name = "predictor", configuration = list(type = "horizontal")),
+                  list(name = "deflate")),
+    refs = list(rows = lapply(seq_len(nrow(lv$tiles)), function(i) {
+      list(level = 3L, col = lv$tiles$col[i], row = lv$tiles$row[i],
+           offset = lv$tiles$byte_offset[i], length = lv$tiles$byte_length[i])
+    }))
+  )
+  s$layers[[1]]$plan$levels <- lapply(s$layers[[1]]$plan$levels, function(L) {
+    list(level = L$level, pixel_size = L$pixel_size,
+         tiles = lapply(L$tiles, function(t) t[c("col", "row", "footprint", "mesh")]))
+  })
+  expect_identical(scene_spec_version(s), "0.6")
+  bytes <- readBin(f, "raw", file.size(f))
+  b <- c(scene_blobs(s), list(polar_3031.tif = bytes, unused = as.raw(1:3)))
+  tf <- tempfile(fileext = ".html")
+  expect_warning(write_scene_html(s, b, tf), "Blobs not used by the scene are left out of the page: unused.")
+  html <- paste(readLines(tf, warn = FALSE), collapse = "\n")
+  expect_match(html, "\"version\":\"0.6\"", fixed = TRUE)
+  expect_match(html, "\"format\":\"chunks\"", fixed = TRUE)
+  expect_match(html, "data-aob-blob=\"polar_3031.tif\"", fixed = TRUE)
+  expect_match(html, b64_encode(bytes), fixed = TRUE)
+
+  ## The same scene as a plain list: it must say 0.6, and its refs are rows
+  ## or a table that is a data id.
+  p <- unclass(s)
+  attr(p, "blobs") <- NULL
+  attr(p, "files") <- NULL
+  p$version <- "0.6"
+  expect_no_warning(write_scene_html(p, b[names(b) != "unused"], tf))
+  p5 <- p
+  p5$version <- "0.5"
+  expect_error(write_scene_html(p5, b, tf), "The chunks data reference `sst` needs scene spec 0.6.")
+  p2 <- p
+  p2$data$sst$refs <- list()
+  expect_error(write_scene_html(p2, b, tf), "needs `refs` with exactly one of `rows` or `table`")
+  p3 <- p
+  p3$data$sst$refs <- list(table = "sst_refs")
+  expect_error(write_scene_html(p3, b, tf), "names refs table \"sst_refs\", which is not in `scene\\$data`")
+  p4 <- p
+  p4$data$sst$format <- "zarr"
+  expect_error(write_scene_html(p4, b, tf), "which is not a cog or chunks reference")
 })

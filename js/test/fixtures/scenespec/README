@@ -1,13 +1,23 @@
-Scene spec explicit-data fixtures
----------------------------------
+Scene spec fixtures
+-------------------
 
 Copied unchanged from allboa/scenespec at commit
 898419b1489306bc3f68dbc9a424280d176b1db0 (main after scenespec#13, "Write
-down the explicit-data contract"): fixtures/data/*.arrows,
-fixtures/data/invalid/* and fixtures/valid/explicit-data-0.6.json, in the
-same relative layout, so the scenes' url references resolve here as they do
-there. test/renderer.test.mjs reads them (part 12). The contract is the
+down the explicit-data contract"). Each scene keeps its files at the same
+paths relative to it, so its url references resolve here as they do there.
+
+Explicit data, from scenespec's fixtures/ (here without that prefix):
+data/*.arrows, data/invalid/* and valid/explicit-data-0.6.json.
+test/renderer.test.mjs reads them (part 12). The contract is the
 "Explicit data: Arrow with GeoArrow geometry" section of scenespec's
-README; scenespec's scripts/check-data.js is its reference checker. To
-update, copy the files again from a newer scenespec commit and change the
-commit above.
+README; scenespec's scripts/check-data.js is its reference checker.
+
+Chunk references (scene spec 0.6), from scenespec's conformance/ (here in
+conformance/): zarr-v2-chunks.json and its store tiny.zarr/ (a Zarr v2
+array of zlib-compressed float32 chunks; chunk 1.2 is not stored).
+test/renderer.test.mjs reads them (part 13). The rule is the "0.6: chunk
+references" section of scenespec's README; scenespec's
+scripts/check-refs.js is its reference decoder.
+
+To update, copy the files again from a newer scenespec commit and change
+the commit above.

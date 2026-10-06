@@ -1,0 +1,2 @@
+# GeoTIFF fixtures written by tools/make-chunk-fixtures.R: binary, never text.
+*.tif binary

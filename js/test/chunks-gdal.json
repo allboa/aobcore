@@ -1,0 +1,844 @@
+{
+  "scene": {
+    "version": "0.6",
+    "view": {
+      "type": "projected",
+      "crs": "EPSG:3031"
+    },
+    "data": {
+      "cog": {
+        "format": "chunks",
+        "grid": {
+          "crs": "EPSG:3031",
+          "geotransform": [-3000000,20000,0,2000000,0,-20000],
+          "dim": [300,200],
+          "chunk_size": [128,128],
+          "levels": [
+            {
+              "level": 1,
+              "dim": [150,100],
+              "geotransform": [-3000000,40000,0,2000000,0,-40000]
+            }
+          ]
+        },
+        "dtype": "int16",
+        "bands": 2,
+        "interleave": "pixel",
+        "codecs": [
+          {
+            "name": "bytes",
+            "configuration": {
+              "endian": "little"
+            }
+          },
+          {
+            "name": "predictor",
+            "configuration": {
+              "type": "horizontal"
+            }
+          },
+          {
+            "name": "deflate"
+          }
+        ],
+        "nodata": -32768,
+        "refs": {
+          "rows": [
+            {
+              "level": 0,
+              "col": 0,
+              "row": 0,
+              "offset": 7909,
+              "length": 6009
+            },
+            {
+              "level": 0,
+              "col": 1,
+              "row": 0,
+              "offset": 13926,
+              "length": 6288
+            },
+            {
+              "level": 0,
+              "col": 0,
+              "row": 1,
+              "offset": 20222,
+              "length": 4249
+            },
+            {
+              "level": 0,
+              "col": 1,
+              "row": 1,
+              "offset": 24479,
+              "length": 4369
+            },
+            {
+              "level": 0,
+              "col": 2,
+              "row": 1,
+              "offset": 28856,
+              "length": 2493
+            },
+            {
+              "level": 1,
+              "col": 0,
+              "row": 0,
+              "offset": 1011,
+              "length": 5521
+            },
+            {
+              "level": 1,
+              "col": 1,
+              "row": 0,
+              "offset": 6540,
+              "length": 1361
+            }
+          ]
+        },
+        "url": "int16-pixel.tif"
+      },
+      "cog_vertices": {
+        "format": "arrow-ipc-stream",
+        "blob": "cog_vertices"
+      },
+      "cog_indices": {
+        "format": "arrow-ipc-stream",
+        "blob": "cog_indices"
+      }
+    },
+    "layers": [
+      {
+        "id": "cog",
+        "kind": "tiled_raster",
+        "source": "cog",
+        "plan": {
+          "crs": "EPSG:3031",
+          "coverage": "all_levels",
+          "selection": {
+            "rule": "coarsest_sufficient"
+          },
+          "mesh": {
+            "vertices": "cog_vertices",
+            "indices": "cog_indices"
+          },
+          "levels": [
+            {
+              "level": 1,
+              "pixel_size": 40000,
+              "tiles": [
+                {
+                  "col": 0,
+                  "row": 0,
+                  "footprint": [-3000000,2120000,-2000000,2000000],
+                  "mesh": {
+                    "first_vertex": 0,
+                    "vertex_count": 4,
+                    "first_index": 0,
+                    "index_count": 6
+                  }
+                },
+                {
+                  "col": 1,
+                  "row": 0,
+                  "footprint": [2120000,3000000,-2000000,2000000],
+                  "mesh": {
+                    "first_vertex": 4,
+                    "vertex_count": 4,
+                    "first_index": 6,
+                    "index_count": 6
+                  }
+                }
+              ]
+            },
+            {
+              "level": 0,
+              "pixel_size": 20000,
+              "tiles": [
+                {
+                  "col": 0,
+                  "row": 0,
+                  "footprint": [-3000000,-440000,-560000,2000000],
+                  "mesh": {
+                    "first_vertex": 8,
+                    "vertex_count": 4,
+                    "first_index": 12,
+                    "index_count": 6
+                  }
+                },
+                {
+                  "col": 1,
+                  "row": 0,
+                  "footprint": [-440000,2120000,-560000,2000000],
+                  "mesh": {
+                    "first_vertex": 12,
+                    "vertex_count": 4,
+                    "first_index": 18,
+                    "index_count": 6
+                  }
+                },
+                {
+                  "col": 0,
+                  "row": 1,
+                  "footprint": [-3000000,-440000,-2000000,-560000],
+                  "mesh": {
+                    "first_vertex": 16,
+                    "vertex_count": 4,
+                    "first_index": 24,
+                    "index_count": 6
+                  }
+                },
+                {
+                  "col": 1,
+                  "row": 1,
+                  "footprint": [-440000,2120000,-2000000,-560000],
+                  "mesh": {
+                    "first_vertex": 20,
+                    "vertex_count": 4,
+                    "first_index": 30,
+                    "index_count": 6
+                  }
+                },
+                {
+                  "col": 2,
+                  "row": 1,
+                  "footprint": [2120000,3000000,-2000000,-560000],
+                  "mesh": {
+                    "first_vertex": 24,
+                    "vertex_count": 4,
+                    "first_index": 36,
+                    "index_count": 6
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        "palette": {
+          "name": "ocean",
+          "range": [-20000,20000]
+        },
+        "band": 2
+      }
+    ]
+  },
+  "blobs": {
+    "cog_vertices": "/////yABAAAIAAAAAAAAAPz+//8EAAEABAAAABT///8UAAAADAAAAAQAAAAAAAAAAAAAAAIAAABUAAAABAAAAEj///9AAAAAARAAADAAAAAEAAAAAQAAAAQAAABw////FAAAAAEDAAAEAAAAhv///wEAAAAAAAAAAAAAAJz///8CAAAAAgAAAHV2AACU////QAAAAAEQAAAwAAAABAAAAAEAAAAEAAAAvP///xQAAAABAwAABAAAANL///8BAAAAAAAAAAAAAADo////AgAAAAgAAABwb3NpdGlvbgAAAAAGAAgABAAGAAYABAAMABAABAAIAAkADAAQABQABAAIAAkADAAAABAADAAQAAAABAAIAAwACgAMAAQABgAIAAAAAAAAAAAAAAD/////AAEAAAQAAAAa////BAADABAAAADAAQAAAAAAAAAAAAA8////HAAAAAAAAAB0AAAACAAAAAAAAAAGAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAOAAAAAAAAAA4AAAAAAAAAAAAAAAAAAAAOAAAAAAAAAAAAAAAAAAAADgAAAAAAAAAOAAAAAAAAAAAAAAAAQAAAAcAAAAAAAAAAAAAAAAAAAAOAAAAAAAAAAAAAAAAAAAABwAAAAAAAAAAAAAAAAAAAA4AAAAAAAAAAAAAAAAAAAACgAUAAQADAAQAAwAFAAEAAYACAAMAAAAAAAAAAAAAAAAGzfKACT0SQBlAUoAJPRJABs3ygAk9MkAZQFKACT0yQBlAUoAJPRJABs3SgAk9EkAZQFKACT0yQAbN0oAJPTJABs3ygAk9EkA2NbIACT0SQAbN8oAuAjJANjWyAC4CMkA2NbIACT0SQBlAUoAJPRJANjWyAC4CMkAZQFKALgIyQAbN8oAuAjJANjWyAC4CMkAGzfKACT0yQDY1sgAJPTJANjWyAC4CMkAZQFKALgIyQDY1sgAJPTJAGUBSgAk9MkAZQFKALgIyQAbN0oAuAjJAGUBSgAk9MkAGzdKACT0yQAAAAAAAAAAAACAPwAAAAAAAAAAAABIPwAAgD8AAEg/AAAAAAAAAAAAADA+AAAAAAAAAAAAAEg/AAAwPgAASD8AAAAAAAAAAAAAgD8AAAAAAAAAAAAAgD8AAIA/AACAPwAAAAAAAAAAAACAPwAAAAAAAAAAAACAPwAAgD8AAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAABA/AACAPwAAED8AAAAAAAAAAAAAgD8AAAAAAAAAAAAAED8AAIA/AAAQPwAAAAAAAAAAAACwPgAAAAAAAAAAAAAQPwAAsD4AABA//////wAAAAA=",
+    "cog_indices": "/////4AAAAAIAAAAAAAAAJL///8EAAEABAAAAKr///8UAAAADAAAAAQAAAAAAAAAAAAAAAEAAAAEAAAA1v///xQAAAABAgAABAAAAOz///8gAAAABQAAAGluZGV4AAAABgAIAAQADAAQAAQACAAJAAwADAAQAAAABAAIAAwACgAMAAQABgAIAP////+QAAAABAAAAIr///8EAAMAEAAAAKgAAAAAAAAAAAAAAKz///8qAAAAAAAAADQAAAAIAAAAAAAAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACoAAAAAAAAAAAAAAABAAAAKgAAAAAAAAAAAAAAAAAAAAoAFAAEAAwAEAAMABQABAAGAAgADAAAAAAAAAAAAAAAAAAAAAIAAAABAAAAAQAAAAIAAAADAAAAAAAAAAIAAAABAAAAAQAAAAIAAAADAAAAAAAAAAIAAAABAAAAAQAAAAIAAAADAAAAAAAAAAIAAAABAAAAAQAAAAIAAAADAAAAAAAAAAIAAAABAAAAAQAAAAIAAAADAAAAAAAAAAIAAAABAAAAAQAAAAIAAAADAAAAAAAAAAIAAAABAAAAAQAAAAIAAAADAAAA/////wAAAAA="
+  },
+  "cases": [
+    {
+      "name": "zarr v2 float32 deflate (scenespec tiny.zarr)",
+      "base": "fixtures/scenespec/conformance",
+      "source": {
+        "format": "chunks",
+        "grid": {
+          "crs": "EPSG:3031",
+          "geotransform": [
+            -1200000,
+            100000,
+            0,
+            -1000000,
+            0,
+            100000
+          ],
+          "dim": [
+            24,
+            20
+          ],
+          "chunk_size": [
+            10,
+            10
+          ]
+        },
+        "dtype": "float32",
+        "codecs": [
+          {
+            "name": "bytes",
+            "configuration": {
+              "endian": "little"
+            }
+          },
+          {
+            "name": "deflate",
+            "configuration": {
+              "level": 6
+            }
+          }
+        ],
+        "nodata": -9999,
+        "refs": {
+          "rows": [
+            {
+              "col": 0,
+              "row": 0,
+              "url": "tiny.zarr/0.0",
+              "offset": 0,
+              "length": 390
+            },
+            {
+              "col": 1,
+              "row": 0,
+              "url": "tiny.zarr/0.1",
+              "offset": 0,
+              "length": 353
+            },
+            {
+              "col": 2,
+              "row": 0,
+              "url": "tiny.zarr/0.2",
+              "offset": 0,
+              "length": 192
+            },
+            {
+              "col": 0,
+              "row": 1,
+              "url": "tiny.zarr/1.0",
+              "offset": 0,
+              "length": 411
+            },
+            {
+              "col": 1,
+              "row": 1,
+              "url": "tiny.zarr/1.1",
+              "offset": 0,
+              "length": 359
+            }
+          ]
+        }
+      },
+      "cells": [
+        {
+          "level": 0,
+          "band": 1,
+          "x": 0,
+          "y": 0,
+          "value": -0.0010000000474974513
+        },
+        {
+          "level": 0,
+          "band": 1,
+          "x": 1,
+          "y": 0,
+          "value": -0.07800000160932541
+        },
+        {
+          "level": 0,
+          "band": 1,
+          "x": 9,
+          "y": 9,
+          "value": -1.6970000267028809
+        },
+        {
+          "level": 0,
+          "band": 1,
+          "x": 10,
+          "y": 0,
+          "value": 0.08799999952316284
+        },
+        {
+          "level": 0,
+          "band": 1,
+          "x": 23,
+          "y": 0,
+          "value": -0.0010000000474974513
+        },
+        {
+          "level": 0,
+          "band": 1,
+          "x": 5,
+          "y": 12,
+          "value": -0.3089999854564667
+        },
+        {
+          "level": 0,
+          "band": 1,
+          "x": 19,
+          "y": 19,
+          "value": 0.22599999606609344
+        },
+        {
+          "level": 0,
+          "band": 1,
+          "x": 23,
+          "y": 10,
+          "value": -9999
+        },
+        {
+          "level": 0,
+          "band": 1,
+          "x": 20,
+          "y": 15,
+          "value": -9999
+        }
+      ]
+    },
+    {
+      "name": "COG int16, 2 bands pixel, deflate horizontal (int16-pixel.tif)",
+      "base": ".",
+      "source": {
+        "format": "chunks",
+        "grid": {
+          "crs": "EPSG:3031",
+          "geotransform": [-3000000,20000,0,2000000,0,-20000],
+          "dim": [300,200],
+          "chunk_size": [128,128],
+          "levels": [
+            {
+              "level": 1,
+              "dim": [150,100],
+              "geotransform": [-3000000,40000,0,2000000,0,-40000]
+            }
+          ]
+        },
+        "dtype": "int16",
+        "bands": 2,
+        "interleave": "pixel",
+        "codecs": [
+          {
+            "name": "bytes",
+            "configuration": {
+              "endian": "little"
+            }
+          },
+          {
+            "name": "predictor",
+            "configuration": {
+              "type": "horizontal"
+            }
+          },
+          {
+            "name": "deflate"
+          }
+        ],
+        "nodata": -32768,
+        "refs": {
+          "rows": [
+            {
+              "level": 0,
+              "col": 0,
+              "row": 0,
+              "url": "fixtures/chunks/int16-pixel.tif",
+              "offset": 7909,
+              "length": 6009
+            },
+            {
+              "level": 0,
+              "col": 1,
+              "row": 0,
+              "url": "fixtures/chunks/int16-pixel.tif",
+              "offset": 13926,
+              "length": 6288
+            },
+            {
+              "level": 0,
+              "col": 0,
+              "row": 1,
+              "url": "fixtures/chunks/int16-pixel.tif",
+              "offset": 20222,
+              "length": 4249
+            },
+            {
+              "level": 0,
+              "col": 1,
+              "row": 1,
+              "url": "fixtures/chunks/int16-pixel.tif",
+              "offset": 24479,
+              "length": 4369
+            },
+            {
+              "level": 0,
+              "col": 2,
+              "row": 1,
+              "url": "fixtures/chunks/int16-pixel.tif",
+              "offset": 28856,
+              "length": 2493
+            },
+            {
+              "level": 1,
+              "col": 0,
+              "row": 0,
+              "url": "fixtures/chunks/int16-pixel.tif",
+              "offset": 1011,
+              "length": 5521
+            },
+            {
+              "level": 1,
+              "col": 1,
+              "row": 0,
+              "url": "fixtures/chunks/int16-pixel.tif",
+              "offset": 6540,
+              "length": 1361
+            }
+          ]
+        }
+      },
+      "cells": [
+        {
+          "level": 0,
+          "band": 1,
+          "x": 0,
+          "y": 0,
+          "value": 14573
+        },
+        {
+          "level": 0,
+          "band": 2,
+          "x": 0,
+          "y": 0,
+          "value": 15184
+        },
+        {
+          "level": 0,
+          "band": 1,
+          "x": 1,
+          "y": 0,
+          "value": 14797
+        },
+        {
+          "level": 0,
+          "band": 2,
+          "x": 1,
+          "y": 0,
+          "value": 15033
+        },
+        {
+          "level": 0,
+          "band": 1,
+          "x": 2,
+          "y": 0,
+          "value": 15007
+        },
+        {
+          "level": 0,
+          "band": 2,
+          "x": 2,
+          "y": 0,
+          "value": 14867
+        },
+        {
+          "level": 0,
+          "band": 1,
+          "x": 127,
+          "y": 127,
+          "value": 4745
+        },
+        {
+          "level": 0,
+          "band": 2,
+          "x": 127,
+          "y": 127,
+          "value": 3467
+        },
+        {
+          "level": 0,
+          "band": 1,
+          "x": 128,
+          "y": 0,
+          "value": 12065
+        },
+        {
+          "level": 0,
+          "band": 2,
+          "x": 128,
+          "y": 0,
+          "value": 18187
+        },
+        {
+          "level": 0,
+          "band": 1,
+          "x": 255,
+          "y": 5,
+          "value": 7548
+        },
+        {
+          "level": 0,
+          "band": 2,
+          "x": 255,
+          "y": 5,
+          "value": 15300
+        },
+        {
+          "level": 0,
+          "band": 1,
+          "x": 200,
+          "y": 150,
+          "value": -7181
+        },
+        {
+          "level": 0,
+          "band": 2,
+          "x": 200,
+          "y": 150,
+          "value": -5078
+        },
+        {
+          "level": 0,
+          "band": 1,
+          "x": 299,
+          "y": 199,
+          "value": 15480
+        },
+        {
+          "level": 0,
+          "band": 2,
+          "x": 299,
+          "y": 199,
+          "value": 6805
+        },
+        {
+          "level": 0,
+          "band": 1,
+          "x": 256,
+          "y": 128,
+          "value": 992
+        },
+        {
+          "level": 0,
+          "band": 2,
+          "x": 256,
+          "y": 128,
+          "value": 1795
+        },
+        {
+          "level": 0,
+          "band": 1,
+          "x": 299,
+          "y": 130,
+          "value": 13734
+        },
+        {
+          "level": 0,
+          "band": 2,
+          "x": 299,
+          "y": 130,
+          "value": 2824
+        },
+        {
+          "level": 0,
+          "band": 1,
+          "x": 0,
+          "y": 199,
+          "value": 8158
+        },
+        {
+          "level": 0,
+          "band": 2,
+          "x": 0,
+          "y": 199,
+          "value": 3156
+        },
+        {
+          "level": 1,
+          "band": 1,
+          "x": 0,
+          "y": 0,
+          "value": 14573
+        },
+        {
+          "level": 1,
+          "band": 2,
+          "x": 0,
+          "y": 0,
+          "value": 15184
+        },
+        {
+          "level": 1,
+          "band": 1,
+          "x": 1,
+          "y": 0,
+          "value": 15007
+        },
+        {
+          "level": 1,
+          "band": 2,
+          "x": 1,
+          "y": 0,
+          "value": 14867
+        },
+        {
+          "level": 1,
+          "band": 1,
+          "x": 149,
+          "y": 99,
+          "value": 15098
+        },
+        {
+          "level": 1,
+          "band": 2,
+          "x": 149,
+          "y": 99,
+          "value": 6292
+        },
+        {
+          "level": 1,
+          "band": 1,
+          "x": 70,
+          "y": 40,
+          "value": 7634
+        },
+        {
+          "level": 1,
+          "band": 2,
+          "x": 70,
+          "y": 40,
+          "value": 2957
+        }
+      ]
+    },
+    {
+      "name": "GeoTIFF float32 big endian, 2 bands pixel, deflate floating_point (float32-big.tif)",
+      "base": ".",
+      "source": {
+        "format": "chunks",
+        "grid": {
+          "crs": "EPSG:3031",
+          "geotransform": [-1000000,10000,0,700000,0,-10000],
+          "dim": [100,70],
+          "chunk_size": [64,64]
+        },
+        "dtype": "float32",
+        "bands": 2,
+        "interleave": "pixel",
+        "codecs": [
+          {
+            "name": "bytes",
+            "configuration": {
+              "endian": "big"
+            }
+          },
+          {
+            "name": "predictor",
+            "configuration": {
+              "type": "floating_point"
+            }
+          },
+          {
+            "name": "deflate"
+          }
+        ],
+        "refs": {
+          "rows": [
+            {
+              "level": 0,
+              "col": 0,
+              "row": 0,
+              "url": "fixtures/chunks/float32-big.tif",
+              "offset": 445,
+              "length": 20065
+            },
+            {
+              "level": 0,
+              "col": 1,
+              "row": 0,
+              "url": "fixtures/chunks/float32-big.tif",
+              "offset": 20510,
+              "length": 11998
+            },
+            {
+              "level": 0,
+              "col": 0,
+              "row": 1,
+              "url": "fixtures/chunks/float32-big.tif",
+              "offset": 32508,
+              "length": 2324
+            },
+            {
+              "level": 0,
+              "col": 1,
+              "row": 1,
+              "url": "fixtures/chunks/float32-big.tif",
+              "offset": 34832,
+              "length": 1350
+            }
+          ]
+        }
+      },
+      "cells": [
+        {
+          "level": 0,
+          "band": 1,
+          "x": 0,
+          "y": 0,
+          "value": 14.57323932647705
+        },
+        {
+          "level": 0,
+          "band": 2,
+          "x": 0,
+          "y": 0,
+          "value": 15.183676719665527
+        },
+        {
+          "level": 0,
+          "band": 1,
+          "x": 1,
+          "y": 0,
+          "value": 14.79743766784668
+        },
+        {
+          "level": 0,
+          "band": 2,
+          "x": 1,
+          "y": 0,
+          "value": 15.033154487609863
+        },
+        {
+          "level": 0,
+          "band": 1,
+          "x": 63,
+          "y": 63,
+          "value": -10.97825813293457
+        },
+        {
+          "level": 0,
+          "band": 2,
+          "x": 63,
+          "y": 63,
+          "value": -6.00117301940918
+        },
+        {
+          "level": 0,
+          "band": 1,
+          "x": 64,
+          "y": 0,
+          "value": 2.897909164428711
+        },
+        {
+          "level": 0,
+          "band": 2,
+          "x": 64,
+          "y": 0,
+          "value": -0.6978204846382141
+        },
+        {
+          "level": 0,
+          "band": 1,
+          "x": 99,
+          "y": 69,
+          "value": -11.12479019165039
+        },
+        {
+          "level": 0,
+          "band": 2,
+          "x": 99,
+          "y": 69,
+          "value": -1.0338988304138184
+        },
+        {
+          "level": 0,
+          "band": 1,
+          "x": 10,
+          "y": 66,
+          "value": 2.6311895847320557
+        },
+        {
+          "level": 0,
+          "band": 2,
+          "x": 10,
+          "y": 66,
+          "value": 5.348802089691162
+        }
+      ]
+    }
+  ]
+}

@@ -61,6 +61,18 @@
 //    the six valid streams (interleaved and separated coordinates, a
 //    PROJJSON and an authority-code CRS) draw with their feature counts,
 //    and each scene of fixtures/data/invalid is a layer error.
+// 13. Scene spec 0.6 chunk references: in Node, chunks decoded by their
+//    codec chains equal GDAL's reads (test/chunks-gdal.json, from
+//    tools/make-chunk-fixtures.R: scenespec's tiny.zarr, a deflate COG of 2
+//    int16 bands interleaved by pixel with the horizontal predictor, and a
+//    big-endian float32 GeoTIFF with the floating point predictor), gzip,
+//    plane and separate interleave, refs from an Arrow table, and named
+//    problems (zstd, lzw, blosc, jpeg). In the browser: scenespec's
+//    zarr-v2-chunks.json drawn by range requests, from blobs keyed by url
+//    (with a planned chunk that has no ref) and from a served page's blob
+//    base; the COG as a chunks scene by range requests; the same values
+//    decoded by the browser's DecompressionStream; and a zstd chain is a
+//    layer error while the rest of the scene draws.
 // Also in Node: the range reader keeps a whole-file (200) response, and the
 // tile cache evicts least recently used idle tiles.
 // Set CHROMIUM_PATH to pick a browser; SKIP_BROWSER=1 runs only part 1.
@@ -80,6 +92,7 @@ import { linkToR, utf8Length, NOT_CONNECTED, TOO_MANY } from "../src/link.js";
 import { selectionState, clickSelection, selectionText } from "../src/selection.js";
 import { rStandIn } from "./ws-server.mjs";
 import { geometryProblem, sameCrs, readTable, ipcFormatProblem } from "../src/arrow.js";
+import { decodeChunk, chunkRefs, chunkKey, chunkLevel, chunkWindow, chunksProblem } from "../src/chunks.js";
 import { readdirSync } from "node:fs";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -98,8 +111,7 @@ console.log("ok   palettes");
 
 // ---- 12a. explicit-data contract in Node -----------------------------------
 // Scenespec's fixtures as scenes whose url references are blobs (the
-// renderer is given blobs, as a page carries them), drawn as 0.5: they use
-// nothing from 0.6 (chunk references), which this renderer does not read.
+// renderer is given blobs, as a page carries them).
 const specDir = join(here, "fixtures", "scenespec");
 function specScene(file) {
   const scene = JSON.parse(readFileSync(file, "utf8"));
@@ -110,7 +122,6 @@ function specScene(file) {
     delete ref.url;
     ref.blob = id;
   }
-  scene.version = "0.5";
   return { scene, blobs };
 }
 const validSpec = specScene(join(specDir, "valid", "explicit-data-0.6.json"));
@@ -543,6 +554,108 @@ console.log("ok   level selection");
     assert.equal(sel.clear(), false);
     console.log("ok   selection: click selects one, Shift or Cmd adds and removes, a click on nothing clears");
   }
+}
+
+// ---- 13a. scene spec 0.6 chunk references in Node ---------------------------
+// test/chunks-gdal.json (tools/make-chunk-fixtures.R): chunks sources with
+// cells GDAL reads. Each cell's chunk is read from its file at the ref's
+// offset and length and decoded by the codec chain, as a layer does.
+const chunkCases = JSON.parse(readFileSync(join(here, "chunks-gdal.json"), "utf8"));
+const chunkCell = async (c, cell, read) => {
+  const src = c.source;
+  const lv = chunkLevel(src, cell.level);
+  const [w, h] = lv.size;
+  const ref = chunkRefs(src, {}, c.name).get(chunkKey(cell.level, Math.floor(cell.x / w), Math.floor(cell.y / h), 0));
+  if (!ref) return { missing: true };
+  // read(ref, src, w, h, i, band) gives band (1-based) of cell i of the chunk.
+  return { value: await read(ref, src, w, h, (cell.y % h) * w + (cell.x % w), cell.band) };
+};
+const nodeRead = (c) => async (ref, src, w, h, i, band) => {
+  const { samples, spp } = await decodeChunk(chunkFile(c, ref), src, w, h);
+  return samples[i * spp + band - 1];
+};
+const chunkFile = (c, ref) => new Uint8Array(readFileSync(join(here, c.base, ref.url)).subarray(ref.offset, ref.offset + ref.length));
+{
+  for (const c of chunkCases.cases) {
+    assert.equal(chunksProblem(c.source, { band: 1, plan: { levels: [{ level: 0 }] } }), null, c.name);
+    let missing = 0;
+    for (const cell of c.cells) {
+      const got = await chunkCell(c, cell, nodeRead(c));
+      if (got.missing) {
+        // A chunk with no ref is no data: GDAL reads the fill value.
+        assert.equal(cell.value, c.source.nodata, `${c.name}: cell ${cell.x}, ${cell.y} has no chunk`);
+        missing++;
+      } else {
+        assert.equal(got.value, cell.value, `${c.name}: level ${cell.level} band ${cell.band} cell ${cell.x}, ${cell.y}`);
+      }
+    }
+    console.log(`ok   chunks decode ${c.name}: ${c.cells.length - missing} cells equal GDAL's${missing ? `, ${missing} in a chunk with no ref are no data` : ""}`);
+  }
+  const [zarr, int16] = chunkCases.cases;
+  // The edge chunk's window, and a level that is not in the grid.
+  assert.deepEqual(chunkWindow(chunkLevel(zarr.source, 0), 2, 0), { x: 0, y: 0, width: 4, height: 10 });
+  assert.deepEqual(chunkWindow(chunkLevel(int16.source, 1), 1, 0), { x: 0, y: 0, width: 22, height: 100 });
+  assert.equal(chunkLevel(zarr.source, 1), null);
+
+  // gzip, and plane and separate interleave, from the int16 COG's chunk 0
+  // (pixel interleaved, horizontal predictor): written again here in each
+  // layout and decoded back to the same samples.
+  const zlib = await import("node:zlib");
+  const zref = chunkRefs(zarr.source, {}, "zarr").get(chunkKey(0, 0, 0, 0));
+  const zbytes = chunkFile(zarr, zref);
+  const viaGzip = { ...zarr.source, codecs: [{ name: "bytes", configuration: { endian: "little" } }, { name: "gzip" }] };
+  const gz = await decodeChunk(new Uint8Array(zlib.gzipSync(zlib.inflateSync(zbytes))), viaGzip, 10, 10);
+  assert.deepEqual(gz, await decodeChunk(zbytes, zarr.source, 10, 10), "gzip decodes as deflate does");
+  const iref = chunkRefs(int16.source, {}, "int16").get(chunkKey(0, 0, 0, 0));
+  const pix = await decodeChunk(chunkFile(int16, iref), int16.source, 128, 128);
+  assert.equal(pix.spp, 2);
+  const n = 128 * 128;
+  const planes = [0, 1].map((b) => Int16Array.from({ length: n }, (_, i) => pix.samples[i * 2 + b]));
+  // The horizontal predictor over each band's rows (stride 1), wrapping.
+  const predict = (p) => {
+    const out = Int16Array.from(p);
+    for (let r = 0; r < 128; r++) for (let k = 127; k >= 1; k--) out[r * 128 + k] = p[r * 128 + k] - p[r * 128 + k - 1];
+    return out;
+  };
+  const deflate = (a) => new Uint8Array(zlib.deflateSync(Buffer.from(a.buffer, a.byteOffset, a.byteLength)));
+  const plane = new Int16Array(2 * n);
+  planes.forEach((p, b) => plane.set(predict(p), b * n));
+  const asPlane = { ...int16.source, interleave: "plane" };
+  assert.deepEqual(await decodeChunk(deflate(plane), asPlane, 128, 128), pix, "plane interleave");
+  const asSeparate = { ...int16.source, interleave: "separate" };
+  const sep = await decodeChunk(deflate(predict(planes[1])), asSeparate, 128, 128);
+  assert.equal(sep.spp, 1);
+  assert.deepEqual(sep.samples, planes[1], "separate: one band per chunk");
+  console.log("ok   chunks: gzip, plane and separate interleave, edge windows");
+
+  // Refs as an Arrow table give the same index as inline rows.
+  const rows = int16.source.refs.rows;
+  const refTable = tableFromArrays({
+    level: Int32Array.from(rows, (r) => r.level || 0),
+    col: Int32Array.from(rows, (r) => r.col),
+    row: Int32Array.from(rows, (r) => r.row),
+    offset: BigInt64Array.from(rows, (r) => BigInt(r.offset)),
+    length: BigInt64Array.from(rows, (r) => BigInt(r.length)),
+  });
+  const viaTable = { ...int16.source, url: rows[0].url, refs: { table: "refs" } };
+  assert.deepEqual(chunkRefs(viaTable, { refs: refTable }, "t"), chunkRefs(int16.source, {}, "rows"));
+  console.log("ok   chunks: refs from an Arrow table");
+
+  // Codec chains this renderer does not undo, and other sources a layer
+  // cannot draw, are named.
+  const L = { band: 1, plan: { levels: [{ level: 0 }] } };
+  const withCodec = (name) => ({ ...zarr.source, codecs: [zarr.source.codecs[0], { name }] });
+  for (const name of ["zstd", "lzw", "blosc"]) {
+    assert.match(chunksProblem(withCodec(name), L), new RegExp(`^codec ${name} is not supported by this renderer`), name);
+  }
+  assert.match(chunksProblem({ ...zarr.source, dtype: "uint8", codecs: [{ name: "jpeg" }] }, L), /^codec jpeg is not supported/);
+  assert.match(chunksProblem(int16.source, { ...L, band: 3 }), /band 3 is not in the source, which has 2 bands/);
+  assert.match(chunksProblem(asSeparate, { ...L, rgb: { bands: [1, 2, 2], range: [0, 1] } }), /rgb needs every band in one chunk/);
+  assert.match(chunksProblem(int16.source, { ...L, rgb: { bands: [1, 2, 2] } }), /rgb of int16 samples needs a range/);
+  assert.match(chunksProblem(int16.source, { band: 1, plan: { levels: [{ level: 2 }] } }), /plan level 2 is not a level/);
+  const swapped = { ...int16.source, codecs: [int16.source.codecs[0], int16.source.codecs[2], int16.source.codecs[1]] };
+  assert.match(chunksProblem(swapped, L), /predictor must come directly after bytes/);
+  console.log("ok   chunks: zstd, lzw, blosc and jpeg chains, and bands a source lacks, are named problems");
 }
 
 if (process.env.SKIP_BROWSER) process.exit(0);
@@ -1530,7 +1643,7 @@ ${keys === null ? "" : `<script type="application/json" data-aob-blob-keys data-
     await page.goto(`${base}/tok/`);
     await page.waitForFunction(() => document.querySelector("div[data-aob-scene]").dataset.aobLink === "ready", null, { timeout: 60000 });
     const hello = r.of("hello")[0];
-    assert.deepEqual(hello, { type: "hello", protocol: 1, renderer: "0.0.5", specs: ["0.1", "0.2", "0.3", "0.4", "0.5"], scene: 1 });
+    assert.deepEqual(hello, { type: "hello", protocol: 1, renderer: "0.0.5", specs: ["0.1", "0.2", "0.3", "0.4", "0.5", "0.6"], scene: 1 });
     assert.deepEqual(await page.evaluate(() => window.socketsOpened), [`ws://127.0.0.1:${port}/tok/ws`]);
     assert.equal(await page.evaluate(() => document.querySelector("div[data-aob-scene]").dataset.aobSelectable), "zones,stations",
       "only vector layers in the scene are selectable");
@@ -1830,7 +1943,7 @@ ${keys === null ? "" : `<script type="application/json" data-aob-blob-keys data-
     }, [sc, part6.blobs]);
     await page.waitForFunction(() => document.getElementById("c").dataset.aobLink === "ready", null, { timeout: 60000 });
     const hello = await page.evaluate(() => window.sent[0]);
-    assert.deepEqual(hello, { type: "hello", protocol: 1, renderer: "0.0.5", specs: ["0.1", "0.2", "0.3", "0.4", "0.5"], scene: 0 });
+    assert.deepEqual(hello, { type: "hello", protocol: 1, renderer: "0.0.5", specs: ["0.1", "0.2", "0.3", "0.4", "0.5", "0.6"], scene: 0 });
     assert.equal(await page.evaluate(() => document.getElementById("c").dataset.aobSelectable), "stations");
     await page.waitForTimeout(400);
     const [x0, y0] = await page.evaluate(([x, y]) => {
@@ -2021,5 +2134,179 @@ ${keys === null ? "" : `<script type="application/json" data-aob-blob-keys data-
     console.log("ok   explicit data: IPC file bytes declared as a stream are a layer error");
   } finally {
     await browser12.close();
+  }
+}
+
+// ---- 13b. chunk references in the browser (scene spec 0.6) -------------------
+{
+  const zdir = join(here, "fixtures", "scenespec", "conformance");
+  const zscene = JSON.parse(readFileSync(join(zdir, "zarr-v2-chunks.json"), "utf8"));
+  const zsrc = zscene.data.tiny;
+  // The conformance scene's mesh blobs: each planned chunk is one quad from
+  // its footprint (the view CRS is the grid's), uv (0, 0) at the outer
+  // corner of the chunk's first cell, which is at the bottom here (dy > 0).
+  const zmesh = (tiles) => {
+    const pos = [];
+    const uv = [];
+    const index = [];
+    const lv = chunkLevel(zsrc, 0);
+    tiles.forEach((t, k) => {
+      const [x0, x1, y0, y1] = t.footprint;
+      const win = chunkWindow(lv, t.col, t.row);
+      const u = win.width / lv.size[0];
+      const v = win.height / lv.size[1];
+      pos.push(x0, y0, x1, y0, x1, y1, x0, y1);
+      uv.push(0, 0, u, 0, u, v, 0, v);
+      index.push(...[0, 1, 2, 0, 2, 3].map((i) => i + 4 * k));
+      t.mesh = { first_vertex: 4 * k, vertex_count: 4, first_index: 6 * k, index_count: 6 };
+    });
+    const list = (a) => {
+      const type = new FixedSizeList(2, new Field("xy", new Float64(), false));
+      return makeData({ type, length: a.length / 2, child: makeData({ type: new Float64(), length: a.length, data: Float64Array.from(a) }) });
+    };
+    const fields = [new Field("position", list([]).type, false), new Field("uv", list([]).type, false)];
+    const verts = new Table([new RecordBatch(new Schema(fields),
+      makeData({ type: new Struct(fields), length: pos.length / 2, children: [list(pos), list(uv)] }))]);
+    return { tiny_vertices: b64(verts), tiny_indices: b64(tableFromArrays({ index: Uint32Array.from(index) })) };
+  };
+  const zblobs = zmesh(zscene.layers[0].plan.levels[0].tiles);
+  // The same scene with a planned chunk that has no ref (chunk 1.2, all
+  // fill): it is no data and is not drawn.
+  const sparse = JSON.parse(JSON.stringify(zscene));
+  sparse.layers[0].plan.levels[0].tiles.push({ col: 2, row: 1, footprint: [800000, 1200000, 0, 1000000] });
+  const sparseBlobs = zmesh(sparse.layers[0].plan.levels[0].tiles);
+  const urlBlobs = Object.fromEntries(zsrc.refs.rows.map((r) => [r.url, readFileSync(join(zdir, r.url)).toString("base64")]));
+  // A zstd chain is a layer error; the scene's other layer still draws.
+  const zstd = JSON.parse(JSON.stringify(zscene));
+  zstd.data.tiny.codecs[1] = { name: "zstd" };
+  zstd.data.values = { format: "arrow-ipc-stream", blob: "values" };
+  zstd.layers.push({ id: "values", kind: "raster", grid: { crs: "EPSG:3031", extent: [0, 1e6, 0, 1e6], dim: [2, 2] },
+    values: "values", palette: { name: "viridis", range: [0, 3] } });
+  // The int16 COG as a chunks scene, read by range from its file.
+  const cog = chunkCases.scene;
+  const cogFile = readFileSync(join(here, "fixtures", "chunks", "int16-pixel.tif"));
+
+  const got = [];
+  const serveRange = (res, req, bytes, type) => {
+    const m = /^bytes=(\d+)-(\d+)$/.exec(req.headers.range || "");
+    if (!m) {
+      res.writeHead(200, { "content-type": type });
+      return res.end(bytes);
+    }
+    const a = Number(m[1]);
+    const b = Number(m[2]);
+    res.writeHead(206, { "content-type": type, "content-range": `bytes ${a}-${b}/${bytes.length}` });
+    return res.end(bytes.subarray(a, b + 1));
+  };
+  const server13 = createServer((req, res) => {
+    if (req.url !== "/favicon.ico") got.push(`${req.url} ${req.headers.range || "whole"}`);
+    if (req.url === "/c/blank.html") {
+      res.writeHead(200, { "content-type": "text/html" });
+      return res.end(`<!DOCTYPE html><html><head><meta charset="utf-8"></head><body style="margin:0;height:100vh"><script>${bundle}</script></body></html>`);
+    }
+    let m = /^\/c\/tiny\.zarr\/(\d\.\d)$/.exec(req.url);
+    if (m) return serveRange(res, req, readFileSync(join(zdir, "tiny.zarr", m[1])), "application/octet-stream");
+    // A served page's blob base answers with the whole blob, as R's does.
+    m = /^\/c\/blob\/([^/]+)$/.exec(req.url);
+    if (m && urlBlobs[decodeURIComponent(m[1])]) {
+      res.writeHead(200, { "content-type": "application/octet-stream" });
+      return res.end(Buffer.from(urlBlobs[decodeURIComponent(m[1])], "base64"));
+    }
+    if (req.url === "/c/int16-pixel.tif") return serveRange(res, req, cogFile, "image/tiff");
+    res.writeHead(404);
+    res.end();
+  });
+  await new Promise((r) => server13.listen(0, "127.0.0.1", r));
+  const base13 = `http://127.0.0.1:${server13.address().port}`;
+  const browser13 = await chromium.launch({
+    executablePath: process.env.CHROMIUM_PATH || undefined,
+    args: ["--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--ignore-gpu-blocklist"],
+  });
+  try {
+    const page = await browser13.newPage({ viewport: { width: 900, height: 700 } });
+    await page.goto(`${base13}/c/blank.html`);
+    // Render a scene into a new element once its tiles are in, and report
+    // its status, notes, layer list counts and the chunks drawn.
+    const draw = async (sc, bl, opts = {}) => {
+      got.length = 0;
+      const r = await page.evaluate(async ([sc, bl, opts]) => {
+        document.querySelectorAll(".aob-root").forEach((e) => {
+          if (e.aob) e.aob.finalize();
+          e.remove();
+        });
+        const c = document.createElement("div");
+        c.style.cssText = "height:100%;width:100%";
+        document.body.append(c);
+        c.aob = await new Promise((resolve, reject) => {
+          aob.render(c, sc, { blobs: bl, ...opts, onReady: resolve }).catch(reject);
+        });
+        const drawn = c.aob.deck.props.layers.flat(Infinity).filter((l) => l && l.id.includes("--")).map((l) => l.id).sort();
+        return { status: c.dataset.aobStatus, errors: c.dataset.aobErrors, tiles: c.dataset.aobTiles,
+          line: c.querySelector(".aob-status").textContent,
+          counts: [...c.querySelectorAll(".aob-count")].map((e) => e.textContent).reverse(), drawn };
+      }, [sc, bl, opts]);
+      return { ...r, requests: got.slice() };
+    };
+    const zchunks = zsrc.refs.rows.map((r) => `tiny--0/${r.col}/${r.row}`).sort();
+
+    const z = await draw(zscene, zblobs);
+    assert.equal(z.status, "ready", z.line);
+    assert.equal(z.errors, undefined, z.line);
+    assert.equal(z.tiles, "tiny: level 0, 5 tiles");
+    assert.deepEqual(z.drawn, zchunks);
+    assert.deepEqual(z.requests.sort(), zsrc.refs.rows.map((r) => `/c/${r.url} bytes=${r.offset}-${r.offset + r.length - 1}`).sort(),
+      "each chunk is one range request for its ref's bytes");
+    console.log("ok   chunks: scenespec's zarr-v2-chunks.json draws its 5 chunks, each by one range request");
+
+    const e = await draw(sparse, { ...sparseBlobs, ...urlBlobs });
+    assert.equal(e.status, "ready", e.line);
+    assert.equal(e.errors, undefined, e.line);
+    assert.equal(e.tiles, "tiny: level 0, 6 tiles");
+    assert.deepEqual(e.drawn, zchunks, "the planned chunk with no ref is not drawn");
+    assert.deepEqual(e.requests, [], "blobs keyed by url: nothing fetched");
+    console.log("ok   chunks: from blobs keyed by url, and a planned chunk with no ref is no data");
+
+    const s = await draw(zscene, zblobs, { blobBase: "blob/", blobKeys: Object.keys(urlBlobs) });
+    assert.equal(s.status, "ready", s.line);
+    assert.equal(s.errors, undefined, s.line);
+    assert.deepEqual(s.drawn, zchunks);
+    assert.deepEqual(s.requests.map((q) => q.replace(/ .*/, "")).sort(),
+      zsrc.refs.rows.map((r) => `/c/blob/${encodeURIComponent(r.url)}`).sort(), "a served page reads listed urls from its blob base");
+    console.log("ok   chunks: a served page reads chunk urls it lists from its blob base");
+
+    const c = await draw(cog, chunkCases.blobs);
+    assert.equal(c.status, "ready", c.line);
+    assert.equal(c.errors, undefined, c.line);
+    assert.match(c.tiles, /^cog: level [01], \d+ tiles?$/);
+    const lvl = Number(/level (\d)/.exec(c.tiles)[1]);
+    const refs = new Map(cog.data.cog.refs.rows.filter((r) => r.level === lvl).map((r) => [`cog--${lvl}/${r.col}/${r.row}`,
+      `/c/int16-pixel.tif bytes=${r.offset}-${r.offset + r.length - 1}`]));
+    assert.ok(c.drawn.length > 0);
+    for (const id of c.drawn) assert.ok(refs.has(id), `${id} is a stored chunk`);
+    assert.deepEqual(c.requests.sort(), c.drawn.map((id) => refs.get(id)).sort(), "one range request per chunk drawn");
+    console.log(`ok   chunks: a deflate COG's tiles as a 0.6 chunks scene (band 2 of 2) by range requests (${c.tiles})`);
+
+    const x = await draw(zstd, { ...zblobs, values: blobs.values });
+    assert.equal(x.status, "ready", "the rest of the scene still draws");
+    assert.equal(x.errors, "1", x.line);
+    assert.match(x.line, /error: layer tiny: codec zstd is not supported by this renderer \(supported for chunks: bytes, predictor, deflate, gzip\); not drawn/);
+    assert.deepEqual(x.counts, ["error: codec zstd is not supported by this renderer", "2 x 2 cells"]);
+    assert.deepEqual(x.drawn, []);
+    console.log("ok   chunks: a zstd codec chain is a layer error naming the codec");
+
+    // The browser's own decode (DecompressionStream) against GDAL.
+    for (const k of chunkCases.cases) {
+      for (const cell of k.cells) {
+        const r = await chunkCell(k, cell, (ref, src, w, h, i, band) => page.evaluate(async ([b, src, w, h, i, band]) => {
+          const { samples, spp } = await aob._decodeChunk(Uint8Array.from(atob(b), (ch) => ch.charCodeAt(0)), src, w, h);
+          return samples[i * spp + band - 1];
+        }, [Buffer.from(chunkFile(k, ref)).toString("base64"), src, w, h, i, band]));
+        if (!r.missing) assert.equal(r.value, cell.value, `browser: ${k.name}: level ${cell.level} band ${cell.band} cell ${cell.x}, ${cell.y}`);
+      }
+      console.log(`ok   chunks: browser decode ${k.name} equals GDAL's`);
+    }
+  } finally {
+    await browser13.close();
+    server13.close();
   }
 }

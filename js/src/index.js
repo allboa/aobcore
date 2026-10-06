@@ -1,7 +1,9 @@
-// allonboard renderer for scene spec 0.1 to 0.5, on deck.gl. 0.4 view.bounds keep
+// allonboard renderer for scene spec 0.1 to 0.6, on deck.gl. 0.4 view.bounds keep
 // the camera within them plus a quarter of their size on each side. 0.5
 // legends are drawn from the scene's legends array (legend.js) and 0.5
-// popups show a picked feature's attributes (popup.js).
+// popups show a picked feature's attributes (popup.js). 0.6 chunks data
+// references (chunk references: byte ranges with a codec chain and a grid)
+// are drawn by tiled_raster layers chunk by chunk (tiles.js, chunks.js).
 //
 // aob.render(container, scene, {blobs}) draws one scene into an element.
 // blobs maps each data reference's blob key to Arrow IPC bytes (Uint8Array,
@@ -9,7 +11,10 @@
 // A 0.2 cog reference is not fetched whole: its tiled_raster layers fetch
 // the planned tiles' byte ranges, or use blobs keyed
 // "<source>@<offset>+<length>" that carry those bytes (see tiles.js). 0.3
-// adds colour images (rgb) and jpeg tiles to tiled_raster layers.
+// adds colour images (rgb) and jpeg tiles to tiled_raster layers. A 0.6
+// chunks reference is not fetched whole either: each planned chunk is read
+// from its ref's url by a range request, or sliced from a blob keyed by
+// that url (as the scene writes it) when the page carries one.
 // On load, every element with a data-aob-scene attribute is rendered from
 // the JSON script it names and the blob scripts that point at it.
 //
@@ -20,7 +25,9 @@
 // "/", "@" or "+" is one path segment. options.blobKeys lists the keys the
 // server has (a <script type="application/json" data-aob-blob-keys>); a
 // tiled raster fetches a tile from the blob base only when its key is
-// listed, and otherwise reads the cog by range requests as before.
+// listed, and otherwise reads the cog by range requests as before. A chunk
+// ref whose url is a listed key is read from the blob base by a range
+// request (a server that answers with the whole blob is read once).
 //
 // Selections (decision 0007). A served page whose element also has
 // data-aob-socket (a URL relative to the page, "ws") and
@@ -45,6 +52,7 @@ import { decodeBase64, readTable, ipcFormatProblem } from "./arrow.js";
 import { buildLayer } from "./layers.js";
 import { buildTiledRaster } from "./tiles.js";
 import { decodeTileSamples } from "./jpeg.js";
+import { decodeChunk } from "./chunks.js";
 import { cssGradient } from "./palettes.js";
 import { legendElement } from "./legend.js";
 import { popupBox, popupRows } from "./popup.js";
@@ -54,7 +62,7 @@ import { connectLink } from "./link.js";
 import { selectionState, clickSelection, selectionText } from "./selection.js";
 
 const VERSION = "0.0.5";
-const SPECS = ["0.1", "0.2", "0.3", "0.4", "0.5"];
+const SPECS = ["0.1", "0.2", "0.3", "0.4", "0.5", "0.6"];
 const atLeast = (v, min) => SPECS.indexOf(v) >= SPECS.indexOf(min);
 
 
@@ -289,8 +297,9 @@ export async function render(container, scene, options = {}) {
 
     const t0 = performance.now();
     const tables = {};
-    // Arrow tables are read whole; a cog is read tile by tile by its layers.
-    const ids = Object.keys(scene.data).filter((id) => scene.data[id].format !== "cog");
+    // Arrow tables are read whole; a cog or chunks reference is read tile
+    // by tile by its layers.
+    const ids = Object.keys(scene.data).filter((id) => !["cog", "chunks"].includes(scene.data[id].format));
     const bytes = await Promise.all(ids.map((id) => loadBytes(scene.data[id], id, blobs, blobBase, loading.signal)));
     // Rendered again while loading: this render stops here.
     if (loading.signal.aborted) throw loading.signal.reason;
@@ -316,6 +325,8 @@ export async function render(container, scene, options = {}) {
       blobs,
       // A tile blob the page does not carry but the server has (decision 0006).
       servedBlob: (key, what, signal) => (blobKeys.has(key) ? fetchBlob(blobBase, key, what, signal) : null),
+      // The URL of a blob the server has, for chunk refs (0.6) to read by range.
+      servedUrl: (key) => (blobKeys.has(key) ? new URL(blobUrl(blobBase, key), document.baseURI).href : null),
       warn,
       error: layerError,
       pending: (d) => {
@@ -966,6 +977,10 @@ export { VERSION as version, SPECS as specVersions };
 // For tests: decode one tile's bytes to {samples, spp} as a layer does
 // (jpeg through the browser's decoder). Not a stable interface.
 export { decodeTileSamples as _decodeTileSamples };
+// For tests: decode one 0.6 chunk's bytes to {samples, spp} as a layer does
+// (deflate and gzip through the browser's DecompressionStream). Not a
+// stable interface.
+export { decodeChunk as _decodeChunk };
 
 if (typeof document !== "undefined") {
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot);
