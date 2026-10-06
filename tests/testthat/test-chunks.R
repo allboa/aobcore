@@ -160,10 +160,17 @@ test_that("cog_chunks() writes JPEG as the whole chain with its tables, and refu
 
 test_that("cog_chunks() gives a ref per band for bands stored separately, equal to GDAL's", {
   skip_if_no_gdal()
-  f <- make_chunk_tif(c("COMPRESS=DEFLATE", "BLOCKSIZE=128", "INTERLEAVE=BAND", "OVERVIEW_COUNT=1"),
-                      dtype = "UInt16", nb = 2L)
-  skip_if(is.null(f), "this GDAL cannot write a band-interleaved COG")
+  ## A tiled GeoTIFF (not every GDAL's COG driver takes INTERLEAVE) with
+  ## one internal overview.
+  f <- make_chunk_tif(c("TILED=YES", "BLOCKXSIZE=128", "BLOCKYSIZE=128", "COMPRESS=DEFLATE",
+                        "INTERLEAVE=BAND"), dtype = "UInt16", nb = 2L, driver = "GTiff")
+  skip_if(is.null(f), "this GDAL cannot write a band-interleaved GeoTIFF")
   on.exit(unlink(f))
+  ds <- gdalraster::GDALRaster$new(f, FALSE)
+  ds$quiet <- TRUE
+  ds$buildOverviews("NEAREST", 2L, 0L)
+  ds$close()
+  skip_if(!identical(cog_info(f)$planar, "separate"), "GDAL wrote the bands interleaved")
   ch <- cog_chunks(f)
   expect_identical(ch$bands, 2L)
   expect_identical(ch$interleave, "separate")
