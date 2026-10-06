@@ -55,6 +55,12 @@
 //    makes (as a Shiny binding does), with no socket; the channel gets
 //    message objects, and a reload over it is ignored.
 // 11. Escape in a host page with two views clears only the focused one.
+// 12. Scene spec's explicit-data contract (scenespec#11), with scenespec's
+//    fixtures (test/fixtures/scenespec, see its README): in Node, the CRS
+//    match rule and the geometry checks on every fixture; in the browser,
+//    the six valid streams (interleaved and separated coordinates, a
+//    PROJJSON and an authority-code CRS) draw with their feature counts,
+//    and each scene of fixtures/data/invalid is a layer error.
 // Also in Node: the range reader keeps a whole-file (200) response, and the
 // tile cache evicts least recently used idle tiles.
 // Set CHROMIUM_PATH to pick a browser; SKIP_BROWSER=1 runs only part 1.
@@ -73,6 +79,8 @@ import { socketChannel, socketUrl, RETRY_MAX_MS, STABLE_MS } from "../src/channe
 import { linkToR, utf8Length, NOT_CONNECTED, TOO_MANY } from "../src/link.js";
 import { selectionState, clickSelection, selectionText } from "../src/selection.js";
 import { rStandIn } from "./ws-server.mjs";
+import { geometryProblem, sameCrs, readTable } from "../src/arrow.js";
+import { readdirSync } from "node:fs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -87,6 +95,52 @@ const px = colorize(vals, null, { dim: [2, 1], nodata }, { range: [0, 1] }, pale
 assert.equal(px[3], 0, "float32 nodata cell is transparent");
 assert.equal(px[7], 255, "other cell is opaque");
 console.log("ok   palettes");
+
+// ---- 12a. explicit-data contract in Node -----------------------------------
+// Scenespec's fixtures as scenes whose url references are blobs (the
+// renderer is given blobs, as a page carries them), drawn as 0.5: they use
+// nothing from 0.6 (chunk references), which this renderer does not read.
+const specDir = join(here, "fixtures", "scenespec");
+function specScene(file) {
+  const scene = JSON.parse(readFileSync(file, "utf8"));
+  const blobs = {};
+  for (const [id, ref] of Object.entries(scene.data)) {
+    if (ref.url === undefined) continue;
+    blobs[id] = readFileSync(join(dirname(file), ref.url)).toString("base64");
+    delete ref.url;
+    ref.blob = id;
+  }
+  scene.version = "0.5";
+  return { scene, blobs };
+}
+const validSpec = specScene(join(specDir, "valid", "explicit-data-0.6.json"));
+const invalidDir = join(specDir, "data", "invalid");
+const invalidSpec = readdirSync(invalidDir).filter((f) => f.endsWith(".json")).sort()
+  .map((f) => ({ name: f.replace(/\.json$/, ""), ...specScene(join(invalidDir, f)) }));
+{
+  const epsg3031 = { type: "ProjectedCRS", name: "WGS 84 / Antarctic Polar Stereographic", id: { authority: "EPSG", code: 3031 } };
+  assert.ok(sameCrs("EPSG:3031", "epsg:3031"), "authority codes compare case-insensitively");
+  assert.ok(sameCrs(epsg3031, "EPSG:3031") && sameCrs("EPSG:3031", epsg3031), "a PROJJSON id names its CRS");
+  assert.ok(sameCrs({ ...epsg3031, ids: [{ authority: "ESRI", code: 1 }, { authority: "epsg", code: "3031" }] }, "EPSG:3031"));
+  assert.ok(sameCrs({ $schema: "a", name: "x", type: "ProjectedCRS" }, { type: "ProjectedCRS", name: "x" }), "key order and $schema aside");
+  assert.ok(!sameCrs("EPSG:3031", "EPSG:4326"));
+  assert.ok(!sameCrs({ name: "x" }, { name: "y" }));
+  assert.ok(!sameCrs("+proj=stere", "EPSG:3031"));
+  const geomOf = (s, id) => {
+    const ref = s.scene.data[id];
+    const t = readTable(Buffer.from(s.blobs[id], "base64"));
+    return [t.schema.fields.find((f) => f.name === ref.geometry.column), ref, s.scene.view];
+  };
+  for (const id of Object.keys(validSpec.scene.data)) assert.equal(geometryProblem(...geomOf(validSpec, id)), null, id);
+  // A cartesian view without a CRS needs none in the data; one with a CRS does.
+  const [f, ref] = geomOf(invalidSpec.find((s) => s.name === "no-crs"), "layer");
+  assert.equal(geometryProblem(f, ref, { type: "cartesian" }), null);
+  assert.match(geometryProblem(f, ref, { type: "cartesian", crs: "EPSG:3031" }), /no crs/);
+  const geometryFaults = invalidSpec.filter((s) => geometryProblem(...geomOf(s, "layer")) !== null).map((s) => s.name);
+  assert.deepEqual(geometryFaults, ["crs-not-view", "crs-type-mismatch", "encoding-not-declared", "geometrycollection",
+    "no-crs", "storage-mismatch", "wkb", "xym"], "the geometry faults; the rest are faults of named columns");
+  console.log("ok   explicit-data contract: CRS match rule, and the geometry of every scenespec fixture");
+}
 
 // ---- 2. decoders against GDAL ----------------------------------------------
 const cases = JSON.parse(readFileSync(join(here, "codec-tiles.json"), "utf8"));
@@ -740,7 +794,9 @@ try {
 // ---- 6b. legends and popups in an EPSG:3031 view (scene spec 0.5) -------------
 let part6 = null; // the scene and blobs, again in part 8
 {
-  const geoField = (name, type, ext) => new Field(name, type, false, new Map([["ARROW:extension:name", ext]]));
+  // GeoArrow geometry with the view's CRS, as the explicit-data contract asks.
+  const geoField = (name, type, ext) => new Field(name, type, false, new Map([["ARROW:extension:name", ext],
+    ["ARROW:extension:metadata", JSON.stringify({ crs: "EPSG:3031", crs_type: "authority_code" })]]));
   const xyType = () => new FixedSizeList(2, new Field("xy", new Float64(), false));
   const xyData = (coords) => makeData({ type: xyType(), length: coords.length / 2,
     child: makeData({ type: new Float64(), length: coords.length, data: Float64Array.from(coords) }) });
@@ -1860,5 +1916,93 @@ ${keys === null ? "" : `<script type="application/json" data-aob-blob-keys data-
     console.log("ok   Escape in a host page clears only the view with the focus");
   } finally {
     await browser11.close();
+  }
+}
+
+// ---- 12. explicit-data contract in the browser ------------------------------
+{
+  // Rows per table, and parts (points, lines or polygons drawn) of the
+  // multi kinds, read here with apache-arrow alone.
+  const rows = {};
+  const parts = {};
+  for (const [id, b] of Object.entries(validSpec.blobs)) {
+    const t = readTable(Buffer.from(b, "base64"));
+    rows[id] = t.numRows;
+    const g = t.getChild("geometry");
+    parts[id] = id.startsWith("multi") ? [...g].reduce((n, v) => n + v.length, 0) : t.numRows;
+  }
+  assert.deepEqual(rows, { point: 3, linestring: 2, polygon: 2, multipoint: 2, multilinestring: 2, multipolygon: 2 });
+  assert.ok(parts.multipoint > 2 && parts.multilinestring > 2 && parts.multipolygon > 2, JSON.stringify(parts));
+
+  // What each invalid scene reports: every one is a layer error. The
+  // geometry faults and a colour column that is not RGBA stop the layer
+  // being drawn; a popup column that is missing or not an attribute stops
+  // its popup (the layer draws).
+  const expected = {
+    "attribute-binary": [/layer layer: popup column "payload" \(Binary\) in data layer is not an attribute type; popup not shown/, "2 points"],
+    "colour-column-not-rgba": [/layer layer: data layer: fill colour column "name" is Utf8, not FixedSizeList<Uint8, 4>; not drawn/, "error: data not drawn"],
+    "crs-not-view": [/geometry CRS OGC:CRS84 is not the view CRS EPSG:3031; not drawn/, "error: data not drawn"],
+    "crs-type-mismatch": [/crs_type is projjson but crs is not a JSON object; not drawn/, "error: data not drawn"],
+    "encoding-not-declared": [/geometry column "geometry" is geoarrow.multilinestring but the scene declares geoarrow.linestring; not drawn/, "error: data not drawn"],
+    "geometrycollection": [/geometry column "geometry" is geoarrow.geometrycollection: .*; not drawn/, "error: data not drawn"],
+    "no-crs": [/geometry column "geometry" has no crs in its extension metadata \(view CRS EPSG:3031\); not drawn/, "error: data not drawn"],
+    "popup-column-missing": [/layer layer: popup column "elevation_m" not found in data layer; popup not shown/, "3 points"],
+    "storage-mismatch": [/geoarrow.linestring storage must be 1 nested List level\(s\) above the coordinates; found FixedSizeList<Float64, 2> at level 1; not drawn/, "error: data not drawn"],
+    "wkb": [/geometry column "geometry" is geoarrow.wkb: serialised geometry \(WKB or WKT\) is not drawn.*; not drawn/, "error: data not drawn"],
+    "xym": [/coordinates are xym: M coordinates are not drawn; not drawn/, "error: data not drawn"],
+  };
+  assert.deepEqual(invalidSpec.map((s) => s.name), Object.keys(expected).sort(), "every invalid fixture has an expectation");
+
+  const browser12 = await chromium.launch({
+    executablePath: process.env.CHROMIUM_PATH || undefined,
+    args: ["--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--ignore-gpu-blocklist"],
+  });
+  try {
+    const page = await browser12.newPage({ viewport: { width: 800, height: 600 } });
+    await page.setContent(`<!DOCTYPE html><html><head><meta charset="utf-8"></head><body style="margin:0;height:100vh">
+<script>${bundle}</script></body></html>`);
+    // Render a scene into a new element and report its status, notes, the
+    // layer list's counts (scene order) and the drawn parts per layer.
+    const draw = (sc, bl) => page.evaluate(async ([sc, bl]) => {
+      document.querySelectorAll(".aob-root").forEach((e) => {
+        if (e.aob) e.aob.finalize();
+        e.remove();
+      });
+      const c = document.createElement("div");
+      c.style.cssText = "height:100%;width:100%";
+      document.body.append(c);
+      c.aob = await new Promise((resolve, reject) => {
+        aob.render(c, sc, { blobs: bl, onReady: resolve }).catch(reject);
+      });
+      const drawn = {};
+      for (const l of c.aob.deck.props.layers.flat(Infinity)) {
+        if (!l) continue;
+        const id = l.id.split("--")[0];
+        if (l.id.endsWith("-stroke")) continue; // a polygon's outlines are its rings
+        drawn[id] = (drawn[id] || 0) + l.props.data.length;
+      }
+      return { status: c.dataset.aobStatus, errors: c.dataset.aobErrors, line: c.querySelector(".aob-status").textContent,
+        counts: [...c.querySelectorAll(".aob-count")].map((e) => e.textContent).reverse(), drawn };
+    }, [sc, bl]);
+
+    const v = await draw(validSpec.scene, validSpec.blobs);
+    assert.equal(v.status, "ready", v.line);
+    assert.equal(v.errors, undefined, v.line);
+    assert.deepEqual(v.counts, ["3 points", "2 lines", "2 polygons", "2 points", "2 lines", "2 polygons"],
+      "features per kind: point, linestring, polygon (interleaved), multipoint, multilinestring, multipolygon (separated)");
+    assert.deepEqual(v.drawn, parts, "parts drawn per layer");
+    console.log(`ok   explicit data: the six scenespec streams draw (parts ${JSON.stringify(parts)}), separated and authority-code CRS included`);
+
+    for (const s of invalidSpec) {
+      const r = await draw(s.scene, s.blobs);
+      const [line, count] = expected[s.name];
+      assert.equal(r.status, "ready", `${s.name}: the scene draws (${r.line})`);
+      assert.equal(r.errors, "1", `${s.name}: one layer error (${r.line})`);
+      assert.match(r.line, line, s.name);
+      assert.deepEqual(r.counts, [count], s.name);
+    }
+    console.log(`ok   explicit data: each of the ${invalidSpec.length} scenespec invalid-data scenes is a layer error`);
+  } finally {
+    await browser12.close();
   }
 }

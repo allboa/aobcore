@@ -1,0 +1,30 @@
+{
+  "version": "0.6",
+  "view": {
+    "type": "projected",
+    "crs": "EPSG:3031",
+    "extent": [
+      -3000000,
+      3000000,
+      -3000000,
+      3000000
+    ]
+  },
+  "data": {
+    "layer": {
+      "format": "arrow-ipc-stream",
+      "url": "storage-mismatch.arrows",
+      "geometry": {
+        "column": "geometry",
+        "encoding": "geoarrow.linestring"
+      }
+    }
+  },
+  "layers": [
+    {
+      "id": "layer",
+      "kind": "path",
+      "data": "layer"
+    }
+  ]
+}

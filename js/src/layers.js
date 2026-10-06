@@ -8,7 +8,8 @@ import { COORDINATE_SYSTEM } from "@deck.gl/core";
 import { SolidPolygonLayer, PathLayer, ScatterplotLayer, BitmapLayer } from "@deck.gl/layers";
 import { SimpleMeshLayer } from "@deck.gl/mesh-layers";
 import { earcut } from "@math.gl/polygon";
-import { geometryChunk, partsOf, numericColumn, listColumn, rgbaChunk } from "./arrow.js";
+import { geometryChunk, partsOf, numericColumn, listColumn, rgbaChunk, geometryProblem, isColourType, isAttributeType,
+  typeName } from "./arrow.js";
 import { paletteStops, colorize, UnknownPaletteError, UNLIT } from "./palettes.js";
 
 const DEFAULT_FILL = [128, 128, 128, 255];
@@ -43,6 +44,19 @@ function colorAccessor(spec, fallback, batch, fields, feature, what) {
   };
 }
 
+// A colour column a layer names (fill or stroke) that is missing or not
+// FixedSizeList<uint8, 4>, as an error message; null when there is none.
+function colourProblem(L, keys, fields) {
+  for (const key of keys) {
+    const spec = L[key];
+    if (!spec || Array.isArray(spec)) continue;
+    const f = fields.find((x) => x.name === spec.column);
+    if (!f) return `${key} colour column "${spec.column}" not found`;
+    if (!isColourType(f.type)) return `${key} colour column "${spec.column}" is ${typeName(f.type)}, not FixedSizeList<Uint8, 4>`;
+  }
+  return null;
+}
+
 function bounds(coords, size, acc) {
   for (let i = 0; i < coords.length; i += size) {
     const x = coords[i];
@@ -59,17 +73,32 @@ export function buildLayer(L, ctx) {
   const ref = ctx.scene.data[L.data];
   const table = ctx.tables[L.data];
   const enc = ref.geometry.encoding;
-  const geomIdx = table.schema.fields.findIndex((f) => f.name === ref.geometry.column);
-  if (geomIdx < 0) throw new Error(`layer ${L.id}: geometry column "${ref.geometry.column}" not found`);
-  const origin = ref.origin_subtracted ? ctx.scene.view.local_origin : null;
   const fields = table.schema.fields;
-  // 0.5 popup: features can be picked when every named column is present;
-  // a missing one is an error for this layer's popup (the layer still draws).
+  // The explicit-data contract (scene spec README, "Explicit data"): the
+  // geometry column's GeoArrow extension is the declared encoding, its CRS
+  // is the view's, its storage is the extension's, and colour columns are
+  // RGBA. Data that fail it are an error for this layer, which is not drawn;
+  // the rest of the scene is.
+  const geomIdx = fields.findIndex((f) => f.name === ref.geometry.column);
+  const colourKeys = L.kind === "path" ? ["stroke"] : ["fill", "stroke"];
+  const problem = geomIdx < 0 ? `geometry column "${ref.geometry.column}" not found`
+    : geometryProblem(fields[geomIdx], ref, ctx.scene.view) || colourProblem(L, colourKeys, fields);
+  if (problem) {
+    ctx.error(`layer ${L.id}: data ${L.data}: ${problem}; not drawn`);
+    return { layers: [], summary: "error: data not drawn" };
+  }
+  const origin = ref.origin_subtracted ? ctx.scene.view.local_origin : null;
+  // 0.5 popup: features can be picked when every named column is present
+  // and an attribute (what a popup shows as text); a missing or other
+  // column is an error for this layer's popup (the layer still draws).
   let popup = false;
   if (L.popup) {
     const missing = L.popup.columns.filter((c) => !fields.some((f) => f.name === c));
+    const other = fields.filter((f) => L.popup.columns.includes(f.name) && !isAttributeType(f.type));
     if (missing.length) {
       ctx.error(`layer ${L.id}: popup column${missing.length > 1 ? "s" : ""} ${missing.map((c) => `"${c}"`).join(", ")} not found in data ${L.data}; popup not shown`);
+    } else if (other.length) {
+      ctx.error(`layer ${L.id}: popup column${other.length > 1 ? "s" : ""} ${other.map((f) => `"${f.name}" (${typeName(f.type)})`).join(", ")} in data ${L.data} ${other.length > 1 ? "are" : "is"} not an attribute type; popup not shown`);
     } else {
       popup = true;
     }

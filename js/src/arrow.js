@@ -1,6 +1,6 @@
 // Arrow tables to flat typed arrays. Geometry is read from native GeoArrow
 // buffers as decoded; nothing here parses coordinates one by one.
-import { tableFromIPC, Type } from "apache-arrow";
+import { tableFromIPC, Type, Precision } from "apache-arrow";
 
 export function decodeBase64(s) {
   if (typeof Uint8Array.fromBase64 === "function") return Uint8Array.fromBase64(s);
@@ -162,4 +162,164 @@ export function rgbaChunk(batchData, fields, name, what) {
   const child = c.children[0];
   const start = (c.offset + child.offset) * 4;
   return child.values.subarray(start, start + c.length * 4);
+}
+
+// ---- scene spec's explicit-data contract ------------------------------------
+// The checks a reader makes on a vector data reference before drawing it
+// (allboa/scenespec README, "Explicit data"; scripts/check-data.js there is
+// the reference). Each returns an error message, or null when the data
+// meet the contract. A reader does not reproject or guess: a table that
+// fails is an error for each layer that draws it.
+
+const CRS_TYPES = ["projjson", "authority_code"];
+const AUTH_CODE = /^[A-Za-z][A-Za-z0-9_]*:[A-Za-z0-9_.-]+$/;
+
+const isDouble = (t) => t.typeId === Type.Float && t.precision === Precision.DOUBLE;
+
+export function typeName(t) {
+  if (t.typeId === Type.Dictionary) return `Dictionary<${typeName(t.dictionary)}>`;
+  if (t.typeId === Type.FixedSizeList) return `FixedSizeList<${typeName(t.children[0].type)}, ${t.listSize}>`;
+  if (t.typeId === Type.Int) return `${t.isSigned ? "Int" : "Uint"}${t.bitWidth}`;
+  if (t.typeId === Type.Float) return ["Float16", "Float32", "Float64"][t.precision];
+  return Type[t.typeId] || String(t);
+}
+
+// A colour column: FixedSizeList<uint8, 4>.
+export function isColourType(t) {
+  if (t.typeId !== Type.FixedSizeList || t.listSize !== 4) return false;
+  const c = t.children[0].type;
+  return c.typeId === Type.Int && c.bitWidth === 8 && !c.isSigned;
+}
+
+// An attribute, what a popup shows as text: boolean, integer, float32 or
+// float64, string, date or timestamp (not a dictionary).
+export function isAttributeType(t) {
+  switch (t.typeId) {
+    case Type.Bool: case Type.Int: case Type.Utf8: case Type.LargeUtf8: case Type.Date: case Type.Timestamp:
+      return true;
+    case Type.Float:
+      return t.precision !== Precision.HALF;
+    default:
+      return false;
+  }
+}
+
+// JSON values equal regardless of object key order.
+function sameValue(a, b) {
+  if (a === b) return true;
+  if (typeof a !== "object" || typeof b !== "object" || a === null || b === null) return false;
+  if (Array.isArray(a) !== Array.isArray(b)) return false;
+  const ka = Object.keys(a).sort();
+  const kb = Object.keys(b).sort();
+  return ka.join("\n") === kb.join("\n") && ka.every((k) => sameValue(a[k], b[k]));
+}
+
+// The "AUTHORITY:CODE" names of a CRS (upper case): the string itself, or a
+// PROJJSON object's top-level id (or ids).
+function crsCodes(c) {
+  if (typeof c === "string") return AUTH_CODE.test(c) ? [c.toUpperCase()] : [];
+  if (!c || typeof c !== "object") return [];
+  const ids = c.ids || (c.id ? [c.id] : []);
+  return ids.filter((i) => i && i.authority !== undefined && i.code !== undefined)
+    .map((i) => `${i.authority}:${i.code}`.toUpperCase());
+}
+
+// Two CRSs match when they are equal as JSON values (PROJJSON's "$schema"
+// aside), or when one authority code names both.
+export function sameCrs(a, b) {
+  const bare = (c) => {
+    if (!c || typeof c !== "object" || Array.isArray(c)) return c;
+    const { $schema, ...rest } = c;
+    return rest;
+  };
+  if (sameValue(bare(a), bare(b))) return true;
+  const cb = crsCodes(b);
+  return crsCodes(a).some((k) => cb.includes(k));
+}
+
+function crsLabel(c) {
+  if (c === undefined || c === null) return "no CRS";
+  const codes = crsCodes(c);
+  if (codes.length) return codes[0];
+  return typeof c === "string" ? JSON.stringify(c.slice(0, 40)) : `PROJJSON "${c.name || "unnamed"}"`;
+}
+
+// Coordinates: interleaved (FixedSizeList named xy or xyz) or separated
+// (Struct of x, y and optionally z) doubles; no M.
+function coordProblem(t) {
+  if (t.typeId === Type.FixedSizeList) {
+    const child = t.children[0];
+    if (/m/.test(child.name) || t.listSize === 4) return `coordinates are ${child.name || `${t.listSize} values`}: M coordinates are not drawn`;
+    if (!((child.name === "xy" && t.listSize === 2) || (child.name === "xyz" && t.listSize === 3))) {
+      return `interleaved coordinates must be a FixedSizeList named xy (2 values) or xyz (3), not "${child.name}" (${t.listSize})`;
+    }
+    return isDouble(child.type) ? null : `coordinates must be doubles, not ${typeName(child.type)}`;
+  }
+  if (t.typeId === Type.Struct) {
+    const names = t.children.map((c) => c.name).join(",");
+    if (/(^|,)m(,|$)/.test(names)) return `coordinates are ${names.replace(/,/g, "")}: M coordinates are not drawn`;
+    if (names !== "x,y" && names !== "x,y,z") return `separated coordinates must be a Struct of x, y and optionally z, not ${names}`;
+    const bad = t.children.find((c) => !isDouble(c.type));
+    return bad ? `coordinate ${bad.name} must be double, not ${typeName(bad.type)}` : null;
+  }
+  return `coordinates must be a FixedSizeList (interleaved) or Struct (separated), not ${typeName(t)}`;
+}
+
+function storageProblem(type, ext) {
+  let t = type;
+  for (let k = 0; k < LEVELS[ext]; k++) {
+    if (t.typeId === Type.LargeList) return `${ext} storage uses LargeList; offsets must be 32-bit (List)`;
+    if (t.typeId !== Type.List) {
+      return `${ext} storage must be ${LEVELS[ext]} nested List level(s) above the coordinates; found ${typeName(t)} at level ${k + 1}`;
+    }
+    t = t.children[0].type;
+  }
+  return coordProblem(t);
+}
+
+// The geometry column of a vector data reference `ref`, against the
+// contract and the scene's view: its extension name is the native GeoArrow
+// type the scene declares, its metadata CRS (form fitting crs_type) is the
+// view's and geometry.crs's, its edges are planar, and its storage is the
+// layout the extension names.
+export function geometryProblem(field, ref, view) {
+  const meta = field.metadata;
+  const ext = meta.get("ARROW:extension:name");
+  const name = `geometry column "${field.name}"`;
+  const declared = ref.geometry.encoding;
+  if (ext === undefined) return `${name} has no GeoArrow extension type (${typeName(field.type)} storage)`;
+  if (/wk[bt]/.test(ext)) return `${name} is ${ext}: serialised geometry (WKB or WKT) is not drawn; write a native GeoArrow type`;
+  if (ext === "geoarrow.geometrycollection" || ext === "geoarrow.geometry") {
+    return `${name} is ${ext}: geometry collections and mixed geometry types are not drawn`;
+  }
+  if (!(ext in LEVELS)) return `${name} has extension ${ext}, which is not one of the six native GeoArrow types`;
+  if (ext !== declared) return `${name} is ${ext} but the scene declares ${declared}`;
+  let m = {};
+  const text = meta.get("ARROW:extension:metadata");
+  if (text !== undefined && text !== "") {
+    try {
+      m = JSON.parse(text);
+    } catch (e) {
+      return `ARROW:extension:metadata of ${name} is not JSON`;
+    }
+    if (!m || typeof m !== "object" || Array.isArray(m)) return `ARROW:extension:metadata of ${name} is not a JSON object`;
+  }
+  if (m.edges !== undefined && m.edges !== "planar") return `edges are ${m.edges}; only planar edges are drawn`;
+  if (m.crs_type !== undefined && !CRS_TYPES.includes(m.crs_type)) return `crs_type ${m.crs_type} is not ${CRS_TYPES.join(" or ")}`;
+  const hasCrs = m.crs !== undefined && m.crs !== null;
+  if (hasCrs && m.crs_type === "projjson" && (typeof m.crs !== "object" || Array.isArray(m.crs))) {
+    return "crs_type is projjson but crs is not a JSON object";
+  }
+  if (hasCrs && m.crs_type === "authority_code" && !(typeof m.crs === "string" && AUTH_CODE.test(m.crs))) {
+    return "crs_type is authority_code but crs is not an \"authority:code\" string";
+  }
+  if (view && view.crs !== undefined && view.crs !== null) {
+    if (!hasCrs) return `${name} has no crs in its extension metadata (view CRS ${crsLabel(view.crs)})`;
+    if (!sameCrs(m.crs, view.crs)) return `geometry CRS ${crsLabel(m.crs)} is not the view CRS ${crsLabel(view.crs)}`;
+  }
+  const declaredCrs = ref.geometry.crs;
+  if (declaredCrs !== undefined && !(hasCrs && sameCrs(m.crs, declaredCrs))) {
+    return `geometry CRS ${crsLabel(m.crs)} is not the scene's geometry.crs ${crsLabel(declaredCrs)}`;
+  }
+  return storageProblem(field.type, ext);
 }

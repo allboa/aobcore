@@ -1,0 +1,36 @@
+{
+  "version": "0.6",
+  "view": {
+    "type": "projected",
+    "crs": "EPSG:3031",
+    "extent": [
+      -3000000,
+      3000000,
+      -3000000,
+      3000000
+    ]
+  },
+  "data": {
+    "layer": {
+      "format": "arrow-ipc-stream",
+      "url": "attribute-binary.arrows",
+      "geometry": {
+        "column": "geometry",
+        "encoding": "geoarrow.point"
+      }
+    }
+  },
+  "layers": [
+    {
+      "id": "layer",
+      "kind": "point",
+      "data": "layer",
+      "popup": {
+        "columns": [
+          "name",
+          "payload"
+        ]
+      }
+    }
+  ]
+}
