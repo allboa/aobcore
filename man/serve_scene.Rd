@@ -23,8 +23,8 @@ serve_scene(
 \item{blobs}{A named list of raw vectors, as for \code{\link[=write_scene_html]{write_scene_html()}}.
 Defaults to the blobs the scene carries.}
 
-\item{files}{Registered local files: a named list, by cog data id, of
-records with \code{path}, \code{size}, \code{mtime} and \code{url_explicit}. Defaults to
+\item{files}{Registered local files: a named list, by cog (or chunks)
+data id, of records with \code{path}, \code{size}, \code{mtime} and \code{url_explicit}. Defaults to
 those the scene carries (see \code{\link[=scene_add_tiled_raster]{scene_add_tiled_raster()}}); give it for a
 scene that is a plain list.}
 

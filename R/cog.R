@@ -428,8 +428,22 @@ print.aob_tile_plan <- function(x, ...) {
 #' A JPEG COG's internal mask (its no-data area) is not carried.
 #'
 #' **Version.** The scene is written as scene spec 0.2, or as 0.3 when the
-#' layer uses a 0.3 feature (`rgb`, or JPEG tiles); see
-#' [scene_spec_version()].
+#' layer uses a 0.3 feature (`rgb`, or JPEG tiles), or as 0.6 with
+#' `format = "chunks"`; see [scene_spec_version()].
+#'
+#' **Chunk references.** With `format = "chunks"` the layer's source is the
+#' COG's scene spec 0.6 `chunks` data reference ([cog_chunks()]: the grid of
+#' every level, the codec chain and a ref for every stored tile) instead of
+#' a `cog` reference, and the plan is the same plan (levels, tiles,
+#' footprints and meshes in the view CRS) with each level giving only
+#' `level`, `pixel_size` and its tiles' `col`, `row`, `footprint` and
+#' `mesh`, since the grid, codecs and byte ranges come from the source. A
+#' palette layer of a multi-band COG names its band in the layer's `band`.
+#' Embedding, the `url` and serving work as for a `cog` source: an embedded
+#' page carries only the planned chunks' bytes, under the same keys. The
+#' COG's compression must have a 0.6 codec (deflate, zstd, lzw, JPEG or
+#' none) and be the same at every level. From scene spec 0.5 a page shows
+#' only the scene's own legends, so add one with [scene_add_legend()].
 #'
 #' **Transport.** The renderer reads tile bytes by HTTP range requests from
 #' the `cog` URL. A page opened from `file://` cannot range-request a local
@@ -481,18 +495,28 @@ print.aob_tile_plan <- function(x, ...) {
 #'   embedded.
 #' @param label Optional human-readable name.
 #' @param visible Optional initial visibility.
-#' @return The scene, now version 0.2 or 0.3, with the layer appended.
+#' @param format The layer's source: `"cog"` (a scene spec 0.2 `cog`
+#'   reference, with byte ranges and encodings in the plan) or `"chunks"`
+#'   (a scene spec 0.6 `chunks` reference from [cog_chunks()]).
+#' @return The scene, now version 0.2 or 0.3 (or 0.6 with `format =
+#'   "chunks"`), with the layer appended.
 #' @export
 #' @examplesIf requireNamespace("gdalraster", quietly = TRUE) && !inherits(try(gdalraster::srs_to_wkt("EPSG:3031"), silent = TRUE), "try-error")
 #' f <- system.file("extdata", "polar_3031.tif", package = "aobcore")
 #' s <- scene_add_tiled_raster(scene("EPSG:3031"), "sst", f, palette = "ocean")
 #' s
 #' names(scene_blobs(s))[1:4]
+#' # The same layer over the COG's chunk references (scene spec 0.6).
+#' s6 <- scene_add_tiled_raster(scene("EPSG:3031"), "sst", f, palette = "ocean",
+#'                              format = "chunks")
+#' s6$version
+#' s6$data$sst$codecs
 scene_add_tiled_raster <- function(scene, id, plan, palette = "viridis", range = NULL,
                                    rgb = NULL, embed = NULL, url = NULL, label = NULL,
-                                   visible = NULL) {
+                                   visible = NULL, format = c("cog", "chunks")) {
   check_scene(scene)
   check_id(id)
+  format <- match.arg(format)
   if (is.null(rgb) && !missing(palette)) rgb <- FALSE
   if (!inherits(plan, "aob_tile_plan")) plan <- cog_plan(plan, scene$view$crs)
   if (!crs_same(plan$plan$crs, scene$view$crs)) {
@@ -551,7 +575,18 @@ scene_add_tiled_raster <- function(scene, id, plan, palette = "viridis", range =
     })
   }
 
-  scene$data[[ids[1]]] <- list(format = "cog", url = url)
+  ## Over chunks (scene spec 0.6) the source is the COG's chunk references,
+  ## and the plan keeps only what was measured and chosen; the tile byte
+  ## ranges move to the refs. The chunks' bytes are embedded under the same
+  ## keys as a cog's tiles.
+  check_cog_unchanged(cog)
+  embedded <- if (isTRUE(embed)) tile_blobs(cog, p, ids[1])
+  if (format == "chunks") {
+    scene$data[[ids[1]]] <- unclass(cog_chunks(cog, url = url))
+    p$levels <- lapply(p$levels, chunk_plan_level)
+  } else {
+    scene$data[[ids[1]]] <- list(format = "cog", url = url)
+  }
   scene$data[[ids[2]]] <- list(format = "arrow-ipc-stream", blob = ids[2])
   scene$data[[ids[3]]] <- list(format = "arrow-ipc-stream", blob = ids[3])
   p$crs <- scene$view$crs
@@ -565,6 +600,8 @@ scene_add_tiled_raster <- function(scene, id, plan, palette = "viridis", range =
   )
   if (is.null(bands)) {
     layer$palette <- list(name = palette, range = as.numeric(range))
+    ## Over chunks the layer names its band (a cog's plan levels do).
+    if (format == "chunks" && cog$samples_per_pixel > 1L) layer$band <- as.integer(cog$band)
   } else {
     layer$rgb <- drop_null(list(
       bands = as.integer(bands[1:3]),
@@ -578,8 +615,7 @@ scene_add_tiled_raster <- function(scene, id, plan, palette = "viridis", range =
   blobs <- attr(scene, "blobs") %||% list()
   blobs[[ids[2]]] <- plan$vertices
   blobs[[ids[3]]] <- plan$indices
-  check_cog_unchanged(cog)
-  if (isTRUE(embed)) blobs <- c(blobs, tile_blobs(cog, p, ids[1]))
+  blobs <- c(blobs, embedded)
   attr(scene, "blobs") <- blobs
   ## A local COG that is not embedded is registered for a server to deliver
   ## (decision 0006). The registry is never written to the scene JSON; the
@@ -838,21 +874,7 @@ cog_level <- function(ds, k, band, dtype, planar, nb, struct0) {
   }
   dim <- ds$dim()[1:2]
   ts <- ds$getBlockSize(band)
-  ncol <- ceiling(dim[1] / ts[1])
-  nrow <- ceiling(dim[2] / ts[2])
-  grid <- expand.grid(col = seq_len(ncol) - 1L, row = seq_len(nrow) - 1L)
-  item <- function(what, c, r) {
-    v <- ds$getMetadataItem(band, sprintf("%s_%d_%d", what, c, r), "TIFF")
-    if (is.null(v) || !nzchar(v)) NA_real_ else as.numeric(v)
-  }
-  off <- mapply(item, "BLOCK_OFFSET", grid$col, grid$row)
-  len <- mapply(item, "BLOCK_SIZE", grid$col, grid$row)
-  if (all(is.na(off))) {
-    stop("GDAL gives no tile offsets for level ", k, "; is this a tiled GeoTIFF?", call. = FALSE)
-  }
-  ok <- !is.na(off) & !is.na(len) & len > 0
-  tiles <- data.frame(col = grid$col[ok], row = grid$row[ok],
-                      byte_offset = unname(off[ok]), byte_length = unname(len[ok]))
+  tiles <- block_ranges(ds, band, dim, ts, k)
   enc <- list(codec = unname(codec), predictor = unname(predictor), dtype = dtype,
               byte_order = "little", samples_per_pixel = as.integer(nb),
               planar = planar, band = as.integer(band))
@@ -866,6 +888,29 @@ cog_level <- function(ds, k, band, dtype, planar, nb, struct0) {
     encoding = enc,
     tiles = tiles
   )
+}
+
+## The byte range of every stored tile of one band of an open level: the
+## BLOCK_OFFSET_<col>_<row> and BLOCK_SIZE_<col>_<row> items of GDAL's TIFF
+## metadata domain (GDAL's reading of the TileOffsets and TileByteCounts
+## tags). A data frame of col, row, byte_offset and byte_length; a sparse
+## tile (no offset, or no bytes) is left out.
+block_ranges <- function(ds, band, dim, ts, k) {
+  ncol <- ceiling(dim[1] / ts[1])
+  nrow <- ceiling(dim[2] / ts[2])
+  grid <- expand.grid(col = seq_len(ncol) - 1L, row = seq_len(nrow) - 1L)
+  item <- function(what, c, r) {
+    v <- ds$getMetadataItem(band, sprintf("%s_%d_%d", what, c, r), "TIFF")
+    if (is.null(v) || !nzchar(v)) NA_real_ else as.numeric(v)
+  }
+  off <- mapply(item, "BLOCK_OFFSET", grid$col, grid$row)
+  len <- mapply(item, "BLOCK_SIZE", grid$col, grid$row)
+  if (all(is.na(off))) {
+    stop("GDAL gives no tile offsets for level ", k, "; is this a tiled GeoTIFF?", call. = FALSE)
+  }
+  ok <- !is.na(off) & !is.na(len) & len > 0
+  data.frame(col = grid$col[ok], row = grid$row[ok],
+             byte_offset = unname(off[ok]), byte_length = unname(len[ok]))
 }
 
 tiff_byte_order <- function(dsn) {

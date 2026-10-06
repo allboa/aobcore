@@ -25,7 +25,8 @@ which needs 0.2; a tiled raster drawn as a colour image (\code{rgb}) or with
 JPEG tiles needs 0.3; a view with \code{bounds} (see \code{\link[=scene]{scene()}}'s \code{domain})
 needs 0.4; legends (\code{\link[=scene_add_legend]{scene_add_legend()}}) or a layer \code{popup} (see
 \code{\link[=scene_add_layer]{scene_add_layer()}}) need 0.5; a \code{chunks} data reference (chunk
-references, written by hand for now) needs 0.6. Each version only adds to
+references, from \code{\link[=cog_chunks]{cog_chunks()}} or \code{\link[=scene_add_tiled_raster]{scene_add_tiled_raster()}} with
+\code{format = "chunks"}) needs 0.6. Each version only adds to
 the one before, so earlier output is unchanged by the later additions.
 }
 \examples{

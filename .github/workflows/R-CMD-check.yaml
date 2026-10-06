@@ -51,14 +51,18 @@ jobs:
 
       # Scene spec 0.2 to 0.4 output from cog_scene() (palette COGs, and
       # RGBA and YCbCr JPEG colour images), a 0.5 scene with legends and
-      # popups (scene_add_legend(), popup =) and the 0.1 scenes checked by the
-      # scenespec validator, not only by the R tests' structural checks. Linux only: it has R, the package's dependencies and Node.
+      # popups (scene_add_legend(), popup =), 0.6 tiled rasters over chunk
+      # references (scene_add_tiled_raster(format = "chunks")) and the 0.1
+      # scenes checked by the scenespec validator, not only by the R tests'
+      # structural checks. Linux only: it has R, the package's dependencies
+      # and Node.
       - name: Validate written scenes with the scenespec validator
         if: runner.os == 'Linux'
         env:
-          # A pinned scenespec commit (main after scene spec 0.5), so a spec
-          # change cannot turn this check red unseen; bump it deliberately.
-          SCENESPEC_SHA: 9f8df2699f7fc7813d491547f1be59cdca7c44ce
+          # A pinned scenespec commit (main after scene spec 0.6 and the
+          # explicit-data contract), so a spec change cannot turn this check
+          # red unseen; bump it deliberately.
+          SCENESPEC_SHA: 898419b1489306bc3f68dbc9a424280d176b1db0
         run: |
           R CMD INSTALL .
           Rscript tools/write-scenes.R "$RUNNER_TEMP/scenes"

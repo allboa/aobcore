@@ -7,7 +7,8 @@
 #' JPEG tiles needs 0.3; a view with `bounds` (see [scene()]'s `domain`)
 #' needs 0.4; legends ([scene_add_legend()]) or a layer `popup` (see
 #' [scene_add_layer()]) need 0.5; a `chunks` data reference (chunk
-#' references, written by hand for now) needs 0.6. Each version only adds to
+#' references, from [cog_chunks()] or [scene_add_tiled_raster()] with
+#' `format = "chunks"`) needs 0.6. Each version only adds to
 #' the one before, so earlier output is unchanged by the later additions.
 #'
 #' @param scene Optional scene. Without it, the version of a new scene.

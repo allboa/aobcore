@@ -23,6 +23,11 @@
 #                an RGBA LZW COG (alpha 0, 128 and 255) and a YCbCr JPEG COG
 #                (tiles joined to the level's JPEGTables), whole and at the
 #                pole (full resolution).
+#   polar-chunks-* scene spec 0.6 tiled rasters over chunk references
+#                (scene_add_tiled_raster(format = "chunks"), aobcore #63):
+#                the 3031 deflate COG through a palette and the YCbCr JPEG
+#                COG in colour, each chunk's bytes embedded under its own
+#                key, so the pages open from file://.
 #   polar-legends-popups  scene spec 0.5: the polar probe with legends (a
 #                palette ramp with a no-data entry for the SST field, a
 #                class legend for land, classes for two sectors and a
@@ -187,6 +192,22 @@ for (name in names(rgb)) {
   write_scene_html(s, file = file.path(out, paste0(name, ".html")), title = x$file)
   writeLines(scene_json(s), file.path(out, paste0(name, ".json")))
 }
+# ---- chunk references (scene spec 0.6) -------------------------------------
+chunked <- list(
+  "polar-chunks-3031" = list(file = "polar_3031.tif", args = list(palette = "ocean")),
+  "polar-chunks-ycbcr" = list(file = "polar_ycbcr.tif", args = list())
+)
+for (name in names(chunked)) {
+  x <- chunked[[name]]
+  f <- system.file("extdata", x$file, package = "aobcore")
+  s <- do.call(scene_add_tiled_raster, c(list(scene("EPSG:3031"), "chunks", f), x$args,
+                                         list(format = "chunks", label = x$file)))
+  stopifnot(identical(s$version, "0.6"), identical(s$data$chunks$format, "chunks"),
+            any(grepl("^chunks@", names(scene_blobs(s)))))
+  write_scene_html(s, file = file.path(out, paste0(name, ".html")), title = x$file)
+  writeLines(scene_json(s), file.path(out, paste0(name, ".json")))
+}
+
 # ---- legends and popups (scene spec 0.5) -----------------------------------
 # Example stations: positions, opening dates and elevations are approximate,
 # for illustration.
