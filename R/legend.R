@@ -222,24 +222,48 @@ as_popup <- function(popup, scene, ref) {
   if (geom %in% popup) {
     stop("\"", geom, "\" is the geometry column; a popup shows attribute columns.", call. = FALSE)
   }
-  have <- data_columns(scene, ref)
-  if (!is.null(have)) {
+  fields <- data_fields(scene, ref)
+  if (!is.null(fields)) {
+    have <- names(fields)
     miss <- setdiff(popup, have)
     if (length(miss)) {
       stop("Popup column", if (length(miss) > 1L) "s", " not in data \"", ref$blob, "\": ",
            paste(miss, collapse = ", "), ". Columns: ",
            paste(setdiff(have, geom), collapse = ", "), ".", call. = FALSE)
     }
+    type <- vapply(fields[popup], attribute_type_problem, "")
+    bad <- !is.na(type)
+    if (any(bad)) {
+      stop("Popup column", if (sum(bad) > 1L) "s", " ",
+           paste0("\"", popup[bad], "\" (", type[bad], ")", collapse = ", "),
+           " in data \"", ref$blob, "\" ", if (sum(bad) > 1L) "are" else "is",
+           " not an attribute type a popup shows: boolean, integer (8 to 64 bits), ",
+           "float32 or float64, string, date or timestamp.", call. = FALSE)
+    }
   }
   drop_null(list(columns = as.list(popup), trigger = trigger))
 }
 
-## Column names of a data reference's Arrow table, read from its blob
-## (NULL when the scene does not carry it).
-data_columns <- function(scene, ref) {
+## The fields (schemas, named by column) of a data reference's Arrow table,
+## read from its blob's schema without reading its batches (NULL when the
+## scene does not carry the blob).
+data_fields <- function(scene, ref) {
   bytes <- if (!is.null(ref$blob)) attr(scene, "blobs")[[ref$blob]]
   if (is.null(bytes)) return(NULL)
-  names(nanoarrow::read_nanoarrow(bytes)$get_schema()$children)
+  nanoarrow::read_nanoarrow(bytes)$get_schema()$children
+}
+
+## NA when a field is an attribute type of the explicit-data contract (what
+## a popup shows as text: boolean, 8 to 64 bit integers, float32, float64,
+## Utf8, LargeUtf8, Date32, Date64, timestamp of any unit and zone),
+## otherwise its type's name. A dictionary is not an attribute.
+attribute_type_problem <- function(field) {
+  if (!is.null(field$dictionary)) return("dictionary")
+  fmt <- field$format
+  ok <- fmt %in% c("b", "c", "C", "s", "S", "i", "I", "l", "L", "f", "g", "u", "U", "tdD", "tdm") ||
+    grepl("^ts[smun]:", fmt)
+  if (ok) return(NA_character_)
+  tryCatch(nanoarrow::nanoarrow_schema_parse(field)$type, error = function(e) fmt)
 }
 
 ## Mark a scene as 0.5 after adding a legend or popup. 0.5 rejects a layer

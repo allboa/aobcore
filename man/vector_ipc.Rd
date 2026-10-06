@@ -8,9 +8,9 @@ vector_ipc(x)
 }
 \arguments{
 \item{x}{A 'nanoarrow' array stream (or anything
-\code{\link[nanoarrow:as_nanoarrow_array_stream]{nanoarrow::as_nanoarrow_array_stream()}} accepts) with a native,
-interleaved GeoArrow geometry column, such as the result of
-\code{\link[=vector_stream]{vector_stream()}} or \code{\link[=gdal_vector_stream]{gdal_vector_stream()}}.}
+\code{\link[nanoarrow:as_nanoarrow_array_stream]{nanoarrow::as_nanoarrow_array_stream()}} accepts) with a native
+GeoArrow geometry column, such as the result of \code{\link[=vector_stream]{vector_stream()}} or
+\code{\link[=gdal_vector_stream]{gdal_vector_stream()}}.}
 }
 \value{
 A raw vector of Arrow IPC stream bytes.
@@ -19,6 +19,13 @@ A raw vector of Arrow IPC stream bytes.
 Writes a stream with a native GeoArrow geometry column to Arrow IPC
 stream bytes, the form a scene carries as a data blob. WKB geometry is
 refused: convert it first with \code{\link[=vector_stream]{vector_stream()}}.
+}
+\details{
+The coordinates may be interleaved (what \code{\link[=vector_stream]{vector_stream()}} and
+\code{\link[=gdal_vector_stream]{gdal_vector_stream()}} write) or separated (a struct of \code{x}, \code{y} and
+optionally \code{z}), as scene spec's explicit-data contract allows; both are
+doubles under 32-bit list offsets. Other layouts (M coordinates, large
+lists) are refused: convert them with \code{\link[=vector_stream]{vector_stream()}}.
 }
 \examples{
 x <- wk::wkt("POINT (1 2)", crs = "EPSG:3031")

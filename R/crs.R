@@ -79,3 +79,101 @@ crs_short <- function(x) if (nchar(x) > 60) paste0(substr(x, 1, 57), "...") else
 crs_same <- function(a, b) {
   identical(as.character(a), as.character(b)) || isTRUE(gdal_same_crs(a, b))
 }
+
+## ---- the explicit-data contract's CRS rule ------------------------------
+## (scene spec README, "Explicit data"; the renderer applies the same rule
+## in js/src/arrow.js.) A GeoArrow field's `ARROW:extension:metadata` gives
+## `crs` as a PROJJSON object or an "authority:code" string. Two CRSs match
+## when they are equal as JSON values (PROJJSON's "$schema" aside), or when
+## one authority code names both (the string, or a PROJJSON object's
+## top-level id or ids), compared case-insensitively.
+
+## A scene CRS (a code, or PROJJSON text of class "aob_json") as a JSON value.
+crs_value <- function(crs) {
+  if (inherits(crs, "aob_json")) json_parse(crs) else as.character(crs)
+}
+
+## The upper-case "AUTHORITY:CODE" names of a CRS value.
+crs_codes <- function(x) {
+  if (is.character(x)) {
+    return(if (length(x) == 1L && !is.na(x) && grepl(crs_pattern, x)) toupper(x) else character())
+  }
+  if (!is.list(x) || is.null(names(x))) return(character())
+  ids <- x[["ids"]] %||% (if (!is.null(x[["id"]])) list(x[["id"]]))
+  out <- vapply(ids, function(i) {
+    if (!is.list(i) || is.null(i[["authority"]]) || is.null(i[["code"]])) return(NA_character_)
+    code <- i[["code"]]
+    if (is.numeric(code)) code <- format(code, scientific = FALSE, trim = TRUE, digits = 15)
+    toupper(paste0(i[["authority"]], ":", code))
+  }, "")
+  out[!is.na(out)]
+}
+
+crs_values_match <- function(a, b) {
+  bare <- function(x) if (is.list(x) && !is.null(names(x))) x[names(x) != "$schema"] else x
+  if (json_same(bare(a), bare(b))) return(TRUE)
+  any(crs_codes(a) %in% crs_codes(b))
+}
+
+## A CRS value for messages: its first code, or a PROJJSON object's name.
+crs_value_label <- function(x) {
+  if (is.null(x)) return("(none)")
+  codes <- crs_codes(x)
+  if (length(codes)) return(codes[1])
+  if (is.character(x)) return(paste0("\"", crs_short(x), "\""))
+  nm <- if (is.list(x)) x[["name"]]
+  if (is.character(nm) && length(nm) == 1L) paste0("\"", nm, "\" (PROJJSON)") else "(PROJJSON)"
+}
+
+## The parsed `ARROW:extension:metadata` of a GeoArrow field: a named list,
+## empty when the field has none.
+field_extension_metadata <- function(field, what) {
+  text <- field$metadata[["ARROW:extension:metadata"]]
+  empty <- structure(list(), names = character())
+  if (is.null(text) || !nzchar(text)) return(empty)
+  m <- tryCatch(json_parse(text), error = function(e) NULL)
+  if (!is.list(m) || (length(m) && is.null(names(m)))) {
+    stop("The ARROW:extension:metadata of ", what, " is not a JSON object.", call. = FALSE)
+  }
+  if (!length(m)) empty else m
+}
+
+## Check a GeoArrow geometry field against the view CRS `crs` by the
+## contract. Returns TRUE when its CRS matches, FALSE when it has none (the
+## caller writes the view's, or stops); stops when the CRS is not the
+## view's or its metadata breaks the contract. A view with no CRS needs none.
+check_field_crs <- function(field, crs, what) {
+  m <- field_extension_metadata(field, what)
+  edges <- m[["edges"]]
+  if (!is.null(edges) && !identical(edges, "planar")) {
+    stop("The edges of ", what, " are ", format(edges), "; only planar edges are drawn.",
+         call. = FALSE)
+  }
+  type <- m[["crs_type"]]
+  value <- m[["crs"]]
+  if (!is.null(type)) {
+    if (!(is.character(type) && length(type) == 1L && type %in% c("projjson", "authority_code"))) {
+      stop("The crs_type of ", what, " is ", format(type),
+           ", not projjson or authority_code.", call. = FALSE)
+    }
+    if (!is.null(value) && type == "projjson" && !(is.list(value) && !is.null(names(value)))) {
+      stop("The crs_type of ", what, " is projjson but its crs is not a JSON object.",
+           call. = FALSE)
+    }
+    if (!is.null(value) && type == "authority_code" && !length(crs_codes(value))) {
+      stop("The crs_type of ", what, " is authority_code but its crs is not an ",
+           "\"authority:code\" string.", call. = FALSE)
+    }
+  }
+  if (is.null(crs)) return(TRUE)
+  if (is.null(value)) return(FALSE)
+  if (!crs_values_match(value, crs_value(crs))) {
+    stop("The CRS of ", what, " is ", crs_value_label(value), " but the view CRS is ",
+         crs_label(crs), ". The core does not reproject: transform the data first ",
+         "(for example with gdal_vector_stream() or sf::st_transform()). If they are the ",
+         "same CRS written differently, pass the data through vector_stream() with the ",
+         "view CRS, which writes the view's.",
+         call. = FALSE)
+  }
+  TRUE
+}

@@ -135,13 +135,39 @@ test_that("factor columns are written as character (#25)", {
   expect_identical(levels(df$zone), c("b", "a", "c"))
 })
 
-test_that("vector_ipc() refuses WKB, separated coordinates and missing geometry", {
+test_that("vector_ipc() refuses WKB, M coordinates and missing geometry", {
   df <- data.frame(id = 1)
   df$geometry <- geoarrow::as_geoarrow_vctr(wk::wkt("POINT (1 2)"), schema = geoarrow::geoarrow_wkb())
   expect_error(vector_ipc(df), "not native GeoArrow")
-  df$geometry <- geoarrow::as_geoarrow_vctr(wk::wkt("POINT (1 2)"), schema = geoarrow::geoarrow_point())
-  expect_error(vector_ipc(df), "interleaved")
+  df$geometry <- geoarrow::as_geoarrow_vctr(wk::wkt("POINT M (1 2 3)"),
+                                            schema = geoarrow::geoarrow_point(dimensions = "XYM"))
+  expect_error(vector_ipc(df), "interleaved \\(xy, xyz\\) or separated")
+  df$geometry <- geoarrow::as_geoarrow_vctr(wk::wkt("POINT M (1 2 3)"),
+                                            schema = geoarrow::geoarrow_point(dimensions = "XYM",
+                                                                              coord_type = "INTERLEAVED"))
+  expect_error(vector_ipc(df), "interleaved \\(xy, xyz\\) or separated")
   expect_error(vector_ipc(data.frame(a = 1)), "no native GeoArrow geometry column")
+})
+
+test_that("vector_ipc() writes separated coordinates as they are", {
+  wkts <- list(
+    POINT = c("POINT (1 2)", "POINT Z (1 2 5)"),
+    LINESTRING = c("LINESTRING (0 0, 1 1)", "LINESTRING Z (0 0 5, 1 1 5)"),
+    MULTIPOLYGON = c("MULTIPOLYGON (((0 0, 1 0, 0 1, 0 0)))",
+                     "MULTIPOLYGON Z (((0 0 5, 1 0 5, 0 1 5, 0 0 5)))")
+  )
+  for (type in names(wkts)) {
+    for (i in 1:2) {
+      df <- data.frame(id = 1L)
+      df$geometry <- geoarrow::as_geoarrow_vctr(
+        wk::wkt(wkts[[type]][i], crs = "EPSG:3031"),
+        schema = geoarrow::na_extension_geoarrow(type, dimensions = c("XY", "XYZ")[i],
+                                                 crs = "EPSG:3031", coord_type = "SEPARATE")
+      )
+      schema <- nanoarrow::read_nanoarrow(vector_ipc(df))$get_schema()
+      expect_identical(geometry_field(schema)$layout, "separated")
+    }
+  }
 })
 
 test_that("no geometries give an empty stream of the declared type", {

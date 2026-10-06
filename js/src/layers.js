@@ -75,14 +75,15 @@ export function buildLayer(L, ctx) {
   const enc = ref.geometry.encoding;
   const fields = table.schema.fields;
   // The explicit-data contract (scene spec README, "Explicit data"): the
-  // geometry column's GeoArrow extension is the declared encoding, its CRS
-  // is the view's, its storage is the extension's, and colour columns are
-  // RGBA. Data that fail it are an error for this layer, which is not drawn;
-  // the rest of the scene is.
+  // bytes are the declared IPC format (stream or file), the geometry
+  // column's GeoArrow extension is the declared encoding, its CRS is the
+  // view's, its storage is the extension's, and colour columns are RGBA.
+  // Data that fail it are an error for this layer, which is not drawn; the
+  // rest of the scene is.
   const geomIdx = fields.findIndex((f) => f.name === ref.geometry.column);
   const colourKeys = L.kind === "path" ? ["stroke"] : ["fill", "stroke"];
-  const problem = geomIdx < 0 ? `geometry column "${ref.geometry.column}" not found`
-    : geometryProblem(fields[geomIdx], ref, ctx.scene.view) || colourProblem(L, colourKeys, fields);
+  const problem = (ctx.formatProblems && ctx.formatProblems[L.data]) || (geomIdx < 0 ? `geometry column "${ref.geometry.column}" not found`
+    : geometryProblem(fields[geomIdx], ref, ctx.scene.view) || colourProblem(L, colourKeys, fields));
   if (problem) {
     ctx.error(`layer ${L.id}: data ${L.data}: ${problem}; not drawn`);
     return { layers: [], summary: "error: data not drawn" };

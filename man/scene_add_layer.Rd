@@ -46,8 +46,13 @@ spec's default: shown when the viewer selects a feature, by a click,
 tap or key press, until another selection or a dismissal) or \code{"point"}
 (shown while the pointer is over a feature; a renderer with no way to
 point without selecting treats it as \code{"select"}). The columns must be in
-the data and must not be its geometry column. A popup makes the scene
-scene spec 0.5.}
+the data, must not be its geometry column, and must be types a popup
+shows as text (logical, integer, double, character, \code{Date} or \code{POSIXct}
+in R; boolean, 8 to 64 bit integers, float32 or float64, Utf8 or
+LargeUtf8, Date32 or Date64, or a timestamp in Arrow), as scene spec's
+explicit-data contract requires: a duration, time of day, binary, list
+or dictionary column is an error here rather than in the page. A popup
+makes the scene scene spec 0.5.}
 }
 \value{
 The scene with the layer appended (drawn above earlier layers).

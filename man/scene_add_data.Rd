@@ -14,8 +14,8 @@ scene_add_data(scene, id, x)
 \item{x}{The data: Arrow IPC stream bytes (a raw vector, as from
 \code{\link[=vector_ipc]{vector_ipc()}}), a 'nanoarrow' array stream, or anything
 \code{\link[=vector_stream]{vector_stream()}} accepts. Anything other than bytes or a native
-interleaved stream goes through \code{\link[=vector_stream]{vector_stream()}} with the scene's view
-CRS, so its coordinates must already be in that CRS.}
+stream goes through \code{\link[=vector_stream]{vector_stream()}} with the scene's view CRS, so its
+coordinates must already be in that CRS.}
 }
 \value{
 The scene with \code{data[[id]]} added and the bytes stored as blob
@@ -27,6 +27,18 @@ keyed by \code{id}, with the geometry column and its native GeoArrow encoding
 read from the bytes. The bytes travel beside the scene document (see
 \code{\link[=scene_blobs]{scene_blobs()}}); the scene itself holds only the reference, as in scene
 spec 0.1.
+}
+\details{
+Bytes and native streams (a native GeoArrow geometry column with
+interleaved or separated coordinates) are checked against scene spec's
+explicit-data contract before they reach a page, which would otherwise
+refuse to draw them: the CRS in the geometry column's GeoArrow metadata
+must match the view CRS, as equal JSON values or by one authority code
+(so \code{"EPSG:3031"} matches the PROJJSON 'geoarrow' writes for it). A
+native stream whose geometry has no CRS is given the view CRS; bytes are
+not rewritten, so bytes with no CRS are an error in a view with a CRS
+(read them with \code{\link[nanoarrow:read_nanoarrow]{nanoarrow::read_nanoarrow()}} and pass the stream
+instead). Nothing is reprojected: a different CRS is an error.
 }
 \examples{
 s <- scene("EPSG:3031")

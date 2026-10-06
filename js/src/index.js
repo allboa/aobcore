@@ -41,7 +41,7 @@
 // the selectable layer ids (data-aob-selectable) and the selection
 // (data-aob-selection, "layer:row,row;layer:row").
 import { Deck, OrthographicView, _GlobeView as GlobeView, COORDINATE_SYSTEM } from "@deck.gl/core";
-import { decodeBase64, readTable } from "./arrow.js";
+import { decodeBase64, readTable, ipcFormatProblem } from "./arrow.js";
 import { buildLayer } from "./layers.js";
 import { buildTiledRaster } from "./tiles.js";
 import { decodeTileSamples } from "./jpeg.js";
@@ -295,8 +295,10 @@ export async function render(container, scene, options = {}) {
     // Rendered again while loading: this render stops here.
     if (loading.signal.aborted) throw loading.signal.reason;
     let total = 0;
+    const formatProblems = {};
     ids.forEach((id, i) => {
       total += bytes[i].length;
+      formatProblems[id] = ipcFormatProblem(bytes[i], scene.data[id].format);
       tables[id] = readTable(bytes[i]);
     });
     const decodeMs = performance.now() - t0;
@@ -310,6 +312,7 @@ export async function render(container, scene, options = {}) {
     const ctx = {
       scene,
       tables,
+      formatProblems,
       blobs,
       // A tile blob the page does not carry but the server has (decision 0006).
       servedBlob: (key, what, signal) => (blobKeys.has(key) ? fetchBlob(blobBase, key, what, signal) : null),

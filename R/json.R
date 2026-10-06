@@ -131,3 +131,103 @@ json_string <- function(x) {
     paste0("\"", paste(out, collapse = ""), "\"")
   }, "", USE.NAMES = FALSE)
 }
+
+## A small JSON reader, for the CRS in a GeoArrow field's
+## `ARROW:extension:metadata` (the explicit-data contract compares CRSs as
+## JSON values). An object is a named list (an empty one keeps an empty
+## names attribute), an array an unnamed list, a number a double and null
+## NULL. Stops on text that is not JSON.
+json_parse <- function(text) {
+  text <- enc2utf8(as.character(text))
+  re <- paste0("\"(?:[^\"\\\\]|\\\\.)*\"|-?[0-9]+(?:[.][0-9]+)?(?:[eE][+-]?[0-9]+)?",
+               "|true|false|null|[][{}:,]|[^[:space:]]")
+  tokens <- regmatches(text, gregexpr(re, text, perl = TRUE))[[1]]
+  pos <- 0L
+  bad <- function() stop("Not JSON: ", crs_short(text), call. = FALSE)
+  peek <- function() if (pos < length(tokens)) tokens[pos + 1L] else ""
+  take <- function() {
+    if (pos >= length(tokens)) bad()
+    pos <<- pos + 1L
+    tokens[pos]
+  }
+  expect <- function(tok) if (!identical(take(), tok)) bad()
+  value <- function() {
+    tok <- take()
+    if (tok == "{") {
+      keys <- character()
+      vals <- list()
+      if (peek() == "}") {
+        take()
+      } else {
+        repeat {
+          key <- take()
+          if (!startsWith(key, "\"")) bad()
+          expect(":")
+          keys <- c(keys, json_unquote(key))
+          vals[length(vals) + 1L] <- list(value())
+          sep <- take()
+          if (sep == "}") break
+          if (sep != ",") bad()
+        }
+      }
+      return(structure(vals, names = keys))
+    }
+    if (tok == "[") {
+      vals <- list()
+      if (peek() == "]") {
+        take()
+      } else {
+        repeat {
+          vals[length(vals) + 1L] <- list(value())
+          sep <- take()
+          if (sep == "]") break
+          if (sep != ",") bad()
+        }
+      }
+      return(vals)
+    }
+    if (startsWith(tok, "\"") && nchar(tok) >= 2L) return(json_unquote(tok))
+    if (tok == "true") return(TRUE)
+    if (tok == "false") return(FALSE)
+    if (tok == "null") return(NULL)
+    if (grepl("^-?[0-9]", tok)) return(as.numeric(tok))
+    bad()
+  }
+  out <- value()
+  if (pos != length(tokens)) bad()
+  out
+}
+
+## A JSON string token's value: quotes removed, escapes decoded.
+json_unquote <- function(tok) {
+  s <- substr(tok, 2L, nchar(tok) - 1L)
+  if (!grepl("\\", s, fixed = TRUE)) return(s)
+  m <- gregexpr("\\\\u[dD][89abAB][0-9a-fA-F]{2}\\\\u[0-9a-fA-F]{4}|\\\\u[0-9a-fA-F]{4}|\\\\.", s,
+                perl = TRUE)
+  regmatches(s, m) <- list(vapply(regmatches(s, m)[[1]], function(e) {
+    if (nchar(e) == 12L) {
+      hi <- strtoi(substr(e, 3L, 6L), 16L)
+      lo <- strtoi(substr(e, 9L, 12L), 16L)
+      return(intToUtf8(0x10000 + (hi - 0xD800) * 1024 + (lo - 0xDC00)))
+    }
+    if (nchar(e) == 6L) return(intToUtf8(strtoi(substr(e, 3L, 6L), 16L)))
+    switch(substr(e, 2L, 2L), b = "\b", f = "\f", n = "\n", r = "\r", t = "\t",
+           substr(e, 2L, 2L))
+  }, "", USE.NAMES = FALSE))
+  s
+}
+
+## Are two parsed JSON values equal, regardless of object key order?
+json_same <- function(a, b) {
+  if (is.list(a) && is.list(b)) {
+    na <- names(a)
+    nb <- names(b)
+    if (is.null(na) != is.null(nb) || length(a) != length(b)) return(FALSE)
+    if (!is.null(na)) {
+      if (!identical(sort(na), sort(nb))) return(FALSE)
+      b <- b[match(na, nb)]
+    }
+    return(all(vapply(seq_along(a), function(i) json_same(a[[i]], b[[i]]), TRUE)))
+  }
+  identical(a, b)
+}

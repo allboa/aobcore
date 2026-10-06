@@ -64,6 +64,36 @@ test_that("popup columns must exist, not be the geometry, and the trigger is kno
   expect_error(scene_add_layer(s3, "pt", popup = "geom"), "geometry column")
 })
 
+test_that("popup columns must be attribute types (#59)", {
+  df <- stations()
+  df$flag <- c(TRUE, FALSE, NA)
+  df$n <- 1:3
+  df$day <- as.Date(df$opened)
+  df$when <- as.POSIXct(df$opened, tz = "UTC")
+  df$wait <- as.difftime(c(1, 2, 3), units = "secs")
+  df$clock <- structure(c(1, 2, 3), class = c("hms", "difftime"), units = "secs")
+  s <- scene_add_data(scene(), "stations", df)
+  ok <- c("name", "depth_m", "flag", "n", "day", "when")
+  expect_identical(unlist(scene_add_layer(s, "stations", popup = ok)$layers[[1]]$popup$columns), ok)
+  expect_error(scene_add_layer(s, "stations", popup = c("name", "wait")),
+               "Popup column \"wait\" \\(duration\\) in data \"stations\" is not an attribute type")
+  expect_error(scene_add_layer(s, "stations", popup = c("clock", "wait", "name")),
+               "Popup columns \"clock\" \\(time32\\), \"wait\" \\(duration\\) .* are not an attribute type")
+  # Every type the contract names, and some it does not.
+  na <- asNamespace("nanoarrow")
+  attr_types <- list(na$na_bool(), na$na_int8(), na$na_uint8(), na$na_int16(), na$na_uint16(),
+                     na$na_int32(), na$na_uint32(), na$na_int64(), na$na_uint64(), na$na_float(),
+                     na$na_double(), na$na_string(), na$na_large_string(), na$na_date32(),
+                     na$na_date64(), na$na_timestamp("s"), na$na_timestamp("ms", "UTC"),
+                     na$na_timestamp("us", "Australia/Hobart"), na$na_timestamp("ns"))
+  for (t in attr_types) expect_identical(attribute_type_problem(t), NA_character_, info = t$format)
+  others <- list(half_float = na$na_half_float(), binary = na$na_binary(),
+                 large_binary = na$na_large_binary(), duration = na$na_duration(),
+                 time32 = na$na_time32(), dictionary = na$na_dictionary(na$na_string()),
+                 list = na$na_list(na$na_int32()), string_view = na$na_string_view())
+  for (k in names(others)) expect_identical(attribute_type_problem(others[[k]]), k)
+})
+
 test_that("scene_add_legend() writes palette, stops and class legends", {
   skip_if_not_installed("jsonlite")
   p <- probe_scene()

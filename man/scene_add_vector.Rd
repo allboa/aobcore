@@ -14,8 +14,8 @@ scene_add_vector(scene, id, x, ...)
 \item{x}{The data: Arrow IPC stream bytes (a raw vector, as from
 \code{\link[=vector_ipc]{vector_ipc()}}), a 'nanoarrow' array stream, or anything
 \code{\link[=vector_stream]{vector_stream()}} accepts. Anything other than bytes or a native
-interleaved stream goes through \code{\link[=vector_stream]{vector_stream()}} with the scene's view
-CRS, so its coordinates must already be in that CRS.}
+stream goes through \code{\link[=vector_stream]{vector_stream()}} with the scene's view CRS, so its
+coordinates must already be in that CRS.}
 
 \item{...}{Passed to \code{\link[=scene_add_layer]{scene_add_layer()}} (\code{kind}, \code{stroke}, \code{fill}, \code{popup}, ...).}
 }

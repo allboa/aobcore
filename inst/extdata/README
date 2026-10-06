@@ -59,3 +59,15 @@ tools/make-rgb-cogs.R with GDAL's COG driver: EPSG:3031, 250 x 250 cells of
                     1000 km.
 
 License: generated data, same license as the package.
+
+probe/*.arrows
+--------------
+
+The polar probe's data (probe_scene()): byte copies of the six blobs in
+allboa/design origin/2026-09-30/probe/bundle.json, written by that
+record's prep.py with pyarrow from Natural Earth 50m land and coastline
+(public domain), a graticule with an RGBA colour column, and a synthetic
+SST-like field with its pre-projected mesh. Interleaved GeoArrow in
+EPSG:3031 (PROJJSON). land, coast and graticule carry no attribute
+columns besides the graticule's colour, so a popup on them has nothing to
+show.
